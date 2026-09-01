@@ -18,7 +18,8 @@ booked yet.
 | --- | --- |
 | HTTP gateway, config, logging, graceful shutdown | done |
 | Telegram: webhook, normalisation, replies | done |
-| Conversation persistence and deduplication | next |
+| Customer identity, conversations, transcript, deduplication | done, in-process store |
+| Durable storage | next |
 | Asynchronous processing | not started |
 | Altegio integration | not started |
 | AI orchestration | not started |
@@ -73,6 +74,27 @@ customer messages.
 A panic in a handler becomes a 500 and one log entry with a stack, rather than a
 dropped connection the caller sees as a network failure. Request bodies are
 capped at 1 MiB.
+
+Every provider retries deliveries, so each one is recorded once handled and a
+repeat is dropped. A delivery is marked handled only after its reply is out:
+marking it earlier would mean a failure part-way through loses the message,
+because the retry would be discarded as a duplicate.
+
+A customer is not the same thing as a messaging account. Accounts are stored as
+separate identities pointing at one customer, so the same person writing from
+two channels keeps one history. Identities are never merged automatically on a
+resemblance such as a matching name, because wrongly merging two people would
+expose one customer's appointments to another.
+
+Whether the assistant answers is a stored conversation state, not a prompt
+instruction. Once a colleague takes a conversation over, the assistant stops
+replying and no wording in a customer's message can change that.
+
+The transcript holds what was said and nothing else: customer messages and the
+replies they were sent. No hidden model reasoning is stored.
+
+**Storage is currently in-process**, so state is lost on restart and not shared
+between instances. The durable store lands behind the same interfaces.
 
 On `SIGTERM` the server stops accepting connections and waits for in-flight
 requests to finish, so a deploy cannot turn a half-processed webhook into a
@@ -182,8 +204,8 @@ test suite and a build on every pull request.
 cmd/gateway/          HTTP entry point, routes and middleware wiring
 internal/domain/      Channel-independent types and rules
 internal/application/ Use cases, and the ports they need
-internal/adapters/    Provider integrations behind those ports
-internal/platform/    Cross-cutting concerns: config, logging, HTTP server
+internal/adapters/    Provider integrations and storage behind those ports
+internal/platform/    Cross-cutting concerns: config, logging, HTTP server, ids
 deployments/          Deployment scripts
 ```
 
