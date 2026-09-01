@@ -1,0 +1,11 @@
+# Everything git ignores, plus the things a container build has no use for.
+.git
+.github
+.gitignore
+.gitattributes
+bin/
+docs/
+deployments/
+*.md
+.env
+.env.local
