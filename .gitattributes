@@ -1,0 +1,4 @@
+# Normalise line endings on commit and check out LF everywhere, so files that
+# break with CRLF (Makefile, Dockerfile, shell scripts) stay correct when the
+# repository is cloned on Windows.
+* text=auto eol=lf
