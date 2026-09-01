@@ -1,0 +1,131 @@
+package config
+
+import (
+	"log/slog"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestLoadDefaults(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	if cfg.Env != EnvDevelopment {
+		t.Errorf("Env = %q, want %q", cfg.Env, EnvDevelopment)
+	}
+	if cfg.Port != 8080 {
+		t.Errorf("Port = %d, want 8080", cfg.Port)
+	}
+	if cfg.LogLevel != slog.LevelInfo {
+		t.Errorf("LogLevel = %v, want %v", cfg.LogLevel, slog.LevelInfo)
+	}
+	if cfg.ShutdownTimeout != 15*time.Second {
+		t.Errorf("ShutdownTimeout = %s, want 15s", cfg.ShutdownTimeout)
+	}
+	if got, want := cfg.Addr(), ":8080"; got != want {
+		t.Errorf("Addr() = %q, want %q", got, want)
+	}
+}
+
+func TestLoadOverrides(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("PORT", "9090")
+	t.Setenv("LOG_LEVEL", "WARN")
+	t.Setenv("SHUTDOWN_TIMEOUT", "30s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	if cfg.Env != EnvProduction {
+		t.Errorf("Env = %q, want %q", cfg.Env, EnvProduction)
+	}
+	if cfg.Port != 9090 {
+		t.Errorf("Port = %d, want 9090", cfg.Port)
+	}
+	if cfg.LogLevel != slog.LevelWarn {
+		t.Errorf("LogLevel = %v, want %v", cfg.LogLevel, slog.LevelWarn)
+	}
+	if cfg.ShutdownTimeout != 30*time.Second {
+		t.Errorf("ShutdownTimeout = %s, want 30s", cfg.ShutdownTimeout)
+	}
+}
+
+func TestLoadInvalid(t *testing.T) {
+	tests := map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"missing APP_ENV": {
+			env:  map[string]string{},
+			want: "APP_ENV is required",
+		},
+		"unknown APP_ENV": {
+			env:  map[string]string{"APP_ENV": "prod"},
+			want: "APP_ENV must be one of",
+		},
+		"non-numeric PORT": {
+			env:  map[string]string{"APP_ENV": "development", "PORT": "http"},
+			want: "PORT must be an integer",
+		},
+		"out of range PORT": {
+			env:  map[string]string{"APP_ENV": "development", "PORT": "70000"},
+			want: "PORT must be between 1 and 65535",
+		},
+		"unknown LOG_LEVEL": {
+			env:  map[string]string{"APP_ENV": "development", "LOG_LEVEL": "verbose"},
+			want: "LOG_LEVEL must be one of",
+		},
+		"negative SHUTDOWN_TIMEOUT": {
+			env:  map[string]string{"APP_ENV": "development", "SHUTDOWN_TIMEOUT": "-1s"},
+			want: "SHUTDOWN_TIMEOUT must be positive",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			// t.Setenv cannot unset, so clear the variables this case omits.
+			for _, k := range []string{"APP_ENV", "PORT", "LOG_LEVEL", "SHUTDOWN_TIMEOUT"} {
+				if _, ok := tt.env[k]; !ok {
+					t.Setenv(k, "")
+				}
+			}
+
+			_, err := Load()
+			if err == nil {
+				t.Fatal("Load() succeeded, want error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Load() error = %q, want it to contain %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestLoadReportsEveryError guards the decision to accumulate failures rather
+// than return on the first one.
+func TestLoadReportsEveryError(t *testing.T) {
+	t.Setenv("APP_ENV", "")
+	t.Setenv("PORT", "http")
+	t.Setenv("LOG_LEVEL", "verbose")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() succeeded, want error")
+	}
+
+	for _, want := range []string{"APP_ENV", "PORT", "LOG_LEVEL"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %s", err, want)
+		}
+	}
+}
