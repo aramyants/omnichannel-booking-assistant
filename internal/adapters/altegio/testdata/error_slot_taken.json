@@ -1,0 +1,7 @@
+{
+  "success": false,
+  "data": null,
+  "meta": {
+    "message": "This time is already taken"
+  }
+}

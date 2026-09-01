@@ -1,0 +1,32 @@
+{
+  "success": true,
+  "data": [
+    {
+      "id": 501,
+      "name": "Mariam",
+      "specialization": "Stylist",
+      "bookable": true,
+      "fired": 0
+    },
+    {
+      "id": 502,
+      "name": "Gor",
+      "specialization": "Colourist",
+      "fired": 0
+    },
+    {
+      "id": 503,
+      "name": "Former colleague",
+      "specialization": "Stylist",
+      "fired": 1
+    },
+    {
+      "id": 504,
+      "name": "Nare",
+      "specialization": "Stylist",
+      "bookable": false,
+      "fired": 0
+    }
+  ],
+  "meta": []
+}

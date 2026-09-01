@@ -1,0 +1,23 @@
+{
+  "success": true,
+  "data": [
+    {
+      "time": "10:00",
+      "seance_length": 3600,
+      "datetime": "2026-09-04T10:00:00+04:00"
+    },
+    {
+      "time": "11:00",
+      "seance_length": 3600,
+      "datetime": "2026-09-04T11:00:00+04:00"
+    },
+    {
+      "time": "15:30",
+      "seance_length": 5400
+    },
+    {
+      "seance_length": 3600
+    }
+  ],
+  "meta": []
+}

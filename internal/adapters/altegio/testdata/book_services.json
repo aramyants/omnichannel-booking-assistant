@@ -1,0 +1,39 @@
+{
+  "success": true,
+  "data": {
+    "services": [
+      {
+        "id": 1001,
+        "title": "Women's haircut",
+        "category_id": 20,
+        "price_min": 8000,
+        "price_max": 12000,
+        "seance_length": 3600,
+        "active": 1
+      },
+      {
+        "id": 1002,
+        "title": "Colouring",
+        "category_id": 20,
+        "price_min": 20000,
+        "price_max": 45000,
+        "seance_length": 7200,
+        "active": 1
+      },
+      {
+        "id": 1003,
+        "title": "Withdrawn treatment",
+        "category_id": 21,
+        "price_min": 5000,
+        "price_max": 5000,
+        "seance_length": 1800,
+        "active": 0
+      }
+    ],
+    "category": [
+      { "id": 20, "title": "Hair" },
+      { "id": 21, "title": "Care" }
+    ]
+  },
+  "meta": []
+}
