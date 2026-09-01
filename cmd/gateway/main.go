@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/telegram"
-	"github.com/aramyants/omnichannel-booking-assistant/internal/application/conversation"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/persistence/memory"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/assistant"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/platform/config"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/platform/httpserver"
@@ -60,7 +61,7 @@ func run() error {
 	defer stop()
 
 	gw := &gateway{logger: logger, version: version}
-	senders := make(map[messaging.Provider]conversation.Sender)
+	senders := make(map[messaging.Provider]assistant.Sender)
 
 	var telegramClient *telegram.Client
 	if cfg.Telegram.Enabled() {
@@ -73,12 +74,31 @@ func run() error {
 		senders[messaging.ProviderTelegram] = telegramClient
 	}
 
-	conversations := conversation.NewService(senders, logger)
+	// State lives in the process for now. It is lost on restart and not shared
+	// between instances, which is fine locally and not fine in production; the
+	// durable store lands behind these same interfaces.
+	store := memory.New()
+	if cfg.Env == config.EnvProduction {
+		logger.Warn("running with in-process storage: conversations and " +
+			"deduplication are lost on restart and not shared between instances")
+	}
+
+	assistantService, err := assistant.NewService(assistant.Deps{
+		Senders:       senders,
+		Customers:     store,
+		Conversations: store,
+		Messages:      store,
+		Processed:     store,
+		Logger:        logger,
+	})
+	if err != nil {
+		return err
+	}
 
 	if cfg.Telegram.Enabled() {
 		gw.telegram = telegram.NewHandler(
 			telegram.NewWebhook(cfg.Telegram.WebhookSecret),
-			conversations,
+			assistantService,
 			logger,
 		)
 	}
