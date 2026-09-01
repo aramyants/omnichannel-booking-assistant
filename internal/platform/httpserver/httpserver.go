@@ -44,9 +44,11 @@ type Server struct {
 //
 // The listener is opened here rather than in Run so that an unavailable port
 // fails immediately and so that Addr reports the resolved port, which matters
-// when addr requests port 0.
-func New(addr string, handler http.Handler, logger *slog.Logger, shutdownTimeout time.Duration) (*Server, error) {
-	listener, err := net.Listen("tcp", addr)
+// when addr requests port 0. ctx bounds the bind itself; it does not control
+// the lifetime of the returned server, which Run governs.
+func New(ctx context.Context, addr string, handler http.Handler, logger *slog.Logger, shutdownTimeout time.Duration) (*Server, error) {
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", addr, err)
 	}
