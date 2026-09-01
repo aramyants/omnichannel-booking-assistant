@@ -55,6 +55,26 @@ Webhooks are acknowledged before any slow work starts. Everything expensive
 happens asynchronously, so a provider never waits on an AI call or an Altegio
 request and never times out into a retry storm.
 
+## Operating behaviour
+
+Logs are JSON on stdout, keyed for Cloud Logging so entries arrive as
+structured fields rather than text. Every log line carries the running build.
+
+Every request is given an identifier, returned in `X-Request-Id` and attached to
+every entry written while handling it. An identifier supplied by the caller, or
+the trace Cloud Run attaches, is reused rather than replaced, so one customer
+message can be followed across services. Query strings and bodies are never
+logged: webhook URLs carry provider verification tokens and bodies carry
+customer messages.
+
+A panic in a handler becomes a 500 and one log entry with a stack, rather than a
+dropped connection the caller sees as a network failure. Request bodies are
+capped at 1 MiB.
+
+On `SIGTERM` the server stops accepting connections and waits for in-flight
+requests to finish, so a deploy cannot turn a half-processed webhook into a
+duplicate booking.
+
 ## Requirements
 
 - Go 1.27 or newer
@@ -71,7 +91,7 @@ make run
 
 ```sh
 curl localhost:8080/health
-# {"status":"ok"}
+# {"status":"ok","version":"dev"}
 ```
 
 Or in a container:
@@ -97,21 +117,23 @@ found, rather than failing later inside a request.
 Secrets are never read from files in the repository. In production they come
 from Secret Manager and arrive as environment variables.
 
-## Tests
+## Tests and checks
 
 ```sh
-make test
-make test-race   # needs cgo and a C compiler
-make check       # vet, test and build
+make test        # unit tests
+make test-race   # with the race detector, needs cgo and a C compiler
+make lint        # golangci-lint
+make vulncheck   # known vulnerabilities in dependencies and the standard library
+make check       # vet, lint, test and build
 ```
 
-CI runs formatting, `go vet`, the race-enabled test suite and a build on every
-pull request.
+CI runs formatting, `go vet`, `golangci-lint`, `govulncheck`, the race-enabled
+test suite and a build on every pull request.
 
 ## Layout
 
 ```
-cmd/gateway/          HTTP entry point and route registration
+cmd/gateway/          HTTP entry point, routes and middleware wiring
 internal/platform/    Cross-cutting concerns: config, logging, HTTP server
 ```
 
