@@ -1,6 +1,9 @@
 # Build the binary against the full toolchain.
 FROM golang:1.27-alpine AS build
 
+# Stamped into the binary so a running container can report which commit it is.
+ARG VERSION=dev
+
 WORKDIR /src
 
 # Dependencies are copied first so this layer is cached until they change.
@@ -14,7 +17,7 @@ COPY . .
 # -s -w drop the symbol table and DWARF data.
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -X main.version=${VERSION}" \
     -o /out/gateway \
     ./cmd/gateway
 
