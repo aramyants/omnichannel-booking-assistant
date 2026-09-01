@@ -12,7 +12,7 @@ import (
 )
 
 func testRoutes() http.Handler {
-	return routes(slog.New(slog.NewTextHandler(io.Discard, nil)), "test")
+	return (&gateway{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), version: "test"}).routes()
 }
 
 func TestHandleHealth(t *testing.T) {
@@ -78,9 +78,38 @@ func TestRequestsAreLogged(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	rec := httptest.NewRecorder()
-	routes(logger, "test").ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil))
+	gw := &gateway{logger: logger, version: "test"}
+	gw.routes().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil))
 
 	if !strings.Contains(buf.String(), "request completed") {
 		t.Errorf("no request log entry was written: %s", buf.String())
+	}
+}
+
+// TestTelegramRouteIsAbsentWhenTheChannelIsOff checks that an unconfigured
+// channel serves nothing, rather than serving an endpoint that fails.
+func TestTelegramRouteIsAbsentWhenTheChannelIsOff(t *testing.T) {
+	rec := httptest.NewRecorder()
+	testRoutes().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/webhooks/telegram", nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestTelegramRouteIsServedWhenConfigured(t *testing.T) {
+	gw := &gateway{
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		version: "test",
+		telegram: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	}
+
+	rec := httptest.NewRecorder()
+	gw.routes().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/webhooks/telegram", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }

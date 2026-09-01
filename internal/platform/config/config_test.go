@@ -111,6 +111,121 @@ func TestLoadInvalid(t *testing.T) {
 	}
 }
 
+func TestTelegramIsOptional(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.Telegram.Enabled() {
+		t.Error("Telegram reports enabled with no bot token")
+	}
+}
+
+func TestTelegramConfiguration(t *testing.T) {
+	tests := map[string]struct {
+		token   string
+		secret  string
+		wantErr string
+	}{
+		"a token and a secret": {
+			token:  "123456:AAHtestTokenValue",
+			secret: "a-valid_SECRET-123",
+		},
+		// An enabled channel with no secret would expose an unauthenticated
+		// public endpoint, so it is refused rather than defaulted.
+		"a token with no secret": {
+			token:   "123456:AAHtestTokenValue",
+			wantErr: "TELEGRAM_WEBHOOK_SECRET is required",
+		},
+		"a secret with no token": {
+			secret:  "a-valid_SECRET-123",
+			wantErr: "TELEGRAM_BOT_TOKEN is not",
+		},
+		// Telegram rejects setWebhook outright for these, so catching it at
+		// startup turns a confusing API error into a clear one.
+		"a secret with illegal characters": {
+			token:   "123456:AAHtestTokenValue",
+			secret:  "has spaces and: colons",
+			wantErr: "may only contain",
+		},
+		"a secret that is too long": {
+			token:   "123456:AAHtestTokenValue",
+			secret:  strings.Repeat("a", 257),
+			wantErr: "at most 256 characters",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("APP_ENV", "development")
+			t.Setenv("TELEGRAM_BOT_TOKEN", tt.token)
+			t.Setenv("TELEGRAM_WEBHOOK_SECRET", tt.secret)
+
+			cfg, err := Load()
+
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Load() returned error: %v", err)
+				}
+				if !cfg.Telegram.Enabled() {
+					t.Error("Telegram reports disabled despite a bot token")
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatal("Load() accepted an invalid Telegram configuration")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestPublicBaseURL(t *testing.T) {
+	tests := map[string]struct {
+		raw     string
+		want    string
+		wantErr string
+	}{
+		"unset":            {raw: "", want: ""},
+		"https origin":     {raw: "https://booking.example.run.app", want: "https://booking.example.run.app"},
+		"trailing slash":   {raw: "https://booking.example.run.app/", want: "https://booking.example.run.app"},
+		"plain http":       {raw: "http://booking.example.com", wantErr: "must use https"},
+		"no host":          {raw: "https://", wantErr: "has no host"},
+		"not a url at all": {raw: "://nope", wantErr: "not a valid URL"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("APP_ENV", "development")
+			t.Setenv("PUBLIC_BASE_URL", tt.raw)
+
+			cfg, err := Load()
+
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Load() returned error: %v", err)
+				}
+				if cfg.PublicBaseURL != tt.want {
+					t.Errorf("PublicBaseURL = %q, want %q", cfg.PublicBaseURL, tt.want)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatal("Load() accepted an invalid PUBLIC_BASE_URL")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 // TestLoadReportsEveryError guards the decision to accumulate failures rather
 // than return on the first one.
 func TestLoadReportsEveryError(t *testing.T) {
