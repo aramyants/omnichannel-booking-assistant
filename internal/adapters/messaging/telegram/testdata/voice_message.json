@@ -1,0 +1,25 @@
+{
+  "update_id": 758345126,
+  "message": {
+    "message_id": 4130,
+    "from": {
+      "id": 219847362,
+      "is_bot": false,
+      "first_name": "Anna",
+      "language_code": "hy"
+    },
+    "chat": {
+      "id": 219847362,
+      "first_name": "Anna",
+      "type": "private"
+    },
+    "date": 1756728180,
+    "voice": {
+      "duration": 6,
+      "mime_type": "audio/ogg",
+      "file_id": "AwACAgIAAxkBAAIC_2f",
+      "file_unique_id": "AgADr8cxG5v",
+      "file_size": 14203
+    }
+  }
+}

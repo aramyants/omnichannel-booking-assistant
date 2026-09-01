@@ -1,6 +1,5 @@
 // Command gateway is the HTTP entry point for the booking assistant. It
-// receives channel webhooks, normalises them and hands them to asynchronous
-// processing.
+// receives channel webhooks, normalises them and hands them to the application.
 package main
 
 import (
@@ -9,7 +8,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/telegram"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/conversation"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/platform/config"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/platform/httpserver"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/platform/logging"
@@ -18,6 +21,10 @@ import (
 // version identifies the running build. It is overwritten at link time with
 // -ldflags "-X main.version=<revision>" and stays "dev" for local builds.
 var version = "dev"
+
+// webhookRegistrationTimeout bounds the calls that tell providers where to
+// deliver updates. They run during startup, so they must not be able to hang it.
+const webhookRegistrationTimeout = 15 * time.Second
 
 func main() {
 	// Install a structured logger before anything else can fail. Configuration
@@ -52,12 +59,80 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	srv, err := httpserver.New(ctx, cfg.Addr(), routes(logger, version), logger, cfg.ShutdownTimeout)
+	gw := &gateway{logger: logger, version: version}
+	senders := make(map[messaging.Provider]conversation.Sender)
+
+	var telegramClient *telegram.Client
+	if cfg.Telegram.Enabled() {
+		var opts []telegram.ClientOption
+		if cfg.Telegram.APIBaseURL != "" {
+			opts = append(opts, telegram.WithBaseURL(cfg.Telegram.APIBaseURL))
+			logger.Warn("using a non-default telegram api host", "host", cfg.Telegram.APIBaseURL)
+		}
+		telegramClient = telegram.NewClient(cfg.Telegram.BotToken, opts...)
+		senders[messaging.ProviderTelegram] = telegramClient
+	}
+
+	conversations := conversation.NewService(senders, logger)
+
+	if cfg.Telegram.Enabled() {
+		gw.telegram = telegram.NewHandler(
+			telegram.NewWebhook(cfg.Telegram.WebhookSecret),
+			conversations,
+			logger,
+		)
+	}
+
+	srv, err := httpserver.New(ctx, cfg.Addr(), gw.routes(), logger, cfg.ShutdownTimeout)
 	if err != nil {
 		return err
 	}
 
-	logger.Info("gateway starting", "env", string(cfg.Env), "addr", srv.Addr())
+	// Registration happens after the listener is bound but before requests are
+	// served. The socket already accepts connections at this point, so a
+	// delivery arriving in the gap waits in the backlog rather than failing.
+	if telegramClient != nil {
+		registerTelegramWebhook(ctx, telegramClient, cfg, logger)
+	}
+
+	logger.Info("gateway starting",
+		"env", string(cfg.Env),
+		"addr", srv.Addr(),
+		"channels", enabledChannels(cfg),
+	)
 
 	return srv.Run(ctx)
+}
+
+// registerTelegramWebhook points Telegram at this deployment.
+//
+// A failure here is logged rather than fatal. The webhook is very likely still
+// registered from a previous deployment, so refusing to start over a transient
+// Telegram outage would take a working service down.
+func registerTelegramWebhook(ctx context.Context, client *telegram.Client, cfg config.Config, logger *slog.Logger) {
+	if cfg.PublicBaseURL == "" {
+		logger.Warn("not registering the telegram webhook because PUBLIC_BASE_URL is unset")
+		return
+	}
+
+	callbackURL := cfg.PublicBaseURL + TelegramWebhookPath
+
+	ctx, cancel := context.WithTimeout(ctx, webhookRegistrationTimeout)
+	defer cancel()
+
+	if err := client.SetWebhook(ctx, callbackURL, cfg.Telegram.WebhookSecret); err != nil {
+		logger.Error("could not register the telegram webhook",
+			"error", err, "callback_url", callbackURL)
+		return
+	}
+
+	logger.Info("registered the telegram webhook", "callback_url", callbackURL)
+}
+
+func enabledChannels(cfg config.Config) []string {
+	channels := []string{}
+	if cfg.Telegram.Enabled() {
+		channels = append(channels, string(messaging.ProviderTelegram))
+	}
+	return channels
 }

@@ -12,23 +12,41 @@ import (
 // largest documented payload across the channels we target is well under this.
 const maxRequestBody = 1 << 20 // 1 MiB
 
-// healthPath is logged at debug rather than info. Cloud Run probes it
-// continuously and those entries would otherwise bury real traffic.
-const healthPath = "/health"
+const (
+	// healthPath is logged at debug rather than info. Cloud Run probes it
+	// continuously and those entries would otherwise bury real traffic.
+	healthPath = "/health"
 
-// routes builds the gateway's HTTP handler. Channel webhook endpoints will be
-// registered here as each provider adapter lands.
-func routes(logger *slog.Logger, version string) http.Handler {
+	// TelegramWebhookPath is where Telegram delivers updates. It is exported
+	// because the same value is registered with Telegram at startup, and the
+	// two must not be allowed to drift apart.
+	TelegramWebhookPath = "/webhooks/telegram"
+)
+
+// gateway carries the dependencies the HTTP layer needs. Channel handlers are
+// nil when that channel is not configured, and their routes are then not
+// served at all rather than served and failing.
+type gateway struct {
+	logger   *slog.Logger
+	version  string
+	telegram http.Handler
+}
+
+func (g *gateway) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("GET "+healthPath, handleHealth(version))
+	mux.Handle("GET "+healthPath, handleHealth(g.version))
+
+	if g.telegram != nil {
+		mux.Handle("POST "+TelegramWebhookPath, g.telegram)
+	}
 
 	// Outermost first. RequestID runs before the logger so every entry carries
 	// a correlation id, and the logger runs outside Recover so a panic is still
 	// reported as a completed request with status 500.
 	return httpserver.Chain(mux,
 		httpserver.RequestID,
-		httpserver.RequestLogger(logger, healthPath),
-		httpserver.Recover(logger),
+		httpserver.RequestLogger(g.logger, healthPath),
+		httpserver.Recover(g.logger),
 		httpserver.MaxBytes(maxRequestBody),
 	)
 }

@@ -1,0 +1,19 @@
+{
+  "update_id": 758345129,
+  "message": {
+    "message_id": 88,
+    "from": {
+      "id": 219847362,
+      "is_bot": false,
+      "first_name": "Anna",
+      "language_code": "hy"
+    },
+    "chat": {
+      "id": -1001234567890,
+      "title": "Salon regulars",
+      "type": "supergroup"
+    },
+    "date": 1756728300,
+    "text": "Does anyone know if Friday is free?"
+  }
+}

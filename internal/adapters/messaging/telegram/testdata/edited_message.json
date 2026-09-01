@@ -1,0 +1,20 @@
+{
+  "update_id": 758345127,
+  "edited_message": {
+    "message_id": 4127,
+    "from": {
+      "id": 219847362,
+      "is_bot": false,
+      "first_name": "Anna",
+      "language_code": "hy"
+    },
+    "chat": {
+      "id": 219847362,
+      "first_name": "Anna",
+      "type": "private"
+    },
+    "date": 1756728000,
+    "edit_date": 1756728240,
+    "text": "Hi, can I book a haircut on Saturday afternoon?"
+  }
+}

@@ -11,15 +11,18 @@ validates every request before it reaches Altegio.
 
 ## Status
 
-Early. The foundation runs; no channels are connected yet.
+Early. Telegram messages arrive, are normalised and are answered. Nothing is
+booked yet.
 
 | Area | State |
 | --- | --- |
 | HTTP gateway, config, logging, graceful shutdown | done |
-| Telegram | not started |
-| WhatsApp, Instagram, Messenger, Viber | not started |
+| Telegram: webhook, normalisation, replies | done |
+| Conversation persistence and deduplication | next |
+| Asynchronous processing | not started |
 | Altegio integration | not started |
 | AI orchestration | not started |
+| WhatsApp, Instagram, Messenger, Viber | not started |
 
 ## Design
 
@@ -113,9 +116,52 @@ found, rather than failing later inside a request.
 | `PORT` | no | `8080` | TCP port to listen on |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn` or `error` |
 | `SHUTDOWN_TIMEOUT` | no | `15s` | How long in-flight requests may take to drain |
+| `PUBLIC_BASE_URL` | no | | This service's public https origin, used to register webhooks |
+| `TELEGRAM_BOT_TOKEN` | no | | Enables the Telegram channel when set |
+| `TELEGRAM_WEBHOOK_SECRET` | with token | | Shared secret Telegram echoes on every delivery |
+| `TELEGRAM_API_BASE_URL` | no | | Overrides the Telegram host, for local stubs or egress proxies |
+
+A channel is enabled by supplying its credentials and disabled by leaving them
+out, in which case its endpoint is not served at all. Enabling Telegram without
+a webhook secret is refused at startup rather than defaulted, because the
+alternative is an unauthenticated public endpoint.
 
 Secrets are never read from files in the repository. In production they come
 from Secret Manager and arrive as environment variables.
+
+## Channels
+
+### Telegram
+
+The service registers its own webhook at startup from `PUBLIC_BASE_URL`, so
+deploying it is the only step needed to make it reachable, and a changed URL
+cannot be left pointing at a previous deployment.
+
+Every delivery must carry the configured secret in
+`X-Telegram-Bot-Api-Secret-Token`, compared in constant time. Telegram publishes
+no source IP range and signs nothing, so that secret is the endpoint's only
+authentication. Deliveries without it are refused before anything is parsed.
+
+The status returned to Telegram decides whether it redelivers, so the two
+failure modes are answered differently. A body that cannot be parsed will never
+parse, so it is logged and acknowledged. A message that parsed but could not be
+handled may succeed on a second attempt, so it is answered with an error and
+Telegram sends it again.
+
+Messages the assistant cannot read, such as voice notes, are answered by saying
+so rather than ignored. A caption on a photo is treated as the request, because
+that is usually where it is.
+
+## Deployment
+
+See [docs/deployment.md](docs/deployment.md) for going live on Cloud Run and for
+the credentials each channel needs.
+
+```sh
+export GCP_PROJECT_ID=my-project
+export TELEGRAM_BOT_TOKEN=... TELEGRAM_WEBHOOK_SECRET=...
+./deployments/gcp/deploy.sh
+```
 
 ## Tests and checks
 
@@ -134,10 +180,18 @@ test suite and a build on every pull request.
 
 ```
 cmd/gateway/          HTTP entry point, routes and middleware wiring
+internal/domain/      Channel-independent types and rules
+internal/application/ Use cases, and the ports they need
+internal/adapters/    Provider integrations behind those ports
 internal/platform/    Cross-cutting concerns: config, logging, HTTP server
+deployments/          Deployment scripts
 ```
 
 Packages are added as they are needed rather than scaffolded up front.
+
+Provider payloads never leave their adapter. Each one is normalised into a
+single envelope type at the boundary, so adding a channel does not change the
+conversation logic.
 
 ## Licence
 
