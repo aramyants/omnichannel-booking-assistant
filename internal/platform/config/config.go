@@ -48,7 +48,36 @@ type Config struct {
 	PublicBaseURL string
 
 	Telegram Telegram
+	Altegio  Altegio
 }
+
+// Altegio holds the credentials and settings for the scheduling system. It is
+// disabled when the partner token is absent.
+type Altegio struct {
+	// PartnerToken identifies the integration and reaches the public booking
+	// endpoints on its own.
+	PartnerToken string
+
+	// UserToken authorises access to the business's own data. Reading the
+	// public catalogue works without it; anything about real appointments does
+	// not.
+	UserToken string
+
+	// CompanyID is the Altegio location this deployment serves.
+	CompanyID string
+
+	// Location is the business's timezone. A customer saying "Friday at three"
+	// means three o'clock where the salon is, and Altegio reports some times
+	// without an offset, so this cannot be guessed.
+	Location *time.Location
+
+	// Currency labels the prices Altegio returns, which carry no currency of
+	// their own.
+	Currency string
+}
+
+// Enabled reports whether the scheduling system is configured.
+func (a Altegio) Enabled() bool { return a.PartnerToken != "" }
 
 // Telegram holds the credentials for the Telegram channel. The channel is
 // disabled, and its endpoint not served, when the bot token is absent.
@@ -130,6 +159,10 @@ func Load() (Config, error) {
 	}
 	errs = append(errs, cfg.Telegram.validate()...)
 
+	altegio, altegioErrs := loadAltegio()
+	cfg.Altegio = altegio
+	errs = append(errs, altegioErrs...)
+
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("load config: %w", errors.Join(errs...))
 	}
@@ -177,6 +210,46 @@ func isTelegramSecret(s string) bool {
 		}
 	}
 	return true
+}
+
+// loadAltegio reads the scheduling system settings and reports every problem.
+func loadAltegio() (Altegio, []error) {
+	cfg := Altegio{
+		PartnerToken: getenv("ALTEGIO_PARTNER_TOKEN", ""),
+		UserToken:    getenv("ALTEGIO_USER_TOKEN", ""),
+		CompanyID:    getenv("ALTEGIO_COMPANY_ID", ""),
+		Currency:     getenv("ALTEGIO_CURRENCY", ""),
+		Location:     time.UTC,
+	}
+
+	var errs []error
+
+	// The timezone is validated even when the channel is off, because a name
+	// that does not load is a deployment mistake worth reporting either way.
+	if name := getenv("ALTEGIO_TIMEZONE", ""); name != "" {
+		loc, err := time.LoadLocation(name)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("ALTEGIO_TIMEZONE is not a known timezone: %w", err))
+		} else {
+			cfg.Location = loc
+		}
+	}
+
+	if !cfg.Enabled() {
+		if cfg.CompanyID != "" || cfg.UserToken != "" {
+			errs = append(errs, errors.New("ALTEGIO_COMPANY_ID or ALTEGIO_USER_TOKEN is set but ALTEGIO_PARTNER_TOKEN is not"))
+		}
+		return cfg, errs
+	}
+
+	if cfg.CompanyID == "" {
+		errs = append(errs, errors.New("ALTEGIO_COMPANY_ID is required when ALTEGIO_PARTNER_TOKEN is set"))
+	}
+
+	// Reading the catalogue works with the partner token alone, so a missing
+	// user token is a warning rather than a failure. It is reported at startup
+	// instead, where it can name what will not work.
+	return cfg, errs
 }
 
 // validatePublicBaseURL requires an absolute HTTPS origin. Every provider this
