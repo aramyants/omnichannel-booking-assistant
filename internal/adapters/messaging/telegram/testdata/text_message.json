@@ -1,0 +1,23 @@
+{
+  "update_id": 758345123,
+  "message": {
+    "message_id": 4127,
+    "from": {
+      "id": 219847362,
+      "is_bot": false,
+      "first_name": "Anna",
+      "last_name": "Petrosyan",
+      "username": "annap",
+      "language_code": "hy"
+    },
+    "chat": {
+      "id": 219847362,
+      "first_name": "Anna",
+      "last_name": "Petrosyan",
+      "username": "annap",
+      "type": "private"
+    },
+    "date": 1756728000,
+    "text": "Hi, can I book a haircut on Friday afternoon?"
+  }
+}

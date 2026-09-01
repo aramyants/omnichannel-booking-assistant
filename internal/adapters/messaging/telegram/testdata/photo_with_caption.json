@@ -1,0 +1,28 @@
+{
+  "update_id": 758345125,
+  "message": {
+    "message_id": 4129,
+    "from": {
+      "id": 219847362,
+      "is_bot": false,
+      "first_name": "Anna",
+      "language_code": "hy"
+    },
+    "chat": {
+      "id": 219847362,
+      "first_name": "Anna",
+      "type": "private"
+    },
+    "date": 1756728120,
+    "photo": [
+      {
+        "file_id": "AgACAgIAAxkBAAIC_2e",
+        "file_unique_id": "AQADr8cxG5u",
+        "file_size": 30211,
+        "width": 800,
+        "height": 600
+      }
+    ],
+    "caption": "Can I book this style for Saturday?"
+  }
+}

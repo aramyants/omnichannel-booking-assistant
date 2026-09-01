@@ -1,0 +1,34 @@
+{
+  "update_id": 758345124,
+  "message": {
+    "message_id": 4128,
+    "from": {
+      "id": 219847362,
+      "is_bot": false,
+      "first_name": "Anna",
+      "language_code": "hy"
+    },
+    "chat": {
+      "id": 219847362,
+      "first_name": "Anna",
+      "type": "private"
+    },
+    "date": 1756728060,
+    "photo": [
+      {
+        "file_id": "AgACAgIAAxkBAAIC_2c",
+        "file_unique_id": "AQADr8cxG5s",
+        "file_size": 1234,
+        "width": 90,
+        "height": 67
+      },
+      {
+        "file_id": "AgACAgIAAxkBAAIC_2d",
+        "file_unique_id": "AQADr8cxG5t",
+        "file_size": 28451,
+        "width": 800,
+        "height": 600
+      }
+    ]
+  }
+}

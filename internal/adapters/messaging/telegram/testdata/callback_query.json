@@ -1,0 +1,14 @@
+{
+  "update_id": 758345128,
+  "callback_query": {
+    "id": "4382042044176397",
+    "from": {
+      "id": 219847362,
+      "is_bot": false,
+      "first_name": "Anna",
+      "language_code": "hy"
+    },
+    "chat_instance": "-3424222437402620",
+    "data": "slot:2026-09-04T15:00"
+  }
+}
