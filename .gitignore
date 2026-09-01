@@ -1,0 +1,29 @@
+# Binaries
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test and coverage output
+*.test
+*.out
+coverage.html
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Local environment
+.env
+.env.local
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
