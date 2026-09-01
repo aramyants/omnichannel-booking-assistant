@@ -10,6 +10,13 @@ import (
 	"syscall"
 	"time"
 
+	// The runtime image is distroless and carries no timezone database, so
+	// without this every location lookup would fail and appointment times would
+	// silently fall back to UTC. Embedding it costs a few hundred kilobytes and
+	// removes a class of bug that only appears in production.
+	_ "time/tzdata"
+
+	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/altegio"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/telegram"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/persistence/memory"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/assistant"
@@ -26,6 +33,10 @@ var version = "dev"
 // webhookRegistrationTimeout bounds the calls that tell providers where to
 // deliver updates. They run during startup, so they must not be able to hang it.
 const webhookRegistrationTimeout = 15 * time.Second
+
+// schedulingCheckTimeout bounds the startup check against the scheduling
+// system, for the same reason.
+const schedulingCheckTimeout = 15 * time.Second
 
 func main() {
 	// Install a structured logger before anything else can fail. Configuration
@@ -103,6 +114,21 @@ func run() error {
 		)
 	}
 
+	if cfg.Altegio.Enabled() {
+		scheduling, err := altegio.NewClient(
+			cfg.Altegio.PartnerToken,
+			cfg.Altegio.UserToken,
+			cfg.Altegio.CompanyID,
+			logger,
+			altegio.WithLocation(cfg.Altegio.Location),
+			altegio.WithCurrency(cfg.Altegio.Currency),
+		)
+		if err != nil {
+			return err
+		}
+		verifyScheduling(ctx, scheduling, cfg, logger)
+	}
+
 	srv, err := httpserver.New(ctx, cfg.Addr(), gw.routes(), logger, cfg.ShutdownTimeout)
 	if err != nil {
 		return err
@@ -147,6 +173,36 @@ func registerTelegramWebhook(ctx context.Context, client *telegram.Client, cfg c
 	}
 
 	logger.Info("registered the telegram webhook", "callback_url", callbackURL)
+}
+
+// verifyScheduling reads the service catalogue once at startup.
+//
+// It turns a wrong token or a wrong location id into one clear line in the
+// deployment log, rather than into a customer being told the assistant cannot
+// help them. A failure is reported but does not stop the process: the messaging
+// channels still work, and refusing to start over a scheduling outage would
+// take the whole service down with it.
+func verifyScheduling(ctx context.Context, client *altegio.Client, cfg config.Config, logger *slog.Logger) {
+	if cfg.Altegio.UserToken == "" {
+		logger.Warn("no altegio user token: the public catalogue is readable but " +
+			"appointments and customer records are not")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, schedulingCheckTimeout)
+	defer cancel()
+
+	services, err := client.ListServices(ctx)
+	if err != nil {
+		logger.Error("could not read the altegio service catalogue",
+			"error", err, "company_id", cfg.Altegio.CompanyID)
+		return
+	}
+
+	logger.Info("connected to altegio",
+		"company_id", cfg.Altegio.CompanyID,
+		"bookable_services", len(services),
+		"timezone", cfg.Altegio.Location.String(),
+	)
 }
 
 func enabledChannels(cfg config.Config) []string {
