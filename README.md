@@ -19,10 +19,10 @@ booked yet.
 | HTTP gateway, config, logging, graceful shutdown | done |
 | Telegram: webhook, normalisation, replies | done |
 | Customer identity, conversations, transcript, deduplication | done, in-process store |
-| Durable storage | next |
+| Altegio: catalogue, availability, booking | done, not yet reachable from a conversation |
+| AI orchestration | next |
+| Durable storage | not started |
 | Asynchronous processing | not started |
-| Altegio integration | not started |
-| AI orchestration | not started |
 | WhatsApp, Instagram, Messenger, Viber | not started |
 
 ## Design
@@ -142,6 +142,11 @@ found, rather than failing later inside a request.
 | `TELEGRAM_BOT_TOKEN` | no | | Enables the Telegram channel when set |
 | `TELEGRAM_WEBHOOK_SECRET` | with token | | Shared secret Telegram echoes on every delivery |
 | `TELEGRAM_API_BASE_URL` | no | | Overrides the Telegram host, for local stubs or egress proxies |
+| `ALTEGIO_PARTNER_TOKEN` | no | | Enables the scheduling system when set |
+| `ALTEGIO_USER_TOKEN` | no | | Authorises the business's own data |
+| `ALTEGIO_COMPANY_ID` | with token | | The Altegio location this deployment serves |
+| `ALTEGIO_TIMEZONE` | no | `UTC` | The business's timezone, as an IANA name |
+| `ALTEGIO_CURRENCY` | no | | Labels the prices Altegio returns |
 
 A channel is enabled by supplying its credentials and disabled by leaving them
 out, in which case its endpoint is not served at all. Enabling Telegram without
@@ -173,6 +178,43 @@ Telegram sends it again.
 Messages the assistant cannot read, such as voice notes, are answered by saying
 so rather than ignored. A caption on a photo is treated as the request, because
 that is usually where it is.
+
+## Scheduling
+
+Altegio holds the calendar and stays the authority on it. This service reads the
+catalogue and availability from it and writes appointments to it; it never keeps
+a competing copy of who is booked when.
+
+Availability is a snapshot, never a reservation. Between showing a customer a
+free slot and booking it, somebody else can take it, so every booking is checked
+immediately before it is created and a refusal is reported as the slot having
+gone rather than as an error.
+
+A booking request carries an idempotency key, sent to Altegio as `api_id`, so
+the same request submitted twice is recognisable rather than a second
+appointment. Booking requests are never retried automatically: nothing in the
+published API guarantees a repeat is recognised, and the cost of being wrong is
+a customer with two appointments. A request whose outcome is never learned is
+reported as such, so it can be reconciled instead of guessed at.
+
+Times are stored in UTC and sent to Altegio in the business's own timezone. A
+customer asking for "Friday at three" means three o'clock where the salon is,
+and some Altegio times arrive without an offset, so `ALTEGIO_TIMEZONE` has to be
+set correctly or every appointment lands at the wrong hour.
+
+Requests are limited to four per second, under Altegio's ceiling of five per
+second and two hundred per minute per IP address. Reads are retried with
+exponential backoff and jitter; rejected credentials are not, because they fail
+identically every time.
+
+At startup the service reads the catalogue once, so a wrong token or location id
+becomes one line in the deployment log rather than a customer being told the
+assistant cannot help.
+
+The response shapes follow Altegio's published documentation, which does not
+fully specify them. The mapping is tolerant of missing fields and covered by
+fixtures in `internal/adapters/altegio/testdata`, which is where to correct any
+difference found against a live account.
 
 ## Deployment
 
