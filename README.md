@@ -21,9 +21,9 @@ booked yet.
 | Customer identity, conversations, transcript, deduplication | done, in-process store |
 | Altegio: catalogue, availability, booking | done |
 | AI orchestration and tool calling | done |
-| Booking from a conversation | next |
-| Durable storage | not started |
-| Asynchronous processing | not started |
+| Booking from a conversation | done |
+| Durable storage | next |
+| Cancel and reschedule, reminders | not started |
 | WhatsApp, Instagram, Messenger, Viber | not started |
 
 ## Design
@@ -263,6 +263,42 @@ Only what a person could have read is stored or replayed: customer messages and
 the replies they were sent. The model's private reasoning is discarded, and
 OpenAI is asked not to retain the conversation, because this system keeps the
 only copy that matters.
+
+### Taking a booking
+
+Agreeing to an appointment and creating one are two separate steps, and the
+separation is what makes "never tell a customer they have an appointment before
+one exists" something the code enforces rather than something the prompt asks
+for.
+
+`prepare_booking` resolves the service and specialist from the catalogue, reads
+the time in the business's timezone, normalises the phone number, asks the
+scheduling system whether the booking would be accepted, and stores a draft. It
+creates nothing, and it tells the model so.
+
+`confirm_booking` takes **no arguments**. The details are whatever was prepared,
+so nothing can change between the customer agreeing and the appointment being
+made. Only when the scheduling system has confirmed does anything report a
+booking.
+
+The idempotency key is generated once, when the draft is prepared, and reused
+unchanged on every attempt. Regenerating it would turn a retry into a second
+appointment.
+
+Three outcomes, three different behaviours:
+
+- **Booked.** The customer is told, with the reference.
+- **The time was taken** between preparing and confirming. The draft is
+  discarded and the model is told to offer what is left, and explicitly told not
+  to say the appointment was made.
+- **The outcome is unknown**, because the request left and no answer came. The
+  appointment may or may not exist, so the conversation goes to a colleague to
+  reconcile, and the model is told to say neither that it worked nor that it
+  failed.
+
+A draft is not a hold. After an hour it is refused, because the availability it
+was built from is stale enough that confirming is more likely to fail than
+succeed.
 
 ### Why the prompt is not the security boundary
 

@@ -92,6 +92,9 @@ type Deps struct {
 	// answer anything about services or availability.
 	Scheduling Scheduling
 
+	// Bookings records the appointments this system has made.
+	Bookings BookingRepository
+
 	Business Business
 
 	// Now supplies the current time. It is injected so tests can assert on
@@ -155,8 +158,10 @@ func NewService(deps Deps) (*Service, error) {
 		business:      business,
 		tools: &toolset{
 			scheduling: deps.Scheduling,
+			bookings:   deps.Bookings,
 			now:        now,
 			location:   business.Location,
+			logger:     deps.Logger,
 		},
 	}, nil
 }
@@ -164,9 +169,13 @@ func NewService(deps Deps) (*Service, error) {
 // maxToolRounds bounds the tool-calling loop.
 //
 // Without a limit a model that keeps asking for the same lookup would spend
-// money and the customer's patience indefinitely. Four rounds is more than any
-// legitimate booking question needs.
-const maxToolRounds = 4
+// money and the customer's patience indefinitely.
+//
+// Six is sized for the longest legitimate exchange: a customer who states
+// everything at once needs the catalogue, the specialists, the free times, a
+// prepared booking and a confirmation before there is anything to say. Most
+// messages need one round or none.
+const maxToolRounds = 6
 
 // recentMessageLimit bounds how much transcript is read back. The AI context
 // builder will need a window, not the whole history.
@@ -380,6 +389,8 @@ func (s *Service) reply(
 		return s.compose(msg, cust), nil
 	}
 
+	sess := &session{conv: conv, customer: cust}
+
 	req := ai.Request{
 		Instructions: s.instructions(cust),
 		Messages:     toAIMessages(history),
@@ -418,7 +429,7 @@ func (s *Service) reply(
 		for _, tc := range resp.ToolCalls {
 			s.logger.InfoContext(ctx, "running a tool for the assistant",
 				"conversation_id", conv.ID, "tool", tc.Name)
-			turn.Results = append(turn.Results, s.tools.execute(ctx, conv, tc))
+			turn.Results = append(turn.Results, s.tools.execute(ctx, sess, tc))
 		}
 		req.Turns = append(req.Turns, turn)
 	}

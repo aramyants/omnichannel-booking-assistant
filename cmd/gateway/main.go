@@ -149,6 +149,7 @@ func run() error {
 		Logger:        logger,
 		AI:            model,
 		Scheduling:    scheduling,
+		Bookings:      store,
 		Business: assistant.Business{
 			Name:     cfg.BusinessName,
 			Location: cfg.Altegio.Location,

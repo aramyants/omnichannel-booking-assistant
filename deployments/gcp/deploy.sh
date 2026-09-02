@@ -55,29 +55,60 @@ put_secret() {
   echo "  stored ${name}"
 }
 
-SECRET_FLAGS=()
+SECRET_NAMES=()
+SECRET_MAPPINGS=()
+
+# store records one credential and maps it onto an environment variable in the
+# running container. Values that are not set are skipped, so a partial
+# configuration deploys and reports what is missing at startup rather than
+# failing here.
+store() {
+  local env_var="$1" secret_name="$2" value="$3"
+
+  [[ -z "${value}" ]] && return 0
+
+  put_secret "${secret_name}" "${value}"
+  SECRET_NAMES+=("${secret_name}")
+  SECRET_MAPPINGS+=("${env_var}=${secret_name}:latest")
+}
+
+say "Storing credentials in Secret Manager"
 
 if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
-  say "Storing Telegram credentials"
   : "${TELEGRAM_WEBHOOK_SECRET:?set TELEGRAM_WEBHOOK_SECRET when TELEGRAM_BOT_TOKEN is set}"
-  put_secret telegram-bot-token "${TELEGRAM_BOT_TOKEN}"
-  put_secret telegram-webhook-secret "${TELEGRAM_WEBHOOK_SECRET}"
-  SECRET_FLAGS+=(--set-secrets "TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest")
 fi
 
-# The runtime service account is granted read access to the secrets it is given.
-if [[ ${#SECRET_FLAGS[@]} -gt 0 ]]; then
+store TELEGRAM_BOT_TOKEN       telegram-bot-token       "${TELEGRAM_BOT_TOKEN:-}"
+store TELEGRAM_WEBHOOK_SECRET  telegram-webhook-secret  "${TELEGRAM_WEBHOOK_SECRET:-}"
+store ALTEGIO_PARTNER_TOKEN    altegio-partner-token    "${ALTEGIO_PARTNER_TOKEN:-}"
+store ALTEGIO_USER_TOKEN       altegio-user-token       "${ALTEGIO_USER_TOKEN:-}"
+store OPENAI_API_KEY           openai-api-key           "${OPENAI_API_KEY:-}"
+
+SECRET_FLAGS=()
+if [[ ${#SECRET_MAPPINGS[@]} -gt 0 ]]; then
+  # The runtime service account is granted read access to exactly the secrets
+  # this deployment uses, and no others.
   PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')"
   RUNTIME_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
-  for secret in telegram-bot-token telegram-webhook-secret; do
+  for secret in "${SECRET_NAMES[@]}"; do
     gcloud secrets add-iam-policy-binding "${secret}" \
       --member="serviceAccount:${RUNTIME_SA}" \
       --role=roles/secretmanager.secretAccessor \
       --quiet >/dev/null
   done
-  echo "  granted ${RUNTIME_SA} read access"
+  echo "  granted ${RUNTIME_SA} read access to ${#SECRET_NAMES[@]} secret(s)"
+
+  SECRET_FLAGS+=(--set-secrets "$(IFS=,; echo "${SECRET_MAPPINGS[*]}")")
 fi
+
+# Settings that are not credentials travel as plain environment variables.
+ENV_VARS="APP_ENV=production,LOG_LEVEL=${LOG_LEVEL}"
+[[ -n "${BUSINESS_NAME:-}" ]]     && ENV_VARS+=",BUSINESS_NAME=${BUSINESS_NAME}"
+[[ -n "${ALTEGIO_COMPANY_ID:-}" ]] && ENV_VARS+=",ALTEGIO_COMPANY_ID=${ALTEGIO_COMPANY_ID}"
+[[ -n "${ALTEGIO_TIMEZONE:-}" ]]  && ENV_VARS+=",ALTEGIO_TIMEZONE=${ALTEGIO_TIMEZONE}"
+[[ -n "${ALTEGIO_CURRENCY:-}" ]]  && ENV_VARS+=",ALTEGIO_CURRENCY=${ALTEGIO_CURRENCY}"
+[[ -n "${OPENAI_MODEL:-}" ]]      && ENV_VARS+=",OPENAI_MODEL=${OPENAI_MODEL}"
 
 VERSION="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
 
@@ -92,7 +123,7 @@ gcloud run deploy "${SERVICE}" \
   --max-instances "${MAX_INSTANCES}" \
   --concurrency "${CONCURRENCY}" \
   --memory "${MEMORY}" \
-  --set-env-vars "APP_ENV=production,LOG_LEVEL=${LOG_LEVEL}" \
+  --set-env-vars "${ENV_VARS}" \
   "${SECRET_FLAGS[@]}" \
   --quiet
 
