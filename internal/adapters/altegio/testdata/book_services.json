@@ -28,6 +28,21 @@
         "price_max": 5000,
         "seance_length": 1800,
         "active": 0
+      },
+      {
+        "id": 1004,
+        "title": "Massage",
+        "category_id": 20,
+        "price_min": 39000,
+        "price_max": 39000,
+        "seance_length": null,
+        "active": 1,
+        "prepaid_settings": {
+          "status": "forbidden",
+          "prepaid_full": { "amount": 39000, "currency": "AMD" }
+        },
+        "is_composite": false,
+        "images": null
       }
     ],
     "category": [

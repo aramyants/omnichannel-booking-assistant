@@ -142,8 +142,10 @@ func TestAuthorizationHeader(t *testing.T) {
 			if got := gotReq.Header.Get("Authorization"); got != tt.want {
 				t.Errorf("Authorization = %q, want %q", got, tt.want)
 			}
-			if got := gotReq.Header.Get("Accept"); got != "application/json" {
-				t.Errorf("Accept = %q, want application/json", got)
+			// Altegio answers 400 for any other Accept value, including plain
+			// application/json, so this header is load-bearing.
+			if got := gotReq.Header.Get("Accept"); got != "application/vnd.api.v2+json" {
+				t.Errorf("Accept = %q, want application/vnd.api.v2+json", got)
 			}
 		})
 	}
@@ -164,8 +166,8 @@ func TestListServices(t *testing.T) {
 
 	// The withdrawn service must not reach the assistant: it cannot be able to
 	// offer something the business has taken off the menu.
-	if len(services) != 2 {
-		t.Fatalf("returned %d services, want 2 with the withdrawn one dropped", len(services))
+	if len(services) != 3 {
+		t.Fatalf("returned %d services, want 3 with the withdrawn one dropped", len(services))
 	}
 
 	first := services[0]
@@ -185,6 +187,39 @@ func TestListServices(t *testing.T) {
 		t.Errorf("currency = %q, want AMD", first.Currency)
 	}
 	if got, want := first.PriceLabel(), "8000-12000 AMD"; got != want {
+		t.Errorf("PriceLabel() = %q, want %q", got, want)
+	}
+}
+
+// TestServiceWithNoDuration covers what a real Altegio account actually sends:
+// seance_length is null for every service unless the business has set one. It
+// must decode to a zero duration rather than failing the whole catalogue.
+func TestServiceWithNoDuration(t *testing.T) {
+	srv, _, _ := serveFixture(t, "book_services.json", http.StatusOK)
+	client := newTestClient(t, srv)
+
+	services, err := client.ListServices(t.Context())
+	if err != nil {
+		t.Fatalf("ListServices() returned error: %v", err)
+	}
+
+	var massage booking.Service
+	for _, service := range services {
+		if service.ID == "1004" {
+			massage = service
+		}
+	}
+
+	if massage.ID == "" {
+		t.Fatal("the service with a null duration was dropped from the catalogue")
+	}
+	if massage.Duration != 0 {
+		t.Errorf("duration = %s, want zero", massage.Duration)
+	}
+	if massage.Name != "Massage" {
+		t.Errorf("name = %q", massage.Name)
+	}
+	if got, want := massage.PriceLabel(), "39000 AMD"; got != want {
 		t.Errorf("PriceLabel() = %q, want %q", got, want)
 	}
 }
