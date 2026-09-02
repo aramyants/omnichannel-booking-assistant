@@ -11,24 +11,28 @@ validates every request before it reaches Altegio.
 
 ## Status
 
-Early. Telegram messages arrive, are normalised and are answered. Nothing is
-booked yet.
+The Telegram path is complete locally: messages are authenticated, normalised,
+deduplicated and answered; the assistant can inspect the live Altegio calendar,
+create appointments, list the appointments it created, and safely cancel or
+reschedule them. Production credentials and a live end-to-end booking are still
+required before launch.
 
 | Area | State |
 | --- | --- |
 | HTTP gateway, config, logging, graceful shutdown | done |
 | Telegram: webhook, normalisation, replies | done |
-| Customer identity, conversations, transcript, deduplication | done, in-process store |
+| Customer identity, conversations, transcript, deduplication | done, memory or Firestore |
 | Altegio: catalogue, availability, booking | done |
 | AI orchestration and tool calling | done |
 | Booking from a conversation | done |
-| Durable storage | next |
-| Cancel and reschedule, reminders | not started |
+| Durable Firestore storage | done |
+| Cancel and reschedule | done |
+| Reminders | not started |
 | WhatsApp, Instagram, Messenger, Viber | not started |
 
 ## Design
 
-A modular monolith in one Go module, deployed as small services on Cloud Run.
+A modular monolith in one Go module, deployed as one service on Cloud Run.
 Every external system sits behind an interface, so the business logic depends on
 nothing it does not own.
 
@@ -38,27 +42,21 @@ Telegram  WhatsApp  Instagram  Messenger  Viber
      \       |          |          |      /
       +--------------------------------------+
       |          Webhook gateway             |
-      |  verify, normalise, deduplicate, ack |
+      | verify, claim, normalise, orchestrate|
       +--------------------------------------+
                         |
-                    Pub/Sub
-                        |
-      +--------------------------------------+
-      |             Worker                   |
-      |  conversation state, AI tool calls   |
-      +--------------------------------------+
-                        |
-              Application services
-                        |
-              Altegio adapter -> Altegio
+        Application services and AI tools
+              /                    \
+      Firestore                Altegio adapter
 ```
 
 Dependencies point inward: adapters depend on the application layer, the
 application layer depends on the domain, and the domain depends on neither.
 
-Webhooks are acknowledged before any slow work starts. Everything expensive
-happens asynchronously, so a provider never waits on an AI call or an Altegio
-request and never times out into a retry storm.
+The gateway handles the message before acknowledging it. A short atomic
+processing lease prevents concurrent redelivery from producing two replies;
+failures release the lease so the provider can retry, and abandoned leases
+expire after a crash.
 
 ## Operating behaviour
 
@@ -76,10 +74,10 @@ A panic in a handler becomes a 500 and one log entry with a stack, rather than a
 dropped connection the caller sees as a network failure. Request bodies are
 capped at 1 MiB.
 
-Every provider retries deliveries, so each one is recorded once handled and a
-repeat is dropped. A delivery is marked handled only after its reply is out:
-marking it earlier would mean a failure part-way through loses the message,
-because the retry would be discarded as a duplicate.
+Every provider retries deliveries, so the first request atomically claims the
+delivery and a concurrent copy is dropped. A delivery is marked handled only
+after its reply is out: marking it earlier would mean a failure part-way through
+loses the message, because the retry would be discarded as a duplicate.
 
 A customer is not the same thing as a messaging account. Accounts are stored as
 separate identities pointing at one customer, so the same person writing from
@@ -94,8 +92,10 @@ replying and no wording in a customer's message can change that.
 The transcript holds what was said and nothing else: customer messages and the
 replies they were sent. No hidden model reasoning is stored.
 
-**Storage is currently in-process**, so state is lost on restart and not shared
-between instances. The durable store lands behind the same interfaces.
+Local development defaults to an in-process store. Production requires
+Firestore and refuses to start with memory storage, because conversations,
+confirmation drafts and delivery claims must survive restarts and be shared by
+all Cloud Run instances.
 
 On `SIGTERM` the server stops accepting connections and waits for in-flight
 requests to finish, so a deploy cannot turn a half-processed webhook into a
@@ -224,6 +224,13 @@ fully specify them. The mapping is tolerant of missing fields and covered by
 fixtures in `internal/adapters/altegio/testdata`, which is where to correct any
 difference found against a live account.
 
+Appointments created through online booking retain Altegio's private
+`record_hash` only in storage. It is never sent to the model or customer and is
+used to authorise cancellation. Rescheduling uses an exact-state `PUT`, and both
+management operations can be retried safely without creating another booking.
+If every retry ends without a conclusive response, the local appointment is not
+changed and a colleague is asked to reconcile the outcome.
+
 ## The assistant
 
 The model interprets; it never decides. It cannot reach Altegio, never sees a
@@ -280,8 +287,10 @@ creates nothing, and it tells the model so.
 
 `confirm_booking` takes **no arguments**. The details are whatever was prepared,
 so nothing can change between the customer agreeing and the appointment being
-made. Only when the scheduling system has confirmed does anything report a
-booking.
+made. The draft also records which inbound message prepared it; confirmation is
+refused during that same message, forcing the summary to be sent before a later
+customer reply can create anything. Only when the scheduling system has
+confirmed does anything report a booking.
 
 The idempotency key is generated once, when the draft is prepared, and reused
 unchanged on every attempt. Regenerating it would turn a retry into a second
@@ -301,6 +310,19 @@ Three outcomes, three different behaviours:
 A draft is not a hold. After an hour it is refused, because the availability it
 was built from is stale enough that confirming is more likely to fail than
 succeed.
+
+### Cancelling and rescheduling
+
+Existing appointments follow the same prepare/confirm split. A preparation tool
+can resolve only a reference returned from that customer's own local history.
+It stores either the exact cancellation reference or the exact new time and
+makes no provider change. The matching confirmation tool takes no arguments and
+is accepted only after a later customer message.
+
+The local record changes only after Altegio confirms. If a requested new time is
+taken during confirmation, the original appointment remains unchanged. If the
+provider's response is ambiguous, the assistant claims neither success nor
+failure and hands the conversation to a colleague.
 
 ### Why the prompt is not the security boundary
 

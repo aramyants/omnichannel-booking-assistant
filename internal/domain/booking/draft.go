@@ -37,6 +37,11 @@ type Draft struct {
 	CustomerName string
 
 	PreparedAt time.Time
+
+	// PreparedFromMessageID identifies the customer message that caused this
+	// draft to be prepared. Confirmation must arrive in a later message, after
+	// the customer has had a chance to read the summary.
+	PreparedFromMessageID string
 }
 
 // Expired reports whether the draft is too old to confirm.
@@ -62,6 +67,10 @@ func (d Draft) Validate(now time.Time) error {
 		return fmt.Errorf("%w: the draft has no phone number", ErrRejected)
 	case d.StartsAt.IsZero():
 		return fmt.Errorf("%w: the draft has no start time", ErrRejected)
+	case d.Duration <= 0:
+		return fmt.Errorf("%w: the draft has no appointment duration", ErrRejected)
+	case d.PreparedFromMessageID == "":
+		return fmt.Errorf("%w: the draft is not tied to a customer message", ErrRejected)
 	case d.Expired(now):
 		return fmt.Errorf("%w: the draft was prepared more than %s ago", ErrRejected, maxDraftAge)
 	case !d.StartsAt.After(now):
@@ -80,5 +89,16 @@ func (d Draft) ToRequest(customerID string) Request {
 		ServiceIDs:     d.ServiceIDs,
 		StaffID:        d.StaffID,
 		StartsAt:       d.StartsAt,
+		Duration:       d.Duration,
+	}
+}
+
+// Selection returns the details needed for a read-only availability check.
+func (d Draft) Selection() Selection {
+	return Selection{
+		ServiceIDs: d.ServiceIDs,
+		StaffID:    d.StaffID,
+		StartsAt:   d.StartsAt,
+		Duration:   d.Duration,
 	}
 }

@@ -115,6 +115,11 @@ type Booking struct {
 	// quote when cancelling or rescheduling.
 	ExternalID string
 
+	// ManagementToken is the scheduling system's opaque proof that an online
+	// booking may be managed by the customer who created it. It is persisted
+	// for cancellation but must never be displayed to the customer or model.
+	ManagementToken string
+
 	CustomerID string
 	ServiceIDs []string
 	StaffID    string
@@ -147,8 +152,29 @@ type Request struct {
 	ServiceIDs []string
 	StaffID    string
 	StartsAt   time.Time
+	Duration   time.Duration
 
 	Comment string
+}
+
+// Selection is the part of an appointment needed to ask whether a time is
+// available. Contact details and creation idempotency do not belong in a
+// read-only availability check.
+type Selection struct {
+	ServiceIDs []string
+	StaffID    string
+	StartsAt   time.Time
+	Duration   time.Duration
+}
+
+// Selection returns the schedulable part of this creation request.
+func (r Request) Selection() Selection {
+	return Selection{
+		ServiceIDs: r.ServiceIDs,
+		StaffID:    r.StaffID,
+		StartsAt:   r.StartsAt,
+		Duration:   r.Duration,
+	}
 }
 
 // Validate reports whether the request is complete enough to send.
@@ -171,6 +197,8 @@ func (r Request) Validate(now time.Time) error {
 		return fmt.Errorf("%w: no staff member chosen", ErrRejected)
 	case r.StartsAt.IsZero():
 		return fmt.Errorf("%w: no start time chosen", ErrRejected)
+	case r.Duration <= 0:
+		return fmt.Errorf("%w: appointment duration is not positive", ErrRejected)
 	case !r.StartsAt.After(now):
 		return fmt.Errorf("%w: start time %s is not in the future", ErrRejected, r.StartsAt.Format(time.RFC3339))
 	}

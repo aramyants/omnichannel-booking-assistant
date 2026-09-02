@@ -58,6 +58,11 @@ type Conversation struct {
 	// built during one exchange and either confirmed or abandoned in it.
 	Draft *booking.Draft
 
+	// BookingChange is a cancellation or reschedule the customer has been
+	// shown and not yet confirmed. Like Draft, it makes the confirmation step
+	// consume stored facts rather than model-supplied arguments.
+	BookingChange *booking.ChangeDraft
+
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	LastMessageAt time.Time

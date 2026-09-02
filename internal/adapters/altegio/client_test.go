@@ -311,6 +311,7 @@ func validRequest() booking.Request {
 		ServiceIDs:     []string{"1001"},
 		StaffID:        "501",
 		StartsAt:       time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC),
+		Duration:       time.Hour,
 	}
 }
 
@@ -340,6 +341,16 @@ func TestCreateSendsTheIdempotencyKey(t *testing.T) {
 	if sent.Phone != "+37411223344" {
 		t.Errorf("phone = %q", sent.Phone)
 	}
+	var rawFields map[string]json.RawMessage
+	if err := json.Unmarshal(*gotBody, &rawFields); err != nil {
+		t.Fatalf("decode raw request fields: %v", err)
+	}
+	if _, ok := rawFields["fullname"]; !ok {
+		t.Error("request has no fullname field required by Altegio")
+	}
+	if _, ok := rawFields["full_name"]; ok {
+		t.Error("request used undocumented full_name instead of fullname")
+	}
 	if len(sent.Appointments) != 1 {
 		t.Fatalf("sent %d appointments, want 1", len(sent.Appointments))
 	}
@@ -358,6 +369,150 @@ func TestCreateSendsTheIdempotencyKey(t *testing.T) {
 	}
 	if result.Status != booking.StatusConfirmed {
 		t.Errorf("status = %q, want confirmed", result.Status)
+	}
+	if result.ManagementToken != "ab12cd34ef56" {
+		t.Errorf("management token = %q, want the returned record_hash", result.ManagementToken)
+	}
+	if result.Duration != time.Hour {
+		t.Errorf("duration = %s, want 1h", result.Duration)
+	}
+}
+
+func TestCancelUsesThePrivateRecordHashAndAcceptsNoContent(t *testing.T) {
+	var gotReq http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotReq = *r.Clone(context.Background())
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	err := client.Cancel(t.Context(), booking.Booking{
+		ExternalID:      "998877",
+		ManagementToken: "ab12cd34ef56",
+	})
+	if err != nil {
+		t.Fatalf("Cancel() returned error: %v", err)
+	}
+	if gotReq.Method != http.MethodDelete {
+		t.Errorf("method = %q, want DELETE", gotReq.Method)
+	}
+	if want := "/user/records/998877/ab12cd34ef56"; gotReq.URL.Path != want {
+		t.Errorf("path = %q, want %q", gotReq.URL.Path, want)
+	}
+}
+
+func TestCancelRequiresItsPrivateManagementToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("Cancel() called Altegio without a management token")
+	}))
+	defer srv.Close()
+
+	err := newTestClient(t, srv).Cancel(t.Context(), booking.Booking{ExternalID: "998877"})
+	if !errors.Is(err, booking.ErrRejected) {
+		t.Errorf("error = %v, want ErrRejected", err)
+	}
+}
+
+func TestCancelTreatsAnAlreadyMissingAppointmentAsCancelled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"success":false,"meta":{"message":"not found"}}`))
+	}))
+	defer srv.Close()
+
+	err := newTestClient(t, srv).Cancel(t.Context(), booking.Booking{
+		ExternalID: "998877", ManagementToken: "ab12cd34ef56",
+	})
+	if err != nil {
+		t.Errorf("Cancel() = %v, want an already absent appointment accepted", err)
+	}
+}
+
+func TestRescheduleSetsOneExactTime(t *testing.T) {
+	var (
+		gotReq  http.Request
+		gotBody []byte
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotReq = *r.Clone(context.Background())
+		gotBody, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"success":true,"data":{"id":998877},"meta":[]}`))
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	original := booking.Booking{ExternalID: "998877", StartsAt: time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)}
+	newStart := time.Date(2026, 9, 4, 10, 30, 0, 0, time.UTC)
+	moved, err := client.Reschedule(t.Context(), original, newStart)
+	if err != nil {
+		t.Fatalf("Reschedule() returned error: %v", err)
+	}
+	if gotReq.Method != http.MethodPut {
+		t.Errorf("method = %q, want PUT", gotReq.Method)
+	}
+	if want := "/book_record/" + testCompanyID + "/998877"; gotReq.URL.Path != want {
+		t.Errorf("path = %q, want %q", gotReq.URL.Path, want)
+	}
+	var sent rescheduleRequest
+	if err := json.Unmarshal(gotBody, &sent); err != nil {
+		t.Fatalf("decode sent body: %v", err)
+	}
+	if sent.Datetime != "2026-09-04T14:30:00+04:00" {
+		t.Errorf("datetime = %q, want it expressed in the business timezone", sent.Datetime)
+	}
+	if !moved.StartsAt.Equal(newStart) {
+		t.Errorf("moved start = %s, want %s", moved.StartsAt, newStart)
+	}
+	if !original.StartsAt.Equal(time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)) {
+		t.Error("Reschedule() mutated its input value")
+	}
+}
+
+func TestRescheduleRejectionMeansTheSlotWasTaken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write(fixture(t, "error_slot_taken.json"))
+	}))
+	defer srv.Close()
+
+	_, err := newTestClient(t, srv).Reschedule(t.Context(),
+		booking.Booking{ExternalID: "998877"}, time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC))
+	if !errors.Is(err, booking.ErrSlotUnavailable) {
+		t.Errorf("error = %v, want ErrSlotUnavailable", err)
+	}
+}
+
+func TestRescheduleDoesNotHideRejectedCredentialsAsATakenSlot(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"success":false,"meta":{"message":"Wrong token"}}`))
+	}))
+	defer srv.Close()
+
+	_, err := newTestClient(t, srv).Reschedule(t.Context(),
+		booking.Booking{ExternalID: "998877"}, time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC))
+	if !errors.Is(err, booking.ErrRejected) {
+		t.Errorf("error = %v, want ErrRejected", err)
+	}
+	if errors.Is(err, booking.ErrSlotUnavailable) {
+		t.Errorf("credential error = %v, must not look like a customer took the slot", err)
+	}
+}
+
+func TestUnresolvedManagementRequestReportsUnknownOutcome(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"success":false,"meta":{"message":"internal error"}}`))
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv, WithMaxAttempts(1))
+	err := client.Cancel(t.Context(), booking.Booking{
+		ExternalID: "998877", ManagementToken: "ab12cd34ef56",
+	})
+	if !errors.Is(err, booking.ErrOutcomeUnknown) {
+		t.Errorf("error = %v, want ErrOutcomeUnknown", err)
 	}
 }
 
@@ -434,7 +589,7 @@ func TestCheckReportsATakenSlot(t *testing.T) {
 	srv, _, _ := serveFixture(t, "error_slot_taken.json", http.StatusUnprocessableEntity)
 	client := newTestClient(t, srv)
 
-	err := client.Check(t.Context(), validRequest())
+	err := client.Check(t.Context(), validRequest().Selection())
 	if !errors.Is(err, booking.ErrSlotUnavailable) {
 		t.Errorf("error = %v, want ErrSlotUnavailable", err)
 	}
@@ -449,7 +604,7 @@ func TestCheckPasses(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := newTestClient(t, srv).Check(t.Context(), validRequest()); err != nil {
+	if err := newTestClient(t, srv).Check(t.Context(), validRequest().Selection()); err != nil {
 		t.Errorf("Check() returned error: %v", err)
 	}
 }

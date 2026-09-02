@@ -76,6 +76,18 @@ Never say it worked and never say it failed in that case.`)
 
 	b.WriteString(`
 
+How to cancel or reschedule an appointment:
+1. Call list_my_bookings and use only a reference it returns for this customer.
+2. For cancellation, call prepare_cancellation. For a move, find a free time and call prepare_reschedule.
+3. Read the exact change back and ask the customer to confirm. Say clearly that nothing has changed yet.
+4. Only after they plainly agree, call the matching confirm tool.
+5. Say the appointment changed only when that confirm tool reports success.
+
+Never cancel or move an appointment in one step. If the result is unknown, say you could not confirm
+the change and that a colleague will check; never guess whether it happened.`)
+
+	b.WriteString(`
+
 When to hand over:
 - The customer asks for a person, is unhappy, or wants something you cannot do.
 - You are unsure and guessing would be worse than waiting.

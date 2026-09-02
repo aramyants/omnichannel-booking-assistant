@@ -24,8 +24,8 @@ const appointmentSlotID = 1
 // finding out at the moment of booking that it is not. A refusal here is
 // reported as ErrSlotUnavailable: the request was well formed, so the reason it
 // was rejected is that the slot has gone.
-func (c *Client) Check(ctx context.Context, req booking.Request) error {
-	appointment, err := c.toAppointment(req)
+func (c *Client) Check(ctx context.Context, selection booking.Selection) error {
+	appointment, err := c.toAppointment(selection)
 	if err != nil {
 		return err
 	}
@@ -42,7 +42,7 @@ func (c *Client) Check(ctx context.Context, req booking.Request) error {
 
 	// A rejection of a well-formed request means the slot is no longer free.
 	// Transport failures keep their own meaning so the caller can retry them.
-	if errors.Is(err, booking.ErrRejected) {
+	if errors.Is(err, errRequestRejected) {
 		return fmt.Errorf("%w: %w", booking.ErrSlotUnavailable, err)
 	}
 	return err
@@ -56,7 +56,7 @@ func (c *Client) Check(ctx context.Context, req booking.Request) error {
 // outcome is not learned is reported as ErrOutcomeUnknown so the caller
 // reconciles rather than guessing.
 func (c *Client) Create(ctx context.Context, req booking.Request) (booking.Booking, error) {
-	appointment, err := c.toAppointment(req)
+	appointment, err := c.toAppointment(req.Selection())
 	if err != nil {
 		return booking.Booking{}, err
 	}
@@ -77,7 +77,7 @@ func (c *Client) Create(ctx context.Context, req booking.Request) (booking.Booki
 		repeatable: false,
 	})
 	if err != nil {
-		if errors.Is(err, booking.ErrRejected) {
+		if errors.Is(err, errRequestRejected) {
 			// The request passed validation on its way in, so a refusal here
 			// almost always means somebody took the slot in between.
 			return booking.Booking{}, fmt.Errorf("%w: %w", booking.ErrSlotUnavailable, err)
@@ -97,28 +97,30 @@ func (c *Client) Create(ctx context.Context, req booking.Request) (booking.Booki
 
 	record := records[0]
 	return booking.Booking{
-		ID:         id.New(),
-		ExternalID: strconv.FormatInt(record.RecordID, 10),
-		CustomerID: req.CustomerID,
-		ServiceIDs: req.ServiceIDs,
-		StaffID:    req.StaffID,
-		StartsAt:   req.StartsAt,
-		Status:     booking.StatusConfirmed,
-		CreatedAt:  time.Now().UTC(),
+		ID:              id.New(),
+		ExternalID:      strconv.FormatInt(record.RecordID, 10),
+		ManagementToken: record.RecordHash,
+		CustomerID:      req.CustomerID,
+		ServiceIDs:      req.ServiceIDs,
+		StaffID:         req.StaffID,
+		StartsAt:        req.StartsAt,
+		Duration:        req.Duration,
+		Status:          booking.StatusConfirmed,
+		CreatedAt:       time.Now().UTC(),
 	}, nil
 }
 
 // toAppointment converts a domain request into Altegio's shape.
-func (c *Client) toAppointment(req booking.Request) (appointmentRequest, error) {
-	services, err := parseServiceIDs(req.ServiceIDs)
+func (c *Client) toAppointment(selection booking.Selection) (appointmentRequest, error) {
+	services, err := parseServiceIDs(selection.ServiceIDs)
 	if err != nil {
 		return appointmentRequest{}, err
 	}
 
-	staffID, err := strconv.ParseInt(req.StaffID, 10, 64)
+	staffID, err := strconv.ParseInt(selection.StaffID, 10, 64)
 	if err != nil {
 		return appointmentRequest{}, fmt.Errorf(
-			"%w: staff id %q is not an altegio identifier", booking.ErrRejected, req.StaffID)
+			"%w: staff id %q is not an altegio identifier", booking.ErrRejected, selection.StaffID)
 	}
 
 	return appointmentRequest{
@@ -128,6 +130,6 @@ func (c *Client) toAppointment(req booking.Request) (appointmentRequest, error) 
 		// Sent in the business's own timezone with an explicit offset, so the
 		// appointment lands at the hour the customer asked for rather than the
 		// same instant read somewhere else.
-		Datetime: req.StartsAt.In(c.location).Format(time.RFC3339),
+		Datetime: selection.StartsAt.In(c.location).Format(time.RFC3339),
 	}, nil
 }

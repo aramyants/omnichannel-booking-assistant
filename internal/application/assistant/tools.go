@@ -28,11 +28,16 @@ type Scheduling interface {
 	AvailableSlots(ctx context.Context, staffID string, day time.Time) ([]booking.Slot, error)
 
 	// Check asks whether a booking would be accepted, without creating it.
-	Check(ctx context.Context, req booking.Request) error
+	Check(ctx context.Context, selection booking.Selection) error
 
 	// Create books the appointment, returning it only once the scheduling
 	// system has confirmed one exists.
 	Create(ctx context.Context, req booking.Request) (booking.Booking, error)
+
+	// Cancel and Reschedule change an appointment that already exists. The
+	// Booking value carries the provider's private management proof.
+	Cancel(ctx context.Context, b booking.Booking) error
+	Reschedule(ctx context.Context, b booking.Booking, startsAt time.Time) (booking.Booking, error)
 }
 
 // BookingRepository stores the appointments this system has made, so a customer
@@ -45,8 +50,9 @@ type BookingRepository interface {
 // session is the state one reply is produced against. Tools that change
 // something act on this rather than on globals.
 type session struct {
-	conv     *conversation.Conversation
-	customer customer.Customer
+	conv              *conversation.Conversation
+	customer          customer.Customer
+	incomingMessageID string
 }
 
 // Tool names. They are constants because they appear in three places that must
@@ -59,6 +65,10 @@ const (
 	toolPrepareBooking = "prepare_booking"
 	toolConfirmBooking = "confirm_booking"
 	toolListBookings   = "list_my_bookings"
+	toolPrepareCancel  = "prepare_cancellation"
+	toolConfirmCancel  = "confirm_cancellation"
+	toolPrepareMove    = "prepare_reschedule"
+	toolConfirmMove    = "confirm_reschedule"
 	toolRequestHandoff = "request_human_handoff"
 )
 
@@ -98,7 +108,7 @@ func (t *toolset) definitions() []ai.Tool {
 		return []ai.Tool{t.handoffDefinition()}
 	}
 
-	return []ai.Tool{
+	tools := []ai.Tool{
 		{
 			Name: toolListServices,
 			Description: "List every service the business offers, with its duration and price. " +
@@ -172,7 +182,55 @@ func (t *toolset) definitions() []ai.Tool {
 			Description: "List the appointments this customer has booked through this conversation.",
 			Parameters:  json.RawMessage(noArguments),
 		},
-		t.handoffDefinition(),
+	}
+
+	if t.bookings != nil {
+		tools = append(tools, t.managementDefinitions()...)
+	}
+	return append(tools, t.handoffDefinition())
+}
+
+func (t *toolset) managementDefinitions() []ai.Tool {
+	return []ai.Tool{
+		{
+			Name: toolPrepareCancel,
+			Description: "Prepare to cancel one of this customer's appointments. This does NOT cancel it. " +
+				"Use a reference from list_my_bookings, then read back the appointment and ask for confirmation.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{"reference":{"type":"string","description":"The exact appointment reference from list_my_bookings."}},
+				"required":["reference"],
+				"additionalProperties":false
+			}`),
+		},
+		{
+			Name: toolConfirmCancel,
+			Description: "Cancel the appointment prepared by prepare_cancellation. Call ONLY after the customer " +
+				"has clearly agreed. It takes no arguments, so the reference cannot change after agreement.",
+			Parameters: json.RawMessage(noArguments),
+		},
+		{
+			Name: toolPrepareMove,
+			Description: "Check and prepare a new date and time for one of this customer's appointments. " +
+				"This does NOT move it. Use a reference from list_my_bookings and a time returned by find_available_slots, " +
+				"then read back the old and new times and ask for confirmation.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"reference":{"type":"string","description":"The exact appointment reference from list_my_bookings."},
+					"date":{"type":"string","description":"The new day as YYYY-MM-DD."},
+					"time":{"type":"string","description":"The new start time as HH:MM, exactly as returned by find_available_slots."}
+				},
+				"required":["reference","date","time"],
+				"additionalProperties":false
+			}`),
+		},
+		{
+			Name: toolConfirmMove,
+			Description: "Move the appointment prepared by prepare_reschedule. Call ONLY after the customer " +
+				"has clearly agreed. It takes no arguments, so the reference and new time cannot change after agreement.",
+			Parameters: json.RawMessage(noArguments),
+		},
 	}
 }
 
@@ -225,6 +283,14 @@ func (t *toolset) run(ctx context.Context, s *session, call ai.ToolCall) (string
 		return t.confirmBooking(ctx, s)
 	case toolListBookings:
 		return t.listBookings(ctx, s)
+	case toolPrepareCancel:
+		return t.prepareCancellation(ctx, s, call)
+	case toolConfirmCancel:
+		return t.confirmCancellation(ctx, s)
+	case toolPrepareMove:
+		return t.prepareReschedule(ctx, s, call)
+	case toolConfirmMove:
+		return t.confirmReschedule(ctx, s)
 	case toolRequestHandoff:
 		return t.requestHandoff(s.conv, call)
 	default:
@@ -406,16 +472,17 @@ func (t *toolset) prepareBooking(ctx context.Context, s *session, call ai.ToolCa
 	draft := booking.Draft{
 		// Generated once, here. Reusing it on every confirmation attempt is
 		// what stops a retry becoming a second appointment.
-		IdempotencyKey: id.New(),
-		ServiceIDs:     []string{service.ID},
-		ServiceNames:   []string{service.Name},
-		StaffID:        staff.ID,
-		StaffName:      staff.Name,
-		StartsAt:       startsAt,
-		Duration:       service.Duration,
-		Phone:          phone,
-		CustomerName:   strings.TrimSpace(args.FullName),
-		PreparedAt:     t.now(),
+		IdempotencyKey:        id.New(),
+		ServiceIDs:            []string{service.ID},
+		ServiceNames:          []string{service.Name},
+		StaffID:               staff.ID,
+		StaffName:             staff.Name,
+		StartsAt:              startsAt,
+		Duration:              service.Duration,
+		Phone:                 phone,
+		CustomerName:          strings.TrimSpace(args.FullName),
+		PreparedAt:            t.now(),
+		PreparedFromMessageID: s.incomingMessageID,
 	}
 
 	if err := draft.Validate(t.now()); err != nil {
@@ -424,11 +491,12 @@ func (t *toolset) prepareBooking(ctx context.Context, s *session, call ai.ToolCa
 
 	// Asking the scheduling system now means a time that has already gone is
 	// caught before the customer is asked to agree to it.
-	if err := t.scheduling.Check(ctx, draft.ToRequest(s.customer.ID)); err != nil {
+	if err := t.scheduling.Check(ctx, draft.Selection()); err != nil {
 		return "", err
 	}
 
 	s.conv.Draft = &draft
+	s.conv.BookingChange = nil
 
 	return encode(map[string]any{
 		"prepared":    true,
@@ -457,6 +525,9 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 	if err := draft.Validate(t.now()); err != nil {
 		s.conv.Draft = nil
 		return "", err
+	}
+	if draft.PreparedFromMessageID == s.incomingMessageID {
+		return "", errors.New("wait for the customer to confirm in a new message after seeing the summary")
 	}
 
 	created, err := t.scheduling.Create(ctx, draft.ToRequest(s.customer.ID))
