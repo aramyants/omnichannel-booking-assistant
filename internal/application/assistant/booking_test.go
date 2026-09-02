@@ -89,6 +89,7 @@ func TestConfirmingBooksTheAppointment(t *testing.T) {
 	scheduling := defaultScheduling()
 	model := &scriptedAI{responses: []ai.Response{
 		prepareCall("call_1"),
+		textResponse("Haircut with Mariam at 10:00. Shall I book it?"),
 		toolResponse("call_2", toolConfirmBooking, `{}`),
 		textResponse("Booked. Your reference is 998877."),
 	}}
@@ -96,6 +97,12 @@ func TestConfirmingBooksTheAppointment(t *testing.T) {
 
 	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
 		t.Fatalf("Handle() returned error: %v", err)
+	}
+	if len(scheduling.created) != 0 {
+		t.Fatal("the appointment was created before the customer replied to the summary")
+	}
+	if err := svc.Handle(t.Context(), incoming("4128")); err != nil {
+		t.Fatalf("confirmation Handle() returned error: %v", err)
 	}
 
 	if len(scheduling.created) != 1 {
@@ -113,7 +120,7 @@ func TestConfirmingBooksTheAppointment(t *testing.T) {
 		t.Error("the booking was sent without an idempotency key")
 	}
 
-	output := resultOf(t, model, 2)
+	output := resultOf(t, model, 3)
 	if !strings.Contains(output, "998877") {
 		t.Errorf("result = %s, want the reference", output)
 	}
@@ -156,6 +163,32 @@ func TestConfirmingWithoutPreparingIsRefused(t *testing.T) {
 	}
 }
 
+// TestBookingCannotBePreparedAndConfirmedFromOneCustomerMessage closes the
+// gap a prompt alone cannot: the model must show the summary, then wait for a
+// later customer message before it can create anything.
+func TestBookingCannotBePreparedAndConfirmedFromOneCustomerMessage(t *testing.T) {
+	scheduling := defaultScheduling()
+	model := &scriptedAI{responses: []ai.Response{
+		prepareCall("call_1"),
+		toolResponse("call_2", toolConfirmBooking, `{}`),
+		textResponse("Please confirm after checking those details."),
+	}}
+	svc, store := newAIService(t, model, scheduling, &fakeSender{})
+
+	if err := svc.Handle(t.Context(), incoming("one-message")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+	if len(scheduling.created) != 0 {
+		t.Error("the model created an appointment before the customer saw the summary")
+	}
+	if output := resultOf(t, model, 2); !strings.Contains(output, "confirm in a new message") {
+		t.Errorf("result = %s, want same-message confirmation refused", output)
+	}
+	if conv := openConversation(t, store); conv.Draft == nil {
+		t.Error("the prepared booking was lost instead of remaining ready for a real confirmation")
+	}
+}
+
 // TestConfirmingCannotChangeWhatWasAgreed: confirm_booking takes no arguments,
 // so the details cannot drift between the customer agreeing and the appointment
 // being made.
@@ -164,6 +197,7 @@ func TestConfirmingCannotChangeWhatWasAgreed(t *testing.T) {
 	scheduling := defaultScheduling()
 	model := &scriptedAI{responses: []ai.Response{
 		prepareCall("call_1"),
+		textResponse("Haircut with Mariam at 10:00. Shall I book it?"),
 		// The model tries to slip different details in at confirmation.
 		toolResponse("call_2", toolConfirmBooking, `{"staff_id":"999","time":"18:00"}`),
 		textResponse("Done."),
@@ -172,6 +206,9 @@ func TestConfirmingCannotChangeWhatWasAgreed(t *testing.T) {
 
 	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
 		t.Fatalf("Handle() returned error: %v", err)
+	}
+	if err := svc.Handle(t.Context(), incoming("4128")); err != nil {
+		t.Fatalf("confirmation Handle() returned error: %v", err)
 	}
 
 	if len(scheduling.created) != 1 {
@@ -286,6 +323,7 @@ func TestSlotTakenDuringConfirmation(t *testing.T) {
 
 	model := &scriptedAI{responses: []ai.Response{
 		prepareCall("call_1"),
+		textResponse("Haircut with Mariam at 10:00. Shall I book it?"),
 		toolResponse("call_2", toolConfirmBooking, `{}`),
 		textResponse("Sorry, someone took that while we were talking."),
 	}}
@@ -294,8 +332,11 @@ func TestSlotTakenDuringConfirmation(t *testing.T) {
 	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
 		t.Fatalf("Handle() returned error: %v", err)
 	}
+	if err := svc.Handle(t.Context(), incoming("4128")); err != nil {
+		t.Fatalf("confirmation Handle() returned error: %v", err)
+	}
 
-	output := resultOf(t, model, 2)
+	output := resultOf(t, model, 3)
 	if !strings.Contains(output, `"booked":false`) {
 		t.Errorf("result = %s, want booked false", output)
 	}
@@ -316,6 +357,7 @@ func TestUnknownOutcomeGoesToAPerson(t *testing.T) {
 
 	model := &scriptedAI{responses: []ai.Response{
 		prepareCall("call_1"),
+		textResponse("Haircut with Mariam at 10:00. Shall I book it?"),
 		toolResponse("call_2", toolConfirmBooking, `{}`),
 		textResponse("I could not confirm that. A colleague will check and come back to you."),
 	}}
@@ -324,8 +366,11 @@ func TestUnknownOutcomeGoesToAPerson(t *testing.T) {
 	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
 		t.Fatalf("Handle() returned error: %v", err)
 	}
+	if err := svc.Handle(t.Context(), incoming("4128")); err != nil {
+		t.Fatalf("confirmation Handle() returned error: %v", err)
+	}
 
-	output := resultOf(t, model, 2)
+	output := resultOf(t, model, 3)
 	if !strings.Contains(output, "not known whether the appointment was made") {
 		t.Errorf("result = %s, want the uncertainty stated plainly", output)
 	}
@@ -348,6 +393,7 @@ func TestRetryingAConfirmationReusesTheIdempotencyKey(t *testing.T) {
 
 	model := &scriptedAI{responses: []ai.Response{
 		prepareCall("call_1"),
+		textResponse("Haircut with Mariam at 10:00. Shall I book it?"),
 		toolResponse("call_2", toolConfirmBooking, `{}`),
 		toolResponse("call_3", toolConfirmBooking, `{}`),
 		textResponse("I could not complete that."),
@@ -356,6 +402,9 @@ func TestRetryingAConfirmationReusesTheIdempotencyKey(t *testing.T) {
 
 	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
 		t.Fatalf("Handle() returned error: %v", err)
+	}
+	if err := svc.Handle(t.Context(), incoming("4128")); err != nil {
+		t.Fatalf("confirmation Handle() returned error: %v", err)
 	}
 
 	if len(scheduling.created) < 2 {
@@ -382,12 +431,14 @@ func TestAnExpiredDraftIsRefused(t *testing.T) {
 	// A draft prepared well before now.
 	conv := openConversation(t, store)
 	conv.Draft = &booking.Draft{
-		IdempotencyKey: "key-1",
-		ServiceIDs:     []string{"1001"},
-		StaffID:        "501",
-		StartsAt:       testNow.Add(48 * time.Hour),
-		Phone:          "+37411223344",
-		PreparedAt:     testNow.Add(-3 * time.Hour),
+		IdempotencyKey:        "key-1",
+		ServiceIDs:            []string{"1001"},
+		StaffID:               "501",
+		StartsAt:              testNow.Add(48 * time.Hour),
+		Duration:              time.Hour,
+		Phone:                 "+37411223344",
+		PreparedAt:            testNow.Add(-3 * time.Hour),
+		PreparedFromMessageID: "an-earlier-message",
 	}
 	if err := store.Save(t.Context(), conv); err != nil {
 		t.Fatalf("Save() returned error: %v", err)
@@ -410,6 +461,7 @@ func TestListingBookings(t *testing.T) {
 	scheduling := defaultScheduling()
 	model := &scriptedAI{responses: []ai.Response{
 		prepareCall("call_1"),
+		textResponse("Haircut with Mariam at 10:00. Shall I book it?"),
 		toolResponse("call_2", toolConfirmBooking, `{}`),
 		toolResponse("call_3", toolListBookings, `{}`),
 		textResponse("You have one appointment."),
@@ -419,8 +471,11 @@ func TestListingBookings(t *testing.T) {
 	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
 		t.Fatalf("Handle() returned error: %v", err)
 	}
+	if err := svc.Handle(t.Context(), incoming("4128")); err != nil {
+		t.Fatalf("confirmation Handle() returned error: %v", err)
+	}
 
-	if output := resultOf(t, model, 3); !strings.Contains(output, "998877") {
+	if output := resultOf(t, model, 4); !strings.Contains(output, "998877") {
 		t.Errorf("result = %s, want the booked appointment listed", output)
 	}
 }

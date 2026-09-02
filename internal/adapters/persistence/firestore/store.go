@@ -173,28 +173,38 @@ func (s *Store) FindOrCreateByChannelIdentity(
 }
 
 type draftDoc struct {
-	IdempotencyKey string    `firestore:"idempotency_key"`
-	ServiceIDs     []string  `firestore:"service_ids"`
-	ServiceNames   []string  `firestore:"service_names"`
-	StaffID        string    `firestore:"staff_id"`
-	StaffName      string    `firestore:"staff_name"`
-	StartsAt       time.Time `firestore:"starts_at"`
-	DurationSecs   int64     `firestore:"duration_seconds"`
-	Phone          string    `firestore:"phone"`
-	CustomerName   string    `firestore:"customer_name"`
-	PreparedAt     time.Time `firestore:"prepared_at"`
+	IdempotencyKey        string    `firestore:"idempotency_key"`
+	ServiceIDs            []string  `firestore:"service_ids"`
+	ServiceNames          []string  `firestore:"service_names"`
+	StaffID               string    `firestore:"staff_id"`
+	StaffName             string    `firestore:"staff_name"`
+	StartsAt              time.Time `firestore:"starts_at"`
+	DurationSecs          int64     `firestore:"duration_seconds"`
+	Phone                 string    `firestore:"phone"`
+	CustomerName          string    `firestore:"customer_name"`
+	PreparedAt            time.Time `firestore:"prepared_at"`
+	PreparedFromMessageID string    `firestore:"prepared_from_message_id"`
+}
+
+type changeDraftDoc struct {
+	Kind                  string    `firestore:"kind"`
+	Reference             string    `firestore:"reference"`
+	NewStart              time.Time `firestore:"new_start"`
+	PreparedAt            time.Time `firestore:"prepared_at"`
+	PreparedFromMessageID string    `firestore:"prepared_from_message_id"`
 }
 
 type conversationDoc struct {
-	ID               string    `firestore:"id"`
-	CustomerID       string    `firestore:"customer_id"`
-	Provider         string    `firestore:"provider"`
-	ExternalThreadID string    `firestore:"external_thread_id"`
-	State            string    `firestore:"state"`
-	Draft            *draftDoc `firestore:"draft"`
-	CreatedAt        time.Time `firestore:"created_at"`
-	UpdatedAt        time.Time `firestore:"updated_at"`
-	LastMessageAt    time.Time `firestore:"last_message_at"`
+	ID               string          `firestore:"id"`
+	CustomerID       string          `firestore:"customer_id"`
+	Provider         string          `firestore:"provider"`
+	ExternalThreadID string          `firestore:"external_thread_id"`
+	State            string          `firestore:"state"`
+	Draft            *draftDoc       `firestore:"draft"`
+	BookingChange    *changeDraftDoc `firestore:"booking_change"`
+	CreatedAt        time.Time       `firestore:"created_at"`
+	UpdatedAt        time.Time       `firestore:"updated_at"`
+	LastMessageAt    time.Time       `firestore:"last_message_at"`
 }
 
 func toConversationDoc(conv conversation.Conversation) conversationDoc {
@@ -211,16 +221,26 @@ func toConversationDoc(conv conversation.Conversation) conversationDoc {
 
 	if conv.Draft != nil {
 		doc.Draft = &draftDoc{
-			IdempotencyKey: conv.Draft.IdempotencyKey,
-			ServiceIDs:     conv.Draft.ServiceIDs,
-			ServiceNames:   conv.Draft.ServiceNames,
-			StaffID:        conv.Draft.StaffID,
-			StaffName:      conv.Draft.StaffName,
-			StartsAt:       conv.Draft.StartsAt,
-			DurationSecs:   int64(conv.Draft.Duration.Seconds()),
-			Phone:          conv.Draft.Phone,
-			CustomerName:   conv.Draft.CustomerName,
-			PreparedAt:     conv.Draft.PreparedAt,
+			IdempotencyKey:        conv.Draft.IdempotencyKey,
+			ServiceIDs:            conv.Draft.ServiceIDs,
+			ServiceNames:          conv.Draft.ServiceNames,
+			StaffID:               conv.Draft.StaffID,
+			StaffName:             conv.Draft.StaffName,
+			StartsAt:              conv.Draft.StartsAt,
+			DurationSecs:          int64(conv.Draft.Duration.Seconds()),
+			Phone:                 conv.Draft.Phone,
+			CustomerName:          conv.Draft.CustomerName,
+			PreparedAt:            conv.Draft.PreparedAt,
+			PreparedFromMessageID: conv.Draft.PreparedFromMessageID,
+		}
+	}
+	if conv.BookingChange != nil {
+		doc.BookingChange = &changeDraftDoc{
+			Kind:                  string(conv.BookingChange.Kind),
+			Reference:             conv.BookingChange.Reference,
+			NewStart:              conv.BookingChange.NewStart,
+			PreparedAt:            conv.BookingChange.PreparedAt,
+			PreparedFromMessageID: conv.BookingChange.PreparedFromMessageID,
 		}
 	}
 	return doc
@@ -240,16 +260,26 @@ func fromConversationDoc(doc conversationDoc) conversation.Conversation {
 
 	if doc.Draft != nil {
 		conv.Draft = &booking.Draft{
-			IdempotencyKey: doc.Draft.IdempotencyKey,
-			ServiceIDs:     doc.Draft.ServiceIDs,
-			ServiceNames:   doc.Draft.ServiceNames,
-			StaffID:        doc.Draft.StaffID,
-			StaffName:      doc.Draft.StaffName,
-			StartsAt:       doc.Draft.StartsAt,
-			Duration:       time.Duration(doc.Draft.DurationSecs) * time.Second,
-			Phone:          doc.Draft.Phone,
-			CustomerName:   doc.Draft.CustomerName,
-			PreparedAt:     doc.Draft.PreparedAt,
+			IdempotencyKey:        doc.Draft.IdempotencyKey,
+			ServiceIDs:            doc.Draft.ServiceIDs,
+			ServiceNames:          doc.Draft.ServiceNames,
+			StaffID:               doc.Draft.StaffID,
+			StaffName:             doc.Draft.StaffName,
+			StartsAt:              doc.Draft.StartsAt,
+			Duration:              time.Duration(doc.Draft.DurationSecs) * time.Second,
+			Phone:                 doc.Draft.Phone,
+			CustomerName:          doc.Draft.CustomerName,
+			PreparedAt:            doc.Draft.PreparedAt,
+			PreparedFromMessageID: doc.Draft.PreparedFromMessageID,
+		}
+	}
+	if doc.BookingChange != nil {
+		conv.BookingChange = &booking.ChangeDraft{
+			Kind:                  booking.ChangeKind(doc.BookingChange.Kind),
+			Reference:             doc.BookingChange.Reference,
+			NewStart:              doc.BookingChange.NewStart,
+			PreparedAt:            doc.BookingChange.PreparedAt,
+			PreparedFromMessageID: doc.BookingChange.PreparedFromMessageID,
 		}
 	}
 	return conv
@@ -497,15 +527,16 @@ func (s *Store) Release(ctx context.Context, key, claimID string) error {
 }
 
 type bookingDoc struct {
-	ID           string    `firestore:"id"`
-	ExternalID   string    `firestore:"external_id"`
-	CustomerID   string    `firestore:"customer_id"`
-	ServiceIDs   []string  `firestore:"service_ids"`
-	StaffID      string    `firestore:"staff_id"`
-	StartsAt     time.Time `firestore:"starts_at"`
-	DurationSecs int64     `firestore:"duration_seconds"`
-	Status       string    `firestore:"status"`
-	CreatedAt    time.Time `firestore:"created_at"`
+	ID              string    `firestore:"id"`
+	ExternalID      string    `firestore:"external_id"`
+	ManagementToken string    `firestore:"management_token"`
+	CustomerID      string    `firestore:"customer_id"`
+	ServiceIDs      []string  `firestore:"service_ids"`
+	StaffID         string    `firestore:"staff_id"`
+	StartsAt        time.Time `firestore:"starts_at"`
+	DurationSecs    int64     `firestore:"duration_seconds"`
+	Status          string    `firestore:"status"`
+	CreatedAt       time.Time `firestore:"created_at"`
 }
 
 // SaveBooking records an appointment.
@@ -514,15 +545,16 @@ type bookingDoc struct {
 // the same appointment twice updates one record rather than creating two.
 func (s *Store) SaveBooking(ctx context.Context, b booking.Booking) error {
 	_, err := s.client.Collection(collectionBookings).Doc(b.ExternalID).Set(ctx, bookingDoc{
-		ID:           b.ID,
-		ExternalID:   b.ExternalID,
-		CustomerID:   b.CustomerID,
-		ServiceIDs:   b.ServiceIDs,
-		StaffID:      b.StaffID,
-		StartsAt:     b.StartsAt,
-		DurationSecs: int64(b.Duration.Seconds()),
-		Status:       string(b.Status),
-		CreatedAt:    b.CreatedAt,
+		ID:              b.ID,
+		ExternalID:      b.ExternalID,
+		ManagementToken: b.ManagementToken,
+		CustomerID:      b.CustomerID,
+		ServiceIDs:      b.ServiceIDs,
+		StaffID:         b.StaffID,
+		StartsAt:        b.StartsAt,
+		DurationSecs:    int64(b.Duration.Seconds()),
+		Status:          string(b.Status),
+		CreatedAt:       b.CreatedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("firestore: record a booking: %w", err)
@@ -547,15 +579,16 @@ func (s *Store) ListBookings(ctx context.Context, customerID string) ([]booking.
 			return nil, fmt.Errorf("firestore: read booking: %w", err)
 		}
 		bookings = append(bookings, booking.Booking{
-			ID:         doc.ID,
-			ExternalID: doc.ExternalID,
-			CustomerID: doc.CustomerID,
-			ServiceIDs: doc.ServiceIDs,
-			StaffID:    doc.StaffID,
-			StartsAt:   doc.StartsAt,
-			Duration:   time.Duration(doc.DurationSecs) * time.Second,
-			Status:     booking.Status(doc.Status),
-			CreatedAt:  doc.CreatedAt,
+			ID:              doc.ID,
+			ExternalID:      doc.ExternalID,
+			ManagementToken: doc.ManagementToken,
+			CustomerID:      doc.CustomerID,
+			ServiceIDs:      doc.ServiceIDs,
+			StaffID:         doc.StaffID,
+			StartsAt:        doc.StartsAt,
+			Duration:        time.Duration(doc.DurationSecs) * time.Second,
+			Status:          booking.Status(doc.Status),
+			CreatedAt:       doc.CreatedAt,
 		})
 	}
 

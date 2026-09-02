@@ -86,7 +86,7 @@ type bookCheckRequest struct {
 
 type bookRecordRequest struct {
 	Phone    string `json:"phone"`
-	FullName string `json:"full_name"`
+	FullName string `json:"fullname"`
 	Email    string `json:"email,omitempty"`
 	Comment  string `json:"comment,omitempty"`
 
@@ -106,4 +106,9 @@ type recordDTO struct {
 	ID         int64  `json:"id"`
 	RecordID   int64  `json:"record_id"`
 	RecordHash string `json:"record_hash"`
+}
+
+type rescheduleRequest struct {
+	Datetime string `json:"datetime"`
+	Comment  string `json:"comment"`
 }

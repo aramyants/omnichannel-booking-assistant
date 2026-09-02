@@ -426,7 +426,11 @@ func (s *Service) reply(
 		return s.compose(msg, cust), nil
 	}
 
-	sess := &session{conv: conv, customer: cust}
+	sess := &session{
+		conv:              conv,
+		customer:          cust,
+		incomingMessageID: msg.ExternalMessageID,
+	}
 
 	req := ai.Request{
 		Instructions: s.instructions(cust),

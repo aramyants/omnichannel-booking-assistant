@@ -17,6 +17,7 @@ func validRequest() Request {
 		ServiceIDs:     []string{"1001"},
 		StaffID:        "501",
 		StartsAt:       now.Add(48 * time.Hour),
+		Duration:       time.Hour,
 	}
 }
 
@@ -32,6 +33,7 @@ func TestRequestValidate(t *testing.T) {
 		"no service":         func(r *Request) { r.ServiceIDs = nil },
 		"no staff member":    func(r *Request) { r.StaffID = "" },
 		"no start time":      func(r *Request) { r.StartsAt = time.Time{} },
+		"no duration":        func(r *Request) { r.Duration = 0 },
 
 		// A booking in the past is always a bug or a misread date, and it must
 		// be refused in code rather than left to whatever the model produced.

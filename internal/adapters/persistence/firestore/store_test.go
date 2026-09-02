@@ -168,16 +168,17 @@ func TestDraftSurvivesARoundTrip(t *testing.T) {
 	}
 
 	opened.Draft = &booking.Draft{
-		IdempotencyKey: "key-1",
-		ServiceIDs:     []string{"1001"},
-		ServiceNames:   []string{"Women's haircut"},
-		StaffID:        "501",
-		StaffName:      "Mariam",
-		StartsAt:       testNow.Add(48 * time.Hour),
-		Duration:       time.Hour,
-		Phone:          "+37411223344",
-		CustomerName:   "Anna Petrosyan",
-		PreparedAt:     testNow,
+		IdempotencyKey:        "key-1",
+		ServiceIDs:            []string{"1001"},
+		ServiceNames:          []string{"Women's haircut"},
+		StaffID:               "501",
+		StaffName:             "Mariam",
+		StartsAt:              testNow.Add(48 * time.Hour),
+		Duration:              time.Hour,
+		Phone:                 "+37411223344",
+		CustomerName:          "Anna Petrosyan",
+		PreparedAt:            testNow,
+		PreparedFromMessageID: "message-1",
 	}
 	if err := store.Save(t.Context(), opened); err != nil {
 		t.Fatalf("Save() returned error: %v", err)
@@ -192,6 +193,9 @@ func TestDraftSurvivesARoundTrip(t *testing.T) {
 	}
 	if loaded.Draft.IdempotencyKey != "key-1" {
 		t.Errorf("key = %q", loaded.Draft.IdempotencyKey)
+	}
+	if loaded.Draft.PreparedFromMessageID != "message-1" {
+		t.Errorf("prepared-from message = %q", loaded.Draft.PreparedFromMessageID)
 	}
 	if loaded.Draft.Duration != time.Hour {
 		t.Errorf("duration = %s, want 1h", loaded.Draft.Duration)
@@ -211,6 +215,52 @@ func TestDraftSurvivesARoundTrip(t *testing.T) {
 	}
 	if cleared.Draft != nil {
 		t.Error("a cleared draft came back")
+	}
+}
+
+func TestBookingChangeSurvivesARoundTrip(t *testing.T) {
+	store := newStore(t)
+	candidate := conv(t)
+
+	opened, err := store.FindOrOpen(t.Context(), candidate)
+	if err != nil {
+		t.Fatalf("FindOrOpen() returned error: %v", err)
+	}
+	opened.BookingChange = &booking.ChangeDraft{
+		Kind:                  booking.ChangeReschedule,
+		Reference:             "998877",
+		NewStart:              testNow.Add(72 * time.Hour),
+		PreparedAt:            testNow,
+		PreparedFromMessageID: "message-2",
+	}
+	if err := store.Save(t.Context(), opened); err != nil {
+		t.Fatalf("Save() returned error: %v", err)
+	}
+
+	loaded, err := store.FindOrOpen(t.Context(), candidate)
+	if err != nil {
+		t.Fatalf("FindOrOpen() returned error: %v", err)
+	}
+	if loaded.BookingChange == nil {
+		t.Fatal("the booking change did not survive")
+	}
+	if loaded.BookingChange.Kind != booking.ChangeReschedule ||
+		loaded.BookingChange.Reference != "998877" ||
+		!loaded.BookingChange.NewStart.Equal(testNow.Add(72*time.Hour)) ||
+		loaded.BookingChange.PreparedFromMessageID != "message-2" {
+		t.Errorf("booking change = %+v", loaded.BookingChange)
+	}
+
+	loaded.BookingChange = nil
+	if err := store.Save(t.Context(), loaded); err != nil {
+		t.Fatalf("clear booking change: %v", err)
+	}
+	cleared, err := store.FindOrOpen(t.Context(), candidate)
+	if err != nil {
+		t.Fatalf("reload cleared conversation: %v", err)
+	}
+	if cleared.BookingChange != nil {
+		t.Error("a cleared booking change came back")
 	}
 }
 
@@ -356,13 +406,15 @@ func TestBookingsRoundTrip(t *testing.T) {
 
 	later := booking.Booking{
 		ID: "bk-2", ExternalID: unique(t, "ext-2"), CustomerID: customerID,
-		ServiceIDs: []string{"1001"}, StaffID: "501",
+		ManagementToken: "private-hash-2",
+		ServiceIDs:      []string{"1001"}, StaffID: "501",
 		StartsAt: testNow.Add(72 * time.Hour), Duration: time.Hour,
 		Status: booking.StatusConfirmed, CreatedAt: testNow,
 	}
 	sooner := booking.Booking{
 		ID: "bk-1", ExternalID: unique(t, "ext-1"), CustomerID: customerID,
-		ServiceIDs: []string{"1001"}, StaffID: "501",
+		ManagementToken: "private-hash-1",
+		ServiceIDs:      []string{"1001"}, StaffID: "501",
 		StartsAt: testNow.Add(24 * time.Hour), Duration: time.Hour,
 		Status: booking.StatusConfirmed, CreatedAt: testNow,
 	}
@@ -385,6 +437,9 @@ func TestBookingsRoundTrip(t *testing.T) {
 	}
 	if got[0].Duration != time.Hour {
 		t.Errorf("duration = %s, want 1h", got[0].Duration)
+	}
+	if got[0].ManagementToken != "private-hash-1" {
+		t.Errorf("management token = %q, want it preserved", got[0].ManagementToken)
 	}
 }
 

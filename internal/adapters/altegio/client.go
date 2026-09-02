@@ -39,6 +39,12 @@ const (
 	defaultMaxAttempts = 3
 )
 
+// errRequestRejected distinguishes a well-authenticated 4xx response from a
+// credentials failure. Booking endpoints may translate the former into "slot
+// unavailable"; treating the latter that way would hide a deployment fault as
+// a customer scheduling race.
+var errRequestRejected = errors.New("altegio request rejected")
+
 // Client calls the Altegio API.
 //
 // The client is safe for concurrent use, and its rate limiter is shared across
@@ -165,9 +171,9 @@ type request struct {
 	path   string
 	body   any
 
-	// repeatable reports whether sending this request twice is harmless. Only
-	// reads and validation calls are; creating an appointment is not, and a
-	// failed one is reconciled rather than retried.
+	// repeatable reports whether sending this request twice is harmless. Reads,
+	// validation, and mutations that set one exact desired state qualify;
+	// creating an appointment does not.
 	repeatable bool
 }
 
@@ -261,6 +267,12 @@ func (c *Client) attempt(ctx context.Context, req request, body []byte) (json.Ra
 		return nil, fmt.Errorf("altegio %s: %w: read response: %w", req.path, booking.ErrUnavailable, err)
 	}
 
+	// Successful DELETE endpoints legitimately return 204 with no envelope.
+	// Represent that as JSON null so the generic decoder can still finish.
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && len(bytes.TrimSpace(raw)) == 0 {
+		return json.RawMessage("null"), nil
+	}
+
 	var env envelope[json.RawMessage]
 	decodeErr := json.Unmarshal(raw, &env)
 
@@ -313,7 +325,8 @@ func (c *Client) translate(req request, status int, meta json.RawMessage) error 
 		return fmt.Errorf("altegio %s: %w: %s", req.path, booking.ErrUnavailable, message)
 
 	default:
-		return fmt.Errorf("altegio %s: %w: %s", req.path, booking.ErrRejected, message)
+		return fmt.Errorf("altegio %s: %w: %w: %s",
+			req.path, booking.ErrRejected, errRequestRejected, message)
 	}
 }
 

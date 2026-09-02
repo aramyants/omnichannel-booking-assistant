@@ -63,12 +63,17 @@ type stubScheduling struct {
 
 	checkErr  error
 	createErr error
-	checked   []booking.Request
+	cancelErr error
+	moveErr   error
+	checked   []booking.Selection
 	created   []booking.Request
+	cancelled []booking.Booking
+	moved     []booking.Booking
+	movedTo   []time.Time
 }
 
-func (s *stubScheduling) Check(_ context.Context, req booking.Request) error {
-	s.checked = append(s.checked, req)
+func (s *stubScheduling) Check(_ context.Context, selection booking.Selection) error {
+	s.checked = append(s.checked, selection)
 	return s.checkErr
 }
 
@@ -78,14 +83,35 @@ func (s *stubScheduling) Create(_ context.Context, req booking.Request) (booking
 		return booking.Booking{}, s.createErr
 	}
 	return booking.Booking{
-		ID:         "bk-1",
-		ExternalID: "998877",
-		CustomerID: req.CustomerID,
-		ServiceIDs: req.ServiceIDs,
-		StaffID:    req.StaffID,
-		StartsAt:   req.StartsAt,
-		Status:     booking.StatusConfirmed,
+		ID:              "bk-1",
+		ExternalID:      "998877",
+		ManagementToken: "private-record-hash",
+		CustomerID:      req.CustomerID,
+		ServiceIDs:      req.ServiceIDs,
+		StaffID:         req.StaffID,
+		StartsAt:        req.StartsAt,
+		Duration:        req.Duration,
+		Status:          booking.StatusConfirmed,
 	}, nil
+}
+
+func (s *stubScheduling) Cancel(_ context.Context, b booking.Booking) error {
+	s.cancelled = append(s.cancelled, b)
+	return s.cancelErr
+}
+
+func (s *stubScheduling) Reschedule(
+	_ context.Context,
+	b booking.Booking,
+	startsAt time.Time,
+) (booking.Booking, error) {
+	s.moved = append(s.moved, b)
+	s.movedTo = append(s.movedTo, startsAt)
+	if s.moveErr != nil {
+		return booking.Booking{}, s.moveErr
+	}
+	b.StartsAt = startsAt
+	return b, nil
 }
 
 func (s *stubScheduling) ListServices(context.Context) ([]booking.Service, error) {
