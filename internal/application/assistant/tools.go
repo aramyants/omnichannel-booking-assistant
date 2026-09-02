@@ -316,8 +316,12 @@ func (t *toolset) listServices(ctx context.Context) (string, error) {
 		ID       string `json:"id"`
 		Name     string `json:"name"`
 		Category string `json:"category,omitempty"`
-		Minutes  int    `json:"minutes"`
-		Price    string `json:"price,omitempty"`
+
+		// Minutes is omitted when the scheduling system has no duration for the
+		// service, which is common. Sending a zero would have the assistant
+		// telling customers the appointment takes no time at all.
+		Minutes int    `json:"minutes,omitempty"`
+		Price   string `json:"price,omitempty"`
 	}
 
 	items := make([]item, 0, len(services))

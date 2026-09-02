@@ -22,7 +22,9 @@ type serviceDTO struct {
 	PriceMin   float64 `json:"price_min"`
 	PriceMax   float64 `json:"price_max"`
 
-	// SeanceLength is the appointment duration in seconds.
+	// SeanceLength is the appointment duration in seconds. Altegio sends null
+	// when a business has not set one, which decodes to zero: a real account
+	// was seen returning null for every service.
 	SeanceLength int64 `json:"seance_length"`
 
 	// Active is 0 for a service that is not offered. Altegio sends it as a

@@ -516,6 +516,37 @@ func TestTheTranscriptIsSentAsConversation(t *testing.T) {
 	}
 }
 
+// TestServicesWithNoDurationDoNotClaimZeroMinutes: a real Altegio account
+// returns a null duration for services the business has not configured one for.
+// Telling a customer their appointment takes no time at all is worse than not
+// mentioning a length.
+func TestServicesWithNoDurationDoNotClaimZeroMinutes(t *testing.T) {
+	sender := &fakeSender{}
+	scheduling := defaultScheduling()
+	scheduling.services = []booking.Service{{
+		ID: "13779299", Name: "Massage", Category: "Motion Sport 115 min",
+		Duration: 0, PriceMin: 39000, PriceMax: 39000, Currency: "AMD",
+	}}
+
+	model := &scriptedAI{responses: []ai.Response{
+		toolResponse("call_1", toolListServices, `{}`),
+		textResponse("A massage is 39000 AMD."),
+	}}
+	svc, _ := newAIService(t, model, scheduling, sender)
+
+	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+
+	output := model.requests[1].Turns[0].Results[0].Output
+	if strings.Contains(output, `"minutes":0`) {
+		t.Errorf("the model was told the appointment takes zero minutes: %s", output)
+	}
+	if !strings.Contains(output, "39000 AMD") {
+		t.Errorf("the price was lost: %s", output)
+	}
+}
+
 // TestUnreadableContentIsDescribedNotDropped: the model needs to know something
 // arrived that it cannot see.
 func TestUnreadableContentIsDescribedNotDropped(t *testing.T) {

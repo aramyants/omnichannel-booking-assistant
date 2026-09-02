@@ -245,7 +245,10 @@ func (c *Client) attempt(ctx context.Context, req request, body []byte) (json.Ra
 		return nil, fmt.Errorf("altegio %s: build request: %w", req.path, err)
 	}
 
-	httpReq.Header.Set("Accept", "application/json")
+	// Altegio refuses any request without this exact Accept header, answering
+	// 400 with a message about it rather than serving the resource. Plain
+	// application/json is rejected.
+	httpReq.Header.Set("Accept", "application/vnd.api.v2+json")
 	httpReq.Header.Set("Authorization", c.authorization())
 	if body != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
