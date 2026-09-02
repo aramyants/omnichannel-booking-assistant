@@ -61,13 +61,20 @@ type MessageRepository interface {
 	Recent(ctx context.Context, conversationID string, limit int) ([]conversation.Message, error)
 }
 
-// ProcessedEvents records which provider deliveries have already been handled.
+// ProcessedEvents coordinates provider deliveries across service instances.
 //
 // Every provider this system targets retries deliveries, and a retry that is
 // handled again produces a second reply and, later, a second appointment.
 type ProcessedEvents interface {
-	Seen(ctx context.Context, key string) (bool, error)
-	MarkProcessed(ctx context.Context, key string, at time.Time) error
+	// Claim atomically acquires a short processing lease. It returns false when
+	// another request owns the delivery or it has already been completed.
+	Claim(ctx context.Context, key, claimID string, at time.Time) (bool, error)
+
+	// Complete turns claimID's lease into a completed-delivery record.
+	Complete(ctx context.Context, key, claimID string, at time.Time) error
+
+	// Release gives a failed attempt back so a provider retry can run now.
+	Release(ctx context.Context, key, claimID string) error
 }
 
 // Deps are the collaborators a Service needs.
@@ -181,31 +188,43 @@ const maxToolRounds = 6
 // builder will need a window, not the whole history.
 const recentMessageLimit = 20
 
+// deliveryStateTimeout bounds the cleanup that records or releases a claim
+// after the webhook request itself has been cancelled.
+const deliveryStateTimeout = 5 * time.Second
+
 // Handle processes one normalised message.
 //
-// The order of the steps is deliberate. The delivery is checked for duplication
-// first, then handled, and only marked processed once the reply is out. Marking
-// it earlier would mean a failure part-way through loses the message silently,
-// because the retry would be discarded as a duplicate. The cost of this order is
-// that a failure after sending produces a second reply on retry, which is an
-// annoyance rather than a lost customer. Booking, where a repeat is not an
-// annoyance, gets its own idempotency key at the point the appointment is
-// created.
+// The order of the steps is deliberate. The delivery first acquires a short
+// lease, which excludes a concurrent copy without declaring unfinished work
+// complete. A failed attempt releases that lease; a successful one turns it
+// into a longer completed record. If the process crashes, the lease expires and
+// a later provider retry can recover the message.
 func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 	if err := msg.Validate(); err != nil {
 		return err
 	}
 
-	seen, err := s.processed.Seen(ctx, msg.DedupeKey())
+	now := s.now()
+	claimID := id.New()
+	claimed, err := s.processed.Claim(ctx, msg.DedupeKey(), claimID, now)
 	if err != nil {
-		return fmt.Errorf("check for a duplicate delivery: %w", err)
+		return fmt.Errorf("claim the delivery: %w", err)
 	}
-	if seen {
-		s.logger.InfoContext(ctx, "dropped a duplicate delivery", "dedupe_key", msg.DedupeKey())
+	if !claimed {
+		s.logger.InfoContext(ctx, "dropped an in-flight or completed delivery",
+			"dedupe_key", msg.DedupeKey())
 		return nil
 	}
 
-	now := s.now()
+	// Errors before delivery leave no externally visible result, so release the
+	// lease and let the provider retry. After a reply is sent the lease is kept
+	// even if recording completion fails, avoiding an immediate second reply.
+	releaseClaim := true
+	defer func() {
+		if releaseClaim {
+			s.releaseDelivery(ctx, msg.DedupeKey(), claimID)
+		}
+	}()
 
 	cust, err := s.identify(ctx, msg, now)
 	if err != nil {
@@ -246,7 +265,8 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 	if !conv.AssistantMayReply() {
 		s.logger.InfoContext(ctx, "left the message for a colleague",
 			"conversation_id", conv.ID, "conversation_state", string(conv.State))
-		s.markProcessed(ctx, msg, now)
+		releaseClaim = false
+		s.completeDelivery(ctx, msg.DedupeKey(), claimID, now)
 		return nil
 	}
 
@@ -290,7 +310,8 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 			"error", err, "conversation_id", conv.ID)
 	}
 
-	s.markProcessed(ctx, msg, now)
+	releaseClaim = false
+	s.completeDelivery(ctx, msg.DedupeKey(), claimID, now)
 	return nil
 }
 
@@ -362,13 +383,29 @@ func (s *Service) openConversation(
 	return conv, nil
 }
 
-// markProcessed records that a delivery has been handled. A failure is logged
+// completeDelivery records that a delivery has been handled. A failure is logged
 // rather than returned: the reply is already with the customer, and reporting
 // an error would only cause the provider to send the message again.
-func (s *Service) markProcessed(ctx context.Context, msg messaging.Envelope, at time.Time) {
-	if err := s.processed.MarkProcessed(ctx, msg.DedupeKey(), at); err != nil {
+func (s *Service) completeDelivery(ctx context.Context, key, claimID string, at time.Time) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliveryStateTimeout)
+	defer cancel()
+
+	if err := s.processed.Complete(cleanupCtx, key, claimID, at); err != nil {
 		s.logger.ErrorContext(ctx, "handled a message but could not record it as processed",
-			"error", err, "dedupe_key", msg.DedupeKey())
+			"error", err, "dedupe_key", key)
+	}
+}
+
+// releaseDelivery makes a failed attempt immediately retryable. If the request
+// context has already expired the repository's lease remains the crash-safe
+// fallback and makes it retryable later.
+func (s *Service) releaseDelivery(ctx context.Context, key, claimID string) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliveryStateTimeout)
+	defer cancel()
+
+	if err := s.processed.Release(cleanupCtx, key, claimID); err != nil {
+		s.logger.ErrorContext(ctx, "could not release a failed delivery claim",
+			"error", err, "dedupe_key", key)
 	}
 }
 

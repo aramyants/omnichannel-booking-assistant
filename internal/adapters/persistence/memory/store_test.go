@@ -200,25 +200,31 @@ func TestProcessedEvents(t *testing.T) {
 	now := time.Unix(1756728000, 0).UTC()
 	store := New(WithClock(func() time.Time { return now }))
 
-	seen, err := store.Seen(t.Context(), "telegram:4127")
+	claimed, err := store.Claim(t.Context(), "telegram:4127", "claim-1", now)
 	if err != nil {
-		t.Fatalf("Seen() returned error: %v", err)
+		t.Fatalf("Claim() returned error: %v", err)
 	}
-	if seen {
-		t.Error("an unhandled delivery reported as seen")
-	}
-
-	if err := store.MarkProcessed(t.Context(), "telegram:4127", now); err != nil {
-		t.Fatalf("MarkProcessed() returned error: %v", err)
+	if !claimed {
+		t.Fatal("the first delivery did not acquire its claim")
 	}
 
-	seen, _ = store.Seen(t.Context(), "telegram:4127")
-	if !seen {
-		t.Error("a handled delivery reported as unseen, so a retry would be answered twice")
+	claimed, _ = store.Claim(t.Context(), "telegram:4127", "claim-2", now)
+	if claimed {
+		t.Error("a concurrent delivery stole an active claim")
 	}
 
-	if seen, _ = store.Seen(t.Context(), "telegram:4128"); seen {
-		t.Error("a different message reported as seen")
+	if err := store.Complete(t.Context(), "telegram:4127", "claim-1", now); err != nil {
+		t.Fatalf("Complete() returned error: %v", err)
+	}
+
+	claimed, _ = store.Claim(t.Context(), "telegram:4127", "claim-3", now)
+	if claimed {
+		t.Error("a completed delivery became claimable")
+	}
+
+	claimed, _ = store.Claim(t.Context(), "telegram:4128", "claim-4", now)
+	if !claimed {
+		t.Error("a different message could not be claimed")
 	}
 }
 
@@ -227,16 +233,41 @@ func TestProcessedEventsExpire(t *testing.T) {
 	clock := func() time.Time { return now }
 	store := New(WithClock(func() time.Time { return clock() }), WithProcessedTTL(time.Hour))
 
-	_ = store.MarkProcessed(t.Context(), "telegram:4127", now)
+	_, _ = store.Claim(t.Context(), "telegram:4127", "claim-1", now)
+	_ = store.Complete(t.Context(), "telegram:4127", "claim-1", now)
 
 	now = now.Add(30 * time.Minute)
-	if seen, _ := store.Seen(t.Context(), "telegram:4127"); !seen {
+	if claimed, _ := store.Claim(t.Context(), "telegram:4127", "claim-2", now); claimed {
 		t.Error("a delivery was forgotten while a retry could still arrive")
 	}
 
 	now = now.Add(time.Hour)
-	if seen, _ := store.Seen(t.Context(), "telegram:4127"); seen {
+	if claimed, _ := store.Claim(t.Context(), "telegram:4127", "claim-3", now); !claimed {
 		t.Error("an expired delivery is still remembered, so the store grows without bound")
+	}
+}
+
+func TestFailedClaimCanBeRetriedImmediately(t *testing.T) {
+	now := time.Unix(1756728000, 0).UTC()
+	store := New()
+
+	_, _ = store.Claim(t.Context(), "telegram:4127", "failed", now)
+	if err := store.Release(t.Context(), "telegram:4127", "failed"); err != nil {
+		t.Fatalf("Release() returned error: %v", err)
+	}
+
+	if claimed, _ := store.Claim(t.Context(), "telegram:4127", "retry", now); !claimed {
+		t.Error("a failed delivery could not be retried immediately")
+	}
+}
+
+func TestAbandonedClaimExpires(t *testing.T) {
+	now := time.Unix(1756728000, 0).UTC()
+	store := New(WithClaimTTL(time.Minute))
+
+	_, _ = store.Claim(t.Context(), "telegram:4127", "crashed", now)
+	if claimed, _ := store.Claim(t.Context(), "telegram:4127", "retry", now.Add(2*time.Minute)); !claimed {
+		t.Error("an abandoned processing lease never became retryable")
 	}
 }
 

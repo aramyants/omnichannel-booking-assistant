@@ -20,8 +20,11 @@ set -euo pipefail
 
 PROJECT_ID="${GCP_PROJECT_ID:?set GCP_PROJECT_ID to your Google Cloud project id}"
 REGION="${GCP_REGION:-europe-west1}"
+FIRESTORE_LOCATION="${FIRESTORE_LOCATION:-${REGION}}"
 SERVICE="${SERVICE_NAME:-omnichannel-booking-assistant}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
+RUNTIME_SA_NAME="${RUNTIME_SERVICE_ACCOUNT:-booking-assistant-runtime}"
+RUNTIME_SA="${RUNTIME_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Cloud Run scales to zero, so an idle service costs nothing. One instance is
 # kept warm at most; concurrency is well above what a single business produces.
@@ -40,7 +43,46 @@ gcloud services enable \
   cloudbuild.googleapis.com \
   artifactregistry.googleapis.com \
   secretmanager.googleapis.com \
+  firestore.googleapis.com \
+  iam.googleapis.com \
   --quiet
+
+say "Preparing Firestore in ${FIRESTORE_LOCATION}"
+if ! gcloud firestore databases describe --database='(default)' >/dev/null 2>&1; then
+  # A Firestore database's location cannot be changed later. Keeping it beside
+  # Cloud Run minimises latency and cross-region traffic.
+  gcloud firestore databases create \
+    --database='(default)' \
+    --location="${FIRESTORE_LOCATION}" \
+    --type=firestore-native \
+    --delete-protection \
+    --quiet
+fi
+
+# Processed webhook ids expire after seven days. The application already
+# ignores expired entries; TTL performs the eventual physical deletion.
+if ! gcloud firestore fields ttls list \
+  --database='(default)' \
+  --collection-group=processed_events \
+  --format='value(name)' | grep -q '/fields/expires_at$'; then
+  gcloud firestore fields ttls update expires_at \
+    --database='(default)' \
+    --collection-group=processed_events \
+    --enable-ttl \
+    --async \
+    --quiet
+fi
+
+say "Preparing the least-privilege runtime identity"
+if ! gcloud iam service-accounts describe "${RUNTIME_SA}" >/dev/null 2>&1; then
+  gcloud iam service-accounts create "${RUNTIME_SA_NAME}" \
+    --display-name="Omnichannel booking assistant runtime" \
+    --quiet
+fi
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role=roles/datastore.user \
+  --quiet >/dev/null
 
 # put_secret writes a value to Secret Manager, creating the secret on first use
 # and adding a version on every run. Values arrive from the environment and are
@@ -88,9 +130,6 @@ SECRET_FLAGS=()
 if [[ ${#SECRET_MAPPINGS[@]} -gt 0 ]]; then
   # The runtime service account is granted read access to exactly the secrets
   # this deployment uses, and no others.
-  PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')"
-  RUNTIME_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
-
   for secret in "${SECRET_NAMES[@]}"; do
     gcloud secrets add-iam-policy-binding "${secret}" \
       --member="serviceAccount:${RUNTIME_SA}" \
@@ -103,7 +142,7 @@ if [[ ${#SECRET_MAPPINGS[@]} -gt 0 ]]; then
 fi
 
 # Settings that are not credentials travel as plain environment variables.
-ENV_VARS="APP_ENV=production,LOG_LEVEL=${LOG_LEVEL}"
+ENV_VARS="APP_ENV=production,LOG_LEVEL=${LOG_LEVEL},STORAGE_BACKEND=firestore,GCP_PROJECT_ID=${PROJECT_ID}"
 [[ -n "${BUSINESS_NAME:-}" ]]     && ENV_VARS+=",BUSINESS_NAME=${BUSINESS_NAME}"
 [[ -n "${ALTEGIO_COMPANY_ID:-}" ]] && ENV_VARS+=",ALTEGIO_COMPANY_ID=${ALTEGIO_COMPANY_ID}"
 [[ -n "${ALTEGIO_TIMEZONE:-}" ]]  && ENV_VARS+=",ALTEGIO_TIMEZONE=${ALTEGIO_TIMEZONE}"
@@ -123,6 +162,7 @@ gcloud run deploy "${SERVICE}" \
   --max-instances "${MAX_INSTANCES}" \
   --concurrency "${CONCURRENCY}" \
   --memory "${MEMORY}" \
+  --service-account "${RUNTIME_SA}" \
   --set-env-vars "${ENV_VARS}" \
   "${SECRET_FLAGS[@]}" \
   --quiet

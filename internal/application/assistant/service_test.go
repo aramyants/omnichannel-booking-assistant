@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +30,20 @@ func (f *fakeSender) Send(_ context.Context, msg messaging.Outgoing) error {
 		return f.err
 	}
 	f.sent = append(f.sent, msg)
+	return nil
+}
+
+type blockingSender struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+	calls   atomic.Int32
+}
+
+func (s *blockingSender) Send(_ context.Context, _ messaging.Outgoing) error {
+	s.calls.Add(1)
+	s.once.Do(func() { close(s.entered) })
+	<-s.release
 	return nil
 }
 
@@ -105,6 +121,29 @@ func TestHandleIgnoresARedeliveredMessage(t *testing.T) {
 
 	if len(sender.sent) != 1 {
 		t.Errorf("three deliveries of one message produced %d replies, want 1", len(sender.sent))
+	}
+}
+
+func TestConcurrentRedeliveryIsClaimedOnce(t *testing.T) {
+	sender := &blockingSender{entered: make(chan struct{}), release: make(chan struct{})}
+	svc, _ := newTestService(t, sender)
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- svc.Handle(t.Context(), incoming("4127")) }()
+	<-sender.entered
+
+	// The first request is still sending its reply. A concurrent copy must see
+	// its active lease and return without reaching the sender.
+	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
+		t.Fatalf("duplicate Handle() returned error: %v", err)
+	}
+	close(sender.release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first Handle() returned error: %v", err)
+	}
+
+	if got := sender.calls.Load(); got != 1 {
+		t.Errorf("concurrent delivery produced %d replies, want 1", got)
 	}
 }
 

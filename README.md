@@ -153,6 +153,8 @@ found, rather than failing later inside a request.
 | `OPENAI_API_KEY` | no | | Enables the language model when set |
 | `OPENAI_MODEL` | no | adapter default | Model identifier |
 | `OPENAI_BASE_URL` | no | | Overrides the OpenAI host, for local stubs or proxies |
+| `STORAGE_BACKEND` | no | `memory` locally, `firestore` in production | Durable state backend |
+| `GCP_PROJECT_ID` | with Firestore | | Project containing the Firestore database |
 
 A channel is enabled by supplying its credentials and disabled by leaving them
 out, in which case its endpoint is not served at all. Enabling Telegram without
@@ -325,6 +327,8 @@ export TELEGRAM_BOT_TOKEN=... TELEGRAM_WEBHOOK_SECRET=...
 
 ```sh
 make test        # unit tests
+make emulator    # start the Firestore emulator in Docker
+make test-firestore # Firestore integration tests
 make test-race   # with the race detector, needs cgo and a C compiler
 make lint        # golangci-lint
 make vulncheck   # known vulnerabilities in dependencies and the standard library

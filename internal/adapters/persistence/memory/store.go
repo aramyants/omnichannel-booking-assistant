@@ -8,6 +8,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"time"
@@ -22,7 +23,16 @@ import (
 // It bounds memory, and it bounds it safely: providers give up redelivering
 // long before this, so an entry can only expire once no retry could still
 // arrive for it.
-const defaultProcessedTTL = 24 * time.Hour
+const (
+	defaultProcessedTTL = 24 * time.Hour
+	defaultClaimTTL     = 5 * time.Minute
+)
+
+type processedEntry struct {
+	claimID     string
+	processedAt time.Time
+	expiresAt   time.Time
+}
 
 // Store holds customers, conversations, the transcript and the record of
 // handled deliveries.
@@ -42,13 +52,14 @@ type Store struct {
 	conversationKeyByID map[string]string
 
 	messages  map[string][]conversation.Message
-	processed map[string]time.Time
+	processed map[string]processedEntry
 
 	// bookings is keyed by customer, which is how a customer's appointments
 	// are read back.
 	bookings map[string][]booking.Booking
 
 	processedTTL time.Duration
+	claimTTL     time.Duration
 	now          func() time.Time
 }
 
@@ -65,6 +76,11 @@ func WithProcessedTTL(ttl time.Duration) Option {
 	return func(s *Store) { s.processedTTL = ttl }
 }
 
+// WithClaimTTL overrides how long an abandoned processing lease is held.
+func WithClaimTTL(ttl time.Duration) Option {
+	return func(s *Store) { s.claimTTL = ttl }
+}
+
 // New returns an empty Store.
 func New(opts ...Option) *Store {
 	s := &Store{
@@ -73,9 +89,10 @@ func New(opts ...Option) *Store {
 		conversations:       make(map[string]conversation.Conversation),
 		conversationKeyByID: make(map[string]string),
 		messages:            make(map[string][]conversation.Message),
-		processed:           make(map[string]time.Time),
+		processed:           make(map[string]processedEntry),
 		bookings:            make(map[string][]booking.Booking),
 		processedTTL:        defaultProcessedTTL,
+		claimTTL:            defaultClaimTTL,
 		now:                 time.Now,
 	}
 	for _, opt := range opts {
@@ -201,38 +218,58 @@ func (s *Store) ListBookings(_ context.Context, customerID string) ([]booking.Bo
 	return stored, nil
 }
 
-// Seen reports whether a delivery has already been handled.
-func (s *Store) Seen(_ context.Context, key string) (bool, error) {
+// Claim atomically acquires a processing lease for one delivery.
+func (s *Store) Claim(_ context.Context, key, claimID string, at time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	at, ok := s.processed[key]
-	if !ok {
+	entry, ok := s.processed[key]
+	if ok && entry.expiresAt.After(at) {
 		return false, nil
 	}
 
-	if s.now().Sub(at) > s.processedTTL {
-		delete(s.processed, key)
-		return false, nil
+	s.processed[key] = processedEntry{
+		claimID:   claimID,
+		expiresAt: at.Add(s.claimTTL),
 	}
 	return true, nil
 }
 
-// MarkProcessed records that a delivery has been handled.
-func (s *Store) MarkProcessed(_ context.Context, key string, at time.Time) error {
+// Complete turns a processing lease into a completed-delivery record.
+func (s *Store) Complete(_ context.Context, key, claimID string, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.processed[key] = at
+	entry, ok := s.processed[key]
+	if !ok || entry.claimID != claimID {
+		return errors.New("complete delivery: claim is not owned by this request")
+	}
+
+	s.processed[key] = processedEntry{
+		processedAt: at,
+		expiresAt:   at.Add(s.processedTTL),
+	}
 	s.pruneProcessed()
+	return nil
+}
+
+// Release gives a failed attempt back to the provider for an immediate retry.
+func (s *Store) Release(_ context.Context, key, claimID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.processed[key]
+	if ok && entry.claimID == claimID && entry.processedAt.IsZero() {
+		delete(s.processed, key)
+	}
 	return nil
 }
 
 // pruneProcessed drops expired entries. The caller must hold the mutex.
 func (s *Store) pruneProcessed() {
 	now := s.now()
-	for key, at := range s.processed {
-		if now.Sub(at) > s.processedTTL {
+	for key, entry := range s.processed {
+		if !entry.expiresAt.After(now) {
 			delete(s.processed, key)
 		}
 	}

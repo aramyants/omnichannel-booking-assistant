@@ -42,6 +42,7 @@ Manager, builds the container and deploys it:
 ```sh
 export GCP_PROJECT_ID=my-booking-assistant
 export GCP_REGION=europe-west1
+export FIRESTORE_LOCATION=europe-west1
 export TELEGRAM_BOT_TOKEN=...
 export TELEGRAM_WEBHOOK_SECRET=...
 
@@ -50,9 +51,14 @@ export TELEGRAM_WEBHOOK_SECRET=...
 
 On Windows, run it from Git Bash.
 
-The first run performs two revisions. A service cannot know its own URL until it
-exists, and it needs that URL to register its webhooks, so the script deploys,
-reads the URL back and applies it. Later runs deploy once.
+The first run creates the Firestore database with deletion protection, enables
+TTL cleanup for processed webhook ids, and creates a least-privilege runtime
+service account. It then performs two revisions: a service cannot know its own
+URL until it exists, and it needs that URL to register its webhooks, so the
+script deploys, reads the URL back and applies it. Later runs deploy once.
+
+`FIRESTORE_LOCATION` defaults to `GCP_REGION`. Choose it carefully on the first
+run because a Firestore database's location cannot be changed later.
 
 ### What it costs
 
@@ -99,7 +105,8 @@ service is rejecting or failing deliveries.
 
 ## Altegio
 
-Not yet implemented. The credentials to have ready:
+The service reads the catalogue and availability and creates bookings through
+Altegio. The credentials to provide are:
 
 Register at the [Altegio marketplace](https://alteg.io) and the partner token
 appears in your account settings. Business data additionally needs a user token,
