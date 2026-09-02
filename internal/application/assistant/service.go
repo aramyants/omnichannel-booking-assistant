@@ -102,6 +102,9 @@ type Deps struct {
 	// Bookings records the appointments this system has made.
 	Bookings BookingRepository
 
+	// Reminders plans delayed notifications after a confirmed create or move.
+	Reminders ReminderPlanner
+
 	Business Business
 
 	// Now supplies the current time. It is injected so tests can assert on
@@ -166,6 +169,7 @@ func NewService(deps Deps) (*Service, error) {
 		tools: &toolset{
 			scheduling: deps.Scheduling,
 			bookings:   deps.Bookings,
+			reminders:  deps.Reminders,
 			now:        now,
 			location:   business.Location,
 			logger:     deps.Logger,

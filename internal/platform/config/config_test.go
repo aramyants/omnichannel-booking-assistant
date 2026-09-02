@@ -315,6 +315,84 @@ func TestUnknownStorageBackendIsRefused(t *testing.T) {
 	}
 }
 
+func TestReminderDefaults(t *testing.T) {
+	tests := map[string]struct {
+		env  string
+		want ReminderBackend
+	}{
+		"development uses local timers":          {env: "development", want: RemindersMemory},
+		"production waits for deployment wiring": {env: "production", want: RemindersDisabled},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("APP_ENV", tt.env)
+			t.Setenv("GCP_PROJECT_ID", "my-project")
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() returned error: %v", err)
+			}
+			if cfg.Reminders.Backend != tt.want || cfg.Reminders.LeadTime != 24*time.Hour {
+				t.Errorf("reminders = %+v, want backend %q and 24h lead", cfg.Reminders, tt.want)
+			}
+		})
+	}
+}
+
+func TestCloudTasksReminderConfiguration(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("GCP_PROJECT_ID", "my-project")
+	t.Setenv("REMINDER_BACKEND", "cloudtasks")
+	t.Setenv("REMINDER_LEAD_TIME", "2h")
+	t.Setenv("CLOUD_TASKS_LOCATION", "europe-west1")
+	t.Setenv("CLOUD_TASKS_QUEUE", "appointment-reminders")
+	t.Setenv("CLOUD_TASKS_TARGET_URL", "https://booking.example.run.app/tasks/reminders")
+	t.Setenv("CLOUD_TASKS_AUDIENCE", "https://booking.example.run.app")
+	t.Setenv("CLOUD_TASKS_SERVICE_ACCOUNT", "runtime@my-project.iam.gserviceaccount.com")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if !cfg.Reminders.Enabled() || cfg.Reminders.LeadTime != 2*time.Hour {
+		t.Errorf("reminders = %+v", cfg.Reminders)
+	}
+}
+
+func TestInvalidReminderConfiguration(t *testing.T) {
+	tests := map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"memory in production": {
+			env:  map[string]string{"APP_ENV": "production", "GCP_PROJECT_ID": "p", "REMINDER_BACKEND": "memory"},
+			want: "timers would be lost",
+		},
+		"unknown backend": {
+			env:  map[string]string{"APP_ENV": "development", "REMINDER_BACKEND": "cron"},
+			want: "must be disabled, memory or cloudtasks",
+		},
+		"invalid lead": {
+			env:  map[string]string{"APP_ENV": "development", "REMINDER_LEAD_TIME": "tomorrow"},
+			want: "REMINDER_LEAD_TIME",
+		},
+		"incomplete cloud tasks": {
+			env:  map[string]string{"APP_ENV": "development", "REMINDER_BACKEND": "cloudtasks"},
+			want: "CLOUD_TASKS_QUEUE is required",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Load() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 // TestLoadReportsEveryError guards the decision to accumulate failures rather
 // than return on the first one.
 func TestLoadReportsEveryError(t *testing.T) {

@@ -54,7 +54,6 @@ func TestPreparingDoesNotBook(t *testing.T) {
 		textResponse("Haircut with Mariam at 10:00. Shall I book it?"),
 	}}
 	svc, store := newAIService(t, model, scheduling, sender)
-
 	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
 		t.Fatalf("Handle() returned error: %v", err)
 	}
@@ -94,6 +93,8 @@ func TestConfirmingBooksTheAppointment(t *testing.T) {
 		textResponse("Booked. Your reference is 998877."),
 	}}
 	svc, store := newAIService(t, model, scheduling, sender)
+	planner := &stubReminderPlanner{}
+	svc.tools.reminders = planner
 
 	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
 		t.Fatalf("Handle() returned error: %v", err)
@@ -107,6 +108,9 @@ func TestConfirmingBooksTheAppointment(t *testing.T) {
 
 	if len(scheduling.created) != 1 {
 		t.Fatalf("created %d appointments, want 1", len(scheduling.created))
+	}
+	if len(planner.planned) != 1 || planner.planned[0].ExternalID != "998877" {
+		t.Errorf("planned reminders = %+v, want the confirmed appointment", planner.planned)
 	}
 
 	created := scheduling.created[0]

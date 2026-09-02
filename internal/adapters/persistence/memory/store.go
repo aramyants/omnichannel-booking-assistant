@@ -16,6 +16,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/reminder"
 )
 
 // defaultProcessedTTL is how long a handled delivery is remembered.
@@ -56,7 +57,8 @@ type Store struct {
 
 	// bookings is keyed by customer, which is how a customer's appointments
 	// are read back.
-	bookings map[string][]booking.Booking
+	bookings  map[string][]booking.Booking
+	reminders map[string]reminder.Reminder
 
 	processedTTL time.Duration
 	claimTTL     time.Duration
@@ -91,6 +93,7 @@ func New(opts ...Option) *Store {
 		messages:            make(map[string][]conversation.Message),
 		processed:           make(map[string]processedEntry),
 		bookings:            make(map[string][]booking.Booking),
+		reminders:           make(map[string]reminder.Reminder),
 		processedTTL:        defaultProcessedTTL,
 		claimTTL:            defaultClaimTTL,
 		now:                 time.Now,
@@ -99,6 +102,102 @@ func New(opts ...Option) *Store {
 		opt(s)
 	}
 	return s
+}
+
+// EnsureReminder stores candidate unless that deterministic reminder id is
+// already present. A repeated booking confirmation must not reset a reminder
+// that has already been sent.
+func (s *Store) EnsureReminder(_ context.Context, candidate reminder.Reminder) error {
+	if err := candidate.Validate(); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.reminders[candidate.ID]; !exists {
+		s.reminders[candidate.ID] = candidate
+	}
+	return nil
+}
+
+// FindReminder returns one reminder.
+func (s *Store) FindReminder(_ context.Context, reminderID string) (reminder.Reminder, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.reminders[reminderID]
+	if !ok {
+		return reminder.Reminder{}, reminder.ErrNotFound
+	}
+	return r, nil
+}
+
+// ClaimReminder acquires or recovers a delivery lease.
+func (s *Store) ClaimReminder(
+	_ context.Context,
+	reminderID, claimID string,
+	at, leaseUntil time.Time,
+) (reminder.Reminder, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	r, ok := s.reminders[reminderID]
+	if !ok {
+		return reminder.Reminder{}, false, reminder.ErrNotFound
+	}
+	if r.Terminal() || (r.Status == reminder.StatusDelivering && r.ClaimExpires.After(at)) {
+		return r, false, nil
+	}
+	r.Status = reminder.StatusDelivering
+	r.ClaimID = claimID
+	r.ClaimExpires = leaseUntil
+	s.reminders[reminderID] = r
+	return r, true, nil
+}
+
+// FinishReminder records the terminal result owned by claimID.
+func (s *Store) FinishReminder(
+	_ context.Context,
+	reminderID, claimID string,
+	status reminder.Status,
+	at time.Time,
+) error {
+	if status != reminder.StatusSent && status != reminder.StatusSkipped {
+		return errors.New("finish reminder: status must be sent or skipped")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.reminders[reminderID]
+	if !ok {
+		return reminder.ErrNotFound
+	}
+	if r.ClaimID != claimID || r.Status != reminder.StatusDelivering {
+		return errors.New("finish reminder: claim is not owned by this delivery")
+	}
+	r.Status = status
+	r.FinishedAt = at
+	r.ClaimID = ""
+	r.ClaimExpires = time.Time{}
+	s.reminders[reminderID] = r
+	return nil
+}
+
+// ReleaseReminder makes a failed delivery retryable immediately.
+func (s *Store) ReleaseReminder(_ context.Context, reminderID, claimID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.reminders[reminderID]
+	if !ok {
+		return reminder.ErrNotFound
+	}
+	if r.ClaimID != claimID || r.Status != reminder.StatusDelivering {
+		return nil
+	}
+	r.Status = reminder.StatusScheduled
+	r.ClaimID = ""
+	r.ClaimExpires = time.Time{}
+	s.reminders[reminderID] = r
+	return nil
 }
 
 // FindOrCreateByChannelIdentity returns the customer owning identity, creating

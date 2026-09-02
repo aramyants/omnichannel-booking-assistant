@@ -4,7 +4,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -21,7 +23,11 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/telegram"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/persistence/firestore"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/persistence/memory"
+	cloudtasksadapter "github.com/aramyants/omnichannel-booking-assistant/internal/adapters/tasks/cloudtasks"
+	localtasks "github.com/aramyants/omnichannel-booking-assistant/internal/adapters/tasks/local"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/tasks/taskhttp"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/assistant"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/reminders"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/platform/config"
@@ -138,6 +144,15 @@ func run() error {
 	}
 	defer closeStore()
 
+	reminderService, reminderHandler, closeReminders, err := openReminders(
+		ctx, cfg, store, senders, logger,
+	)
+	if err != nil {
+		return err
+	}
+	defer closeReminders()
+	gw.reminder = reminderHandler
+
 	assistantService, err := assistant.NewService(assistant.Deps{
 		Senders:       senders,
 		Customers:     store,
@@ -148,6 +163,7 @@ func run() error {
 		AI:            model,
 		Scheduling:    scheduling,
 		Bookings:      store,
+		Reminders:     reminderService,
 		Business: assistant.Business{
 			Name:     cfg.BusinessName,
 			Location: cfg.Altegio.Location,
@@ -220,6 +236,97 @@ type appStore interface {
 	assistant.MessageRepository
 	assistant.ProcessedEvents
 	assistant.BookingRepository
+	reminders.Repository
+}
+
+func openReminders(
+	ctx context.Context,
+	cfg config.Config,
+	store appStore,
+	assistantSenders map[messaging.Provider]assistant.Sender,
+	logger *slog.Logger,
+) (*reminders.Service, http.Handler, func(), error) {
+	if !cfg.Reminders.Enabled() {
+		logger.Info("appointment reminders are disabled")
+		return nil, nil, func() {}, nil
+	}
+
+	senders := make(map[messaging.Provider]reminders.Sender, len(assistantSenders))
+	for provider, sender := range assistantSenders {
+		senders[provider] = sender
+	}
+	deps := reminders.Deps{
+		Repository: store,
+		Bookings:   store,
+		Messages:   store,
+		Senders:    senders,
+		LeadTime:   cfg.Reminders.LeadTime,
+		Location:   cfg.Altegio.Location,
+		Logger:     logger,
+	}
+
+	switch cfg.Reminders.Backend {
+	case config.RemindersMemory:
+		var service *reminders.Service
+		scheduler, err := localtasks.New(func(ctx context.Context, reminderID string) error {
+			return service.Deliver(ctx, reminderID)
+		}, logger)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		deps.Scheduler = scheduler
+		service, err = reminders.NewService(deps)
+		if err != nil {
+			scheduler.Close()
+			return nil, nil, nil, err
+		}
+		logger.Info("using in-process reminder timers: pending reminders are lost on restart",
+			"lead_time", cfg.Reminders.LeadTime.String())
+		return service, nil, scheduler.Close, nil
+
+	case config.RemindersCloudTasks:
+		scheduler, err := cloudtasksadapter.New(ctx, cloudtasksadapter.Config{
+			ProjectID:           cfg.Reminders.ProjectID,
+			Location:            cfg.Reminders.Location,
+			Queue:               cfg.Reminders.Queue,
+			TargetURL:           cfg.Reminders.TargetURL,
+			Audience:            cfg.Reminders.Audience,
+			ServiceAccountEmail: cfg.Reminders.ServiceAccountEmail,
+		})
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		deps.Scheduler = scheduler
+		service, err := reminders.NewService(deps)
+		if err != nil {
+			_ = scheduler.Close()
+			return nil, nil, nil, err
+		}
+		authorizer, err := cloudtasksadapter.NewAuthorizer(
+			cfg.Reminders.Audience, cfg.Reminders.ServiceAccountEmail,
+		)
+		if err != nil {
+			_ = scheduler.Close()
+			return nil, nil, nil, err
+		}
+		handler, err := taskhttp.New(authorizer, service, logger)
+		if err != nil {
+			_ = scheduler.Close()
+			return nil, nil, nil, err
+		}
+		logger.Info("using Cloud Tasks for appointment reminders",
+			"queue", cfg.Reminders.Queue,
+			"location", cfg.Reminders.Location,
+			"lead_time", cfg.Reminders.LeadTime.String())
+		return service, handler, func() {
+			if err := scheduler.Close(); err != nil {
+				logger.Error("could not close the Cloud Tasks client", "error", err)
+			}
+		}, nil
+
+	default:
+		return nil, nil, nil, fmt.Errorf("unsupported reminder backend %q", cfg.Reminders.Backend)
+	}
 }
 
 // openStore builds the configured store and returns a function that releases

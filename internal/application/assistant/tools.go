@@ -47,6 +47,13 @@ type BookingRepository interface {
 	ListBookings(ctx context.Context, customerID string) ([]booking.Booking, error)
 }
 
+// ReminderPlanner schedules a notification for one exact appointment version.
+// A reschedule plans a new version; the old reminder then skips itself when it
+// sees that the stored start no longer matches.
+type ReminderPlanner interface {
+	Plan(ctx context.Context, b booking.Booking, conv conversation.Conversation) error
+}
+
 // session is the state one reply is produced against. Tools that change
 // something act on this rather than on globals.
 type session struct {
@@ -91,6 +98,7 @@ const noArguments = `{"type":"object","properties":{},"required":[],"additionalP
 type toolset struct {
 	scheduling Scheduling
 	bookings   BookingRepository
+	reminders  ReminderPlanner
 	now        func() time.Time
 	location   *time.Location
 	logger     *slog.Logger
@@ -538,6 +546,7 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 		// told they have one.
 		s.conv.Draft = nil
 
+		recorded := false
 		if t.bookings != nil {
 			if saveErr := t.bookings.SaveBooking(ctx, created); saveErr != nil {
 				// The appointment exists in the scheduling system, which is the
@@ -545,6 +554,14 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 				// did not work when it did.
 				t.logger.ErrorContext(ctx, "booked an appointment but could not record it locally",
 					"error", saveErr, "external_id", created.ExternalID)
+			} else {
+				recorded = true
+			}
+		}
+		if recorded && t.reminders != nil {
+			if planErr := t.reminders.Plan(ctx, created, *s.conv); planErr != nil {
+				t.logger.ErrorContext(ctx, "booked an appointment but could not plan its reminder",
+					"error", planErr, "external_id", created.ExternalID)
 			}
 		}
 

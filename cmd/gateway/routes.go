@@ -21,6 +21,9 @@ const (
 	// because the same value is registered with Telegram at startup, and the
 	// two must not be allowed to drift apart.
 	TelegramWebhookPath = "/webhooks/telegram"
+
+	// ReminderTaskPath receives authenticated Cloud Tasks wake-ups.
+	ReminderTaskPath = "/tasks/reminders"
 )
 
 // gateway carries the dependencies the HTTP layer needs. Channel handlers are
@@ -30,6 +33,7 @@ type gateway struct {
 	logger   *slog.Logger
 	version  string
 	telegram http.Handler
+	reminder http.Handler
 }
 
 func (g *gateway) routes() http.Handler {
@@ -38,6 +42,9 @@ func (g *gateway) routes() http.Handler {
 
 	if g.telegram != nil {
 		mux.Handle("POST "+TelegramWebhookPath, g.telegram)
+	}
+	if g.reminder != nil {
+		mux.Handle("POST "+ReminderTaskPath, g.reminder)
 	}
 
 	// Outermost first. RequestID runs before the logger so every entry carries

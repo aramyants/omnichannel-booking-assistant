@@ -52,10 +52,16 @@ export TELEGRAM_WEBHOOK_SECRET=...
 On Windows, run it from Git Bash.
 
 The first run creates the Firestore database with deletion protection, enables
-TTL cleanup for processed webhook ids, and creates a least-privilege runtime
-service account. It then performs two revisions: a service cannot know its own
-URL until it exists, and it needs that URL to register its webhooks, so the
-script deploys, reads the URL back and applies it. Later runs deploy once.
+TTL cleanup for processed webhook ids, creates a least-privilege runtime
+service account, and creates the Cloud Tasks reminder queue. It then performs
+two revisions: a service cannot know its own URL until it exists, and it needs
+that URL for webhooks and authenticated reminder tasks, so the script deploys,
+reads the URL back and applies it. Later runs deploy once.
+
+Cloud Tasks signs reminder requests with an OIDC token for the runtime service
+account. The public Cloud Run service validates that identity inside the
+reminder route; provider webhook routes continue to use their own signatures or
+shared secrets.
 
 `FIRESTORE_LOCATION` defaults to `GCP_REGION`. Choose it carefully on the first
 run because a Firestore database's location cannot be changed later.

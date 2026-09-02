@@ -51,11 +51,36 @@ type Config struct {
 	// itself. Empty makes it speak generically rather than fail.
 	BusinessName string
 
-	Telegram Telegram
-	Altegio  Altegio
-	AI       AI
-	Storage  Storage
+	Telegram  Telegram
+	Altegio   Altegio
+	AI        AI
+	Storage   Storage
+	Reminders Reminders
 }
+
+// ReminderBackend names how delayed reminder work is scheduled.
+type ReminderBackend string
+
+const (
+	RemindersDisabled   ReminderBackend = "disabled"
+	RemindersMemory     ReminderBackend = "memory"
+	RemindersCloudTasks ReminderBackend = "cloudtasks"
+)
+
+// Reminders configures delayed appointment notifications.
+type Reminders struct {
+	Backend             ReminderBackend
+	LeadTime            time.Duration
+	ProjectID           string
+	Location            string
+	Queue               string
+	TargetURL           string
+	Audience            string
+	ServiceAccountEmail string
+}
+
+// Enabled reports whether reminders should be planned.
+func (r Reminders) Enabled() bool { return r.Backend != RemindersDisabled }
 
 // StorageBackend names where application state is kept.
 type StorageBackend string
@@ -227,10 +252,92 @@ func Load() (Config, error) {
 	cfg.Storage = storage
 	errs = append(errs, storageErrs...)
 
+	reminders, reminderErrs := loadReminders(cfg.Env, cfg.Storage.ProjectID)
+	cfg.Reminders = reminders
+	errs = append(errs, reminderErrs...)
+
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("load config: %w", errors.Join(errs...))
 	}
 	return cfg, nil
+}
+
+func loadReminders(env Environment, projectID string) (Reminders, []error) {
+	defaultBackend := RemindersMemory
+	if env == EnvProduction {
+		// The deployment script enables Cloud Tasks after it learns the new
+		// service URL. Disabled keeps a credentials-free first revision viable.
+		defaultBackend = RemindersDisabled
+	}
+
+	cfg := Reminders{
+		Backend:             ReminderBackend(getenv("REMINDER_BACKEND", string(defaultBackend))),
+		ProjectID:           projectID,
+		Location:            getenv("CLOUD_TASKS_LOCATION", ""),
+		Queue:               getenv("CLOUD_TASKS_QUEUE", ""),
+		TargetURL:           getenv("CLOUD_TASKS_TARGET_URL", ""),
+		Audience:            getenv("CLOUD_TASKS_AUDIENCE", ""),
+		ServiceAccountEmail: getenv("CLOUD_TASKS_SERVICE_ACCOUNT", ""),
+	}
+
+	var errs []error
+	lead, err := time.ParseDuration(getenv("REMINDER_LEAD_TIME", "24h"))
+	switch {
+	case err != nil:
+		errs = append(errs, fmt.Errorf("REMINDER_LEAD_TIME must be a duration such as 24h: %w", err))
+	case lead <= 0:
+		errs = append(errs, errors.New("REMINDER_LEAD_TIME must be positive"))
+	default:
+		cfg.LeadTime = lead
+	}
+
+	switch cfg.Backend {
+	case RemindersDisabled:
+		// No scheduler is wired.
+	case RemindersMemory:
+		if env == EnvProduction {
+			errs = append(errs, errors.New(
+				"REMINDER_BACKEND=memory is refused in production: timers would be lost on restart"))
+		}
+	case RemindersCloudTasks:
+		for name, value := range map[string]string{
+			"GCP_PROJECT_ID":              cfg.ProjectID,
+			"CLOUD_TASKS_LOCATION":        cfg.Location,
+			"CLOUD_TASKS_QUEUE":           cfg.Queue,
+			"CLOUD_TASKS_TARGET_URL":      cfg.TargetURL,
+			"CLOUD_TASKS_AUDIENCE":        cfg.Audience,
+			"CLOUD_TASKS_SERVICE_ACCOUNT": cfg.ServiceAccountEmail,
+		} {
+			if value == "" {
+				errs = append(errs, fmt.Errorf("%s is required when REMINDER_BACKEND=cloudtasks", name))
+			}
+		}
+		if cfg.TargetURL != "" {
+			if err := validateHTTPSURL("CLOUD_TASKS_TARGET_URL", cfg.TargetURL); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if cfg.Audience != "" {
+			if err := validateHTTPSURL("CLOUD_TASKS_AUDIENCE", cfg.Audience); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	default:
+		errs = append(errs, fmt.Errorf(
+			"REMINDER_BACKEND must be disabled, memory or cloudtasks: got %q", cfg.Backend))
+	}
+	return cfg, errs
+}
+
+func validateHTTPSURL(name, raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s is not a valid URL: %w", name, err)
+	}
+	if parsed.Scheme != "https" || parsed.Host == "" {
+		return fmt.Errorf("%s must be an absolute https URL: got %q", name, raw)
+	}
+	return nil
 }
 
 // validate reports every problem with the Telegram settings.

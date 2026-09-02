@@ -203,7 +203,12 @@ func (t *toolset) confirmReschedule(ctx context.Context, s *session) (string, er
 	switch {
 	case err == nil:
 		s.conv.BookingChange = nil
-		t.recordChangedBooking(ctx, moved, "rescheduled")
+		if t.recordChangedBooking(ctx, moved, "rescheduled") && t.reminders != nil {
+			if planErr := t.reminders.Plan(ctx, moved, *s.conv); planErr != nil {
+				t.logger.ErrorContext(ctx, "rescheduled an appointment but could not plan its reminder",
+					"error", planErr, "external_id", moved.ExternalID)
+			}
+		}
 		return encode(map[string]any{
 			"rescheduled": true,
 			"reference":   moved.ExternalID,
@@ -252,11 +257,13 @@ func (t *toolset) ownedBooking(
 	return booking.Booking{}, fmt.Errorf("%w: no appointment with reference %q", booking.ErrNotFound, reference)
 }
 
-func (t *toolset) recordChangedBooking(ctx context.Context, b booking.Booking, action string) {
+func (t *toolset) recordChangedBooking(ctx context.Context, b booking.Booking, action string) bool {
 	if err := t.bookings.SaveBooking(ctx, b); err != nil {
 		t.logger.ErrorContext(ctx, "appointment changed but could not be updated locally",
 			"error", err, "action", action, "external_id", b.ExternalID)
+		return false
 	}
+	return true
 }
 
 func (t *toolset) unknownChange(
