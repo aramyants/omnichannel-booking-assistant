@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
 )
@@ -43,6 +44,10 @@ type Store struct {
 	messages  map[string][]conversation.Message
 	processed map[string]time.Time
 
+	// bookings is keyed by customer, which is how a customer's appointments
+	// are read back.
+	bookings map[string][]booking.Booking
+
 	processedTTL time.Duration
 	now          func() time.Time
 }
@@ -69,6 +74,7 @@ func New(opts ...Option) *Store {
 		conversationKeyByID: make(map[string]string),
 		messages:            make(map[string][]conversation.Message),
 		processed:           make(map[string]time.Time),
+		bookings:            make(map[string][]booking.Booking),
 		processedTTL:        defaultProcessedTTL,
 		now:                 time.Now,
 	}
@@ -164,6 +170,35 @@ func (s *Store) Recent(_ context.Context, conversationID string, limit int) ([]c
 	// Cloned so a caller cannot mutate stored state through the returned slice,
 	// which a durable store would never allow either.
 	return slices.Clone(all), nil
+}
+
+// SaveBooking records an appointment, replacing any earlier version of it.
+func (s *Store) SaveBooking(_ context.Context, b booking.Booking) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing := s.bookings[b.CustomerID]
+	for i, stored := range existing {
+		if stored.ExternalID == b.ExternalID {
+			existing[i] = b
+			return nil
+		}
+	}
+
+	s.bookings[b.CustomerID] = append(existing, b)
+	return nil
+}
+
+// ListBookings returns a customer's appointments, soonest first.
+func (s *Store) ListBookings(_ context.Context, customerID string) ([]booking.Booking, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stored := slices.Clone(s.bookings[customerID])
+	slices.SortFunc(stored, func(a, b booking.Booking) int {
+		return a.StartsAt.Compare(b.StartsAt)
+	})
+	return stored, nil
 }
 
 // Seen reports whether a delivery has already been handled.
