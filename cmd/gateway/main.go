@@ -19,6 +19,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/ai/openai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/altegio"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/telegram"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/persistence/firestore"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/persistence/memory"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/assistant"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
@@ -131,14 +132,11 @@ func run() error {
 			"messages and hand them to a colleague")
 	}
 
-	// State lives in the process for now. It is lost on restart and not shared
-	// between instances, which is fine locally and not fine in production; the
-	// durable store lands behind these same interfaces.
-	store := memory.New()
-	if cfg.Env == config.EnvProduction {
-		logger.Warn("running with in-process storage: conversations and " +
-			"deduplication are lost on restart and not shared between instances")
+	store, closeStore, err := openStore(ctx, cfg, logger)
+	if err != nil {
+		return err
 	}
+	defer closeStore()
 
 	assistantService, err := assistant.NewService(assistant.Deps{
 		Senders:       senders,
@@ -211,6 +209,43 @@ func registerTelegramWebhook(ctx context.Context, client *telegram.Client, cfg c
 	}
 
 	logger.Info("registered the telegram webhook", "callback_url", callbackURL)
+}
+
+// appStore is everything the assistant needs to persist. Both the in-process
+// and the Firestore implementations satisfy it, and nothing above this line
+// knows which one is in use.
+type appStore interface {
+	assistant.CustomerRepository
+	assistant.ConversationRepository
+	assistant.MessageRepository
+	assistant.ProcessedEvents
+	assistant.BookingRepository
+}
+
+// openStore builds the configured store and returns a function that releases
+// it.
+func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (appStore, func(), error) {
+	switch cfg.Storage.Backend {
+	case config.StorageFirestore:
+		store, err := firestore.New(ctx, cfg.Storage.ProjectID)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		logger.Info("using firestore for storage", "project", cfg.Storage.ProjectID)
+
+		return store, func() {
+			if err := store.Close(); err != nil {
+				logger.Error("could not close the firestore client", "error", err)
+			}
+		}, nil
+
+	default:
+		// Configuration refuses this in production, so reaching it means local
+		// development, where losing state on restart is what you want.
+		logger.Info("using in-process storage: state is lost on restart")
+		return memory.New(), func() {}, nil
+	}
 }
 
 // verifyScheduling reads the service catalogue once at startup.

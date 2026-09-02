@@ -37,6 +37,8 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("PORT", "9090")
 	t.Setenv("LOG_LEVEL", "WARN")
 	t.Setenv("SHUTDOWN_TIMEOUT", "30s")
+	// Production stores state in Firestore, which needs a project.
+	t.Setenv("GCP_PROJECT_ID", "my-project")
 
 	cfg, err := Load()
 	if err != nil {
@@ -223,6 +225,93 @@ func TestPublicBaseURL(t *testing.T) {
 				t.Errorf("error = %q, want it to contain %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestStorageDefaults(t *testing.T) {
+	tests := map[string]struct {
+		env     string
+		want    StorageBackend
+		project string
+	}{
+		// Local development keeps state in the process, so a restart is a clean
+		// slate and nothing external is needed to run the service.
+		"development defaults to memory": {env: "development", want: StorageMemory},
+
+		// Production keeps it in Firestore, because an in-process store would
+		// lose every conversation on each deploy and deduplicate nothing across
+		// instances.
+		"production defaults to firestore": {env: "production", want: StorageFirestore, project: "my-project"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("APP_ENV", tt.env)
+			t.Setenv("GCP_PROJECT_ID", tt.project)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() returned error: %v", err)
+			}
+			if cfg.Storage.Backend != tt.want {
+				t.Errorf("backend = %q, want %q", cfg.Storage.Backend, tt.want)
+			}
+		})
+	}
+}
+
+// TestProductionRefusesInProcessStorage guards the failure that produces
+// duplicate appointments: deduplication that is not shared between instances.
+func TestProductionRefusesInProcessStorage(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("STORAGE_BACKEND", "memory")
+	t.Setenv("GCP_PROJECT_ID", "my-project")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() accepted in-process storage in production")
+	}
+	if !strings.Contains(err.Error(), "refused in production") {
+		t.Errorf("error = %q, want it to explain the refusal", err)
+	}
+}
+
+func TestFirestoreNeedsAProject(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("STORAGE_BACKEND", "firestore")
+	t.Setenv("GCP_PROJECT_ID", "")
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() accepted firestore with no project")
+	}
+	if !strings.Contains(err.Error(), "GCP_PROJECT_ID is required") {
+		t.Errorf("error = %q", err)
+	}
+}
+
+func TestGoogleCloudProjectFallback(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("STORAGE_BACKEND", "firestore")
+	t.Setenv("GCP_PROJECT_ID", "")
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "injected-by-cloud-run")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.Storage.ProjectID != "injected-by-cloud-run" {
+		t.Errorf("project = %q", cfg.Storage.ProjectID)
+	}
+}
+
+func TestUnknownStorageBackendIsRefused(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("STORAGE_BACKEND", "postgres")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() accepted an unknown storage backend")
 	}
 }
 

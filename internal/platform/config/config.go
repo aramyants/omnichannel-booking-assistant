@@ -54,6 +54,29 @@ type Config struct {
 	Telegram Telegram
 	Altegio  Altegio
 	AI       AI
+	Storage  Storage
+}
+
+// StorageBackend names where application state is kept.
+type StorageBackend string
+
+const (
+	// StorageMemory keeps state in the process. It is lost on restart and not
+	// shared between instances, so it is for local development and tests.
+	StorageMemory StorageBackend = "memory"
+
+	// StorageFirestore keeps state in Google Cloud Firestore.
+	StorageFirestore StorageBackend = "firestore"
+)
+
+// Storage selects where conversations, customers and deduplication live.
+type Storage struct {
+	Backend StorageBackend
+
+	// ProjectID is the Google Cloud project holding the Firestore database. The
+	// deployment supplies it to Cloud Run; GOOGLE_CLOUD_PROJECT is accepted as
+	// a conventional fallback in other Google-hosted environments.
+	ProjectID string
 }
 
 // AI holds the language model settings. The assistant falls back to a fixed
@@ -200,6 +223,10 @@ func Load() (Config, error) {
 		errs = append(errs, errors.New("OPENAI_MODEL is set but OPENAI_API_KEY is not"))
 	}
 
+	storage, storageErrs := loadStorage(cfg.Env)
+	cfg.Storage = storage
+	errs = append(errs, storageErrs...)
+
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("load config: %w", errors.Join(errs...))
 	}
@@ -247,6 +274,44 @@ func isTelegramSecret(s string) bool {
 		}
 	}
 	return true
+}
+
+// loadStorage decides where state is kept.
+//
+// Production defaults to Firestore and refuses to fall back to memory: an
+// in-process store there would lose every conversation on each deploy and
+// deduplicate nothing across instances, which is exactly the failure that
+// produces duplicate appointments.
+func loadStorage(env Environment) (Storage, []error) {
+	defaultBackend := StorageMemory
+	if env == EnvProduction {
+		defaultBackend = StorageFirestore
+	}
+
+	cfg := Storage{
+		Backend: StorageBackend(getenv("STORAGE_BACKEND", string(defaultBackend))),
+		// GOOGLE_CLOUD_PROJECT is a conventional fallback used by several
+		// Google-hosted environments and local tools.
+		ProjectID: getenv("GCP_PROJECT_ID", getenv("GOOGLE_CLOUD_PROJECT", "")),
+	}
+
+	var errs []error
+	switch cfg.Backend {
+	case StorageMemory:
+		if env == EnvProduction {
+			errs = append(errs, errors.New(
+				"STORAGE_BACKEND=memory is refused in production: state would be lost on "+
+					"every deploy and not shared between instances"))
+		}
+	case StorageFirestore:
+		if cfg.ProjectID == "" {
+			errs = append(errs, errors.New("GCP_PROJECT_ID is required when STORAGE_BACKEND=firestore"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("STORAGE_BACKEND must be memory or firestore: got %q", cfg.Backend))
+	}
+
+	return cfg, errs
 }
 
 // loadAltegio reads the scheduling system settings and reports every problem.

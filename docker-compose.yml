@@ -1,0 +1,19 @@
+# Local dependencies for development and integration tests.
+#
+# Nothing here is needed to run the service: it defaults to in-process storage.
+# Start this only to exercise the Firestore adapter against a real Firestore.
+
+services:
+  firestore:
+    image: google/cloud-sdk:emulators
+    command: >
+      gcloud emulators firestore start
+      --host-port=0.0.0.0:8200
+      --project=test-project
+    ports:
+      - "8200:8200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8200/ || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
