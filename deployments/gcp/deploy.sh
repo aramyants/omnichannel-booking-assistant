@@ -101,12 +101,15 @@ gcloud iam service-accounts add-iam-policy-binding "${RUNTIME_SA}" \
 
 say "Preparing the reminder queue"
 if ! gcloud tasks queues describe "${REMINDER_QUEUE}" --location "${REGION}" >/dev/null 2>&1; then
+  # Every duration is given in seconds. Cloud Tasks rejects the compound forms
+  # gcloud accepts elsewhere, such as 24h or 10m, with a message about the
+  # format rather than a hint about which unit it wants.
   gcloud tasks queues create "${REMINDER_QUEUE}" \
     --location "${REGION}" \
     --max-attempts 20 \
-    --max-retry-duration 24h \
+    --max-retry-duration 86400s \
     --min-backoff 10s \
-    --max-backoff 10m \
+    --max-backoff 600s \
     --max-doublings 5 \
     --quiet
 fi
