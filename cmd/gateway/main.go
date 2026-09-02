@@ -16,10 +16,12 @@ import (
 	// removes a class of bug that only appears in production.
 	_ "time/tzdata"
 
+	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/ai/openai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/altegio"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/telegram"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/persistence/memory"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/assistant"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/platform/config"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/platform/httpserver"
@@ -85,6 +87,50 @@ func run() error {
 		senders[messaging.ProviderTelegram] = telegramClient
 	}
 
+	var scheduling assistant.Scheduling
+	if cfg.Altegio.Enabled() {
+		opts := []altegio.Option{
+			altegio.WithLocation(cfg.Altegio.Location),
+			altegio.WithCurrency(cfg.Altegio.Currency),
+		}
+		if cfg.Altegio.BaseURL != "" {
+			opts = append(opts, altegio.WithBaseURL(cfg.Altegio.BaseURL))
+			logger.Warn("using a non-default altegio host", "host", cfg.Altegio.BaseURL)
+		}
+
+		client, err := altegio.NewClient(
+			cfg.Altegio.PartnerToken,
+			cfg.Altegio.UserToken,
+			cfg.Altegio.CompanyID,
+			logger,
+			opts...,
+		)
+		if err != nil {
+			return err
+		}
+		verifyScheduling(ctx, client, cfg, logger)
+		scheduling = client
+	}
+
+	var model ai.Provider
+	if cfg.AI.Enabled() {
+		opts := []openai.Option{openai.WithModel(cfg.AI.Model)}
+		if cfg.AI.BaseURL != "" {
+			opts = append(opts, openai.WithBaseURL(cfg.AI.BaseURL))
+			logger.Warn("using a non-default openai host", "host", cfg.AI.BaseURL)
+		}
+
+		client, err := openai.NewClient(cfg.AI.APIKey, opts...)
+		if err != nil {
+			return err
+		}
+		model = client
+		logger.Info("language model configured", "model", client.Model())
+	} else {
+		logger.Warn("no language model configured: the assistant will acknowledge " +
+			"messages and hand them to a colleague")
+	}
+
 	// State lives in the process for now. It is lost on restart and not shared
 	// between instances, which is fine locally and not fine in production; the
 	// durable store lands behind these same interfaces.
@@ -101,6 +147,12 @@ func run() error {
 		Messages:      store,
 		Processed:     store,
 		Logger:        logger,
+		AI:            model,
+		Scheduling:    scheduling,
+		Business: assistant.Business{
+			Name:     cfg.BusinessName,
+			Location: cfg.Altegio.Location,
+		},
 	})
 	if err != nil {
 		return err
@@ -112,21 +164,6 @@ func run() error {
 			assistantService,
 			logger,
 		)
-	}
-
-	if cfg.Altegio.Enabled() {
-		scheduling, err := altegio.NewClient(
-			cfg.Altegio.PartnerToken,
-			cfg.Altegio.UserToken,
-			cfg.Altegio.CompanyID,
-			logger,
-			altegio.WithLocation(cfg.Altegio.Location),
-			altegio.WithCurrency(cfg.Altegio.Currency),
-		)
-		if err != nil {
-			return err
-		}
-		verifyScheduling(ctx, scheduling, cfg, logger)
 	}
 
 	srv, err := httpserver.New(ctx, cfg.Addr(), gw.routes(), logger, cfg.ShutdownTimeout)
