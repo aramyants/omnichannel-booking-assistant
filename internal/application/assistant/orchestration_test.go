@@ -54,12 +54,38 @@ func toolResponse(id, name, args string) ai.Response {
 	}
 }
 
-// stubScheduling is a fixed calendar.
+// stubScheduling is a fixed calendar that records what it was asked to book.
 type stubScheduling struct {
 	services []booking.Service
 	staff    []booking.Staff
 	slots    []booking.Slot
 	err      error
+
+	checkErr  error
+	createErr error
+	checked   []booking.Request
+	created   []booking.Request
+}
+
+func (s *stubScheduling) Check(_ context.Context, req booking.Request) error {
+	s.checked = append(s.checked, req)
+	return s.checkErr
+}
+
+func (s *stubScheduling) Create(_ context.Context, req booking.Request) (booking.Booking, error) {
+	s.created = append(s.created, req)
+	if s.createErr != nil {
+		return booking.Booking{}, s.createErr
+	}
+	return booking.Booking{
+		ID:         "bk-1",
+		ExternalID: "998877",
+		CustomerID: req.CustomerID,
+		ServiceIDs: req.ServiceIDs,
+		StaffID:    req.StaffID,
+		StartsAt:   req.StartsAt,
+		Status:     booking.StatusConfirmed,
+	}, nil
 }
 
 func (s *stubScheduling) ListServices(context.Context) ([]booking.Service, error) {
@@ -109,6 +135,7 @@ func newAIService(t *testing.T, model ai.Provider, scheduling Scheduling, sender
 		Now:           func() time.Time { return testNow },
 		AI:            model,
 		Scheduling:    scheduling,
+		Bookings:      store,
 		Business:      Business{Name: "Studio Nine", Location: time.UTC},
 	})
 	if err != nil {
