@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 )
 
@@ -51,6 +52,11 @@ type Conversation struct {
 	ExternalThreadID string
 
 	State State
+
+	// Draft is the booking the customer has been shown and not yet confirmed.
+	// It lives on the conversation because that is its whole lifetime: it is
+	// built during one exchange and either confirmed or abandoned in it.
+	Draft *booking.Draft
 
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
