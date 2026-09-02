@@ -21,6 +21,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/reminder"
 )
 
 // Collection names. Documents are keyed by a natural identifier wherever one
@@ -33,6 +34,7 @@ const (
 	collectionMessages      = "messages"
 	collectionProcessed     = "processed_events"
 	collectionBookings      = "bookings"
+	collectionReminders     = "reminders"
 )
 
 // processedRetention is how long a handled delivery is remembered.
@@ -598,4 +600,204 @@ func (s *Store) ListBookings(ctx context.Context, customerID string) ([]booking.
 		return a.StartsAt.Compare(b.StartsAt)
 	})
 	return bookings, nil
+}
+
+type reminderDoc struct {
+	ID                string    `firestore:"id"`
+	BookingExternalID string    `firestore:"booking_external_id"`
+	CustomerID        string    `firestore:"customer_id"`
+	ConversationID    string    `firestore:"conversation_id"`
+	Provider          string    `firestore:"provider"`
+	ExternalThreadID  string    `firestore:"external_thread_id"`
+	ExpectedStartsAt  time.Time `firestore:"expected_starts_at"`
+	DueAt             time.Time `firestore:"due_at"`
+	Status            string    `firestore:"status"`
+	CreatedAt         time.Time `firestore:"created_at"`
+	ClaimID           string    `firestore:"claim_id"`
+	ClaimExpires      time.Time `firestore:"claim_expires"`
+	FinishedAt        time.Time `firestore:"finished_at"`
+}
+
+func toReminderDoc(r reminder.Reminder) reminderDoc {
+	return reminderDoc{
+		ID:                r.ID,
+		BookingExternalID: r.BookingExternalID,
+		CustomerID:        r.CustomerID,
+		ConversationID:    r.ConversationID,
+		Provider:          string(r.Provider),
+		ExternalThreadID:  r.ExternalThreadID,
+		ExpectedStartsAt:  r.ExpectedStartsAt,
+		DueAt:             r.DueAt,
+		Status:            string(r.Status),
+		CreatedAt:         r.CreatedAt,
+		ClaimID:           r.ClaimID,
+		ClaimExpires:      r.ClaimExpires,
+		FinishedAt:        r.FinishedAt,
+	}
+}
+
+func fromReminderDoc(doc reminderDoc) reminder.Reminder {
+	return reminder.Reminder{
+		ID:                doc.ID,
+		BookingExternalID: doc.BookingExternalID,
+		CustomerID:        doc.CustomerID,
+		ConversationID:    doc.ConversationID,
+		Provider:          messaging.Provider(doc.Provider),
+		ExternalThreadID:  doc.ExternalThreadID,
+		ExpectedStartsAt:  doc.ExpectedStartsAt,
+		DueAt:             doc.DueAt,
+		Status:            reminder.Status(doc.Status),
+		CreatedAt:         doc.CreatedAt,
+		ClaimID:           doc.ClaimID,
+		ClaimExpires:      doc.ClaimExpires,
+		FinishedAt:        doc.FinishedAt,
+	}
+}
+
+// EnsureReminder creates candidate once without resetting a terminal reminder.
+func (s *Store) EnsureReminder(ctx context.Context, candidate reminder.Reminder) error {
+	if err := candidate.Validate(); err != nil {
+		return err
+	}
+	ref := s.client.Collection(collectionReminders).Doc(candidate.ID)
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		_, err := tx.Get(ref)
+		switch {
+		case err == nil:
+			return nil
+		case status.Code(err) != codes.NotFound:
+			return err
+		default:
+			return tx.Set(ref, toReminderDoc(candidate))
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("firestore: ensure reminder: %w", err)
+	}
+	return nil
+}
+
+// FindReminder returns one reminder.
+func (s *Store) FindReminder(ctx context.Context, reminderID string) (reminder.Reminder, error) {
+	snapshot, err := s.client.Collection(collectionReminders).Doc(reminderID).Get(ctx)
+	if status.Code(err) == codes.NotFound {
+		return reminder.Reminder{}, reminder.ErrNotFound
+	}
+	if err != nil {
+		return reminder.Reminder{}, fmt.Errorf("firestore: find reminder: %w", err)
+	}
+	var doc reminderDoc
+	if err := snapshot.DataTo(&doc); err != nil {
+		return reminder.Reminder{}, fmt.Errorf("firestore: read reminder: %w", err)
+	}
+	return fromReminderDoc(doc), nil
+}
+
+// ClaimReminder atomically acquires or recovers a delivery lease.
+func (s *Store) ClaimReminder(
+	ctx context.Context,
+	reminderID, claimID string,
+	at, leaseUntil time.Time,
+) (reminder.Reminder, bool, error) {
+	ref := s.client.Collection(collectionReminders).Doc(reminderID)
+	var (
+		claimed reminder.Reminder
+		owned   bool
+	)
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		snapshot, err := tx.Get(ref)
+		if status.Code(err) == codes.NotFound {
+			return reminder.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		var doc reminderDoc
+		if err := snapshot.DataTo(&doc); err != nil {
+			return err
+		}
+		claimed = fromReminderDoc(doc)
+		if claimed.Terminal() ||
+			(claimed.Status == reminder.StatusDelivering && claimed.ClaimExpires.After(at)) {
+			return nil
+		}
+		claimed.Status = reminder.StatusDelivering
+		claimed.ClaimID = claimID
+		claimed.ClaimExpires = leaseUntil
+		owned = true
+		return tx.Set(ref, toReminderDoc(claimed))
+	})
+	if err != nil {
+		return reminder.Reminder{}, false, fmt.Errorf("firestore: claim reminder: %w", err)
+	}
+	return claimed, owned, nil
+}
+
+// FinishReminder records the terminal result owned by claimID.
+func (s *Store) FinishReminder(
+	ctx context.Context,
+	reminderID, claimID string,
+	finalStatus reminder.Status,
+	at time.Time,
+) error {
+	if finalStatus != reminder.StatusSent && finalStatus != reminder.StatusSkipped {
+		return errors.New("firestore: finish reminder: status must be sent or skipped")
+	}
+	ref := s.client.Collection(collectionReminders).Doc(reminderID)
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		snapshot, err := tx.Get(ref)
+		if status.Code(err) == codes.NotFound {
+			return reminder.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		var doc reminderDoc
+		if err := snapshot.DataTo(&doc); err != nil {
+			return err
+		}
+		r := fromReminderDoc(doc)
+		if r.Status != reminder.StatusDelivering || r.ClaimID != claimID {
+			return errors.New("claim is not owned by this delivery")
+		}
+		r.Status = finalStatus
+		r.FinishedAt = at
+		r.ClaimID = ""
+		r.ClaimExpires = time.Time{}
+		return tx.Set(ref, toReminderDoc(r))
+	})
+	if err != nil {
+		return fmt.Errorf("firestore: finish reminder: %w", err)
+	}
+	return nil
+}
+
+// ReleaseReminder makes a failed delivery retryable immediately.
+func (s *Store) ReleaseReminder(ctx context.Context, reminderID, claimID string) error {
+	ref := s.client.Collection(collectionReminders).Doc(reminderID)
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		snapshot, err := tx.Get(ref)
+		if status.Code(err) == codes.NotFound {
+			return reminder.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		var doc reminderDoc
+		if err := snapshot.DataTo(&doc); err != nil {
+			return err
+		}
+		r := fromReminderDoc(doc)
+		if r.Status != reminder.StatusDelivering || r.ClaimID != claimID {
+			return nil
+		}
+		r.Status = reminder.StatusScheduled
+		r.ClaimID = ""
+		r.ClaimExpires = time.Time{}
+		return tx.Set(ref, toReminderDoc(r))
+	})
+	if err != nil {
+		return fmt.Errorf("firestore: release reminder: %w", err)
+	}
+	return nil
 }

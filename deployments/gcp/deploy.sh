@@ -25,6 +25,8 @@ SERVICE="${SERVICE_NAME:-omnichannel-booking-assistant}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 RUNTIME_SA_NAME="${RUNTIME_SERVICE_ACCOUNT:-booking-assistant-runtime}"
 RUNTIME_SA="${RUNTIME_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+REMINDER_QUEUE="${CLOUD_TASKS_QUEUE:-appointment-reminders}"
+REMINDER_LEAD_TIME="${REMINDER_LEAD_TIME:-24h}"
 
 # Cloud Run scales to zero, so an idle service costs nothing. One instance is
 # kept warm at most; concurrency is well above what a single business produces.
@@ -44,6 +46,7 @@ gcloud services enable \
   artifactregistry.googleapis.com \
   secretmanager.googleapis.com \
   firestore.googleapis.com \
+  cloudtasks.googleapis.com \
   iam.googleapis.com \
   --quiet
 
@@ -83,6 +86,30 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${RUNTIME_SA}" \
   --role=roles/datastore.user \
   --quiet >/dev/null
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role=roles/cloudtasks.enqueuer \
+  --quiet >/dev/null
+
+# Creating a task with an OIDC token requires iam.serviceAccounts.actAs for the
+# identity named on that task. The runtime uses its own identity, so the grant
+# is narrow rather than project-wide.
+gcloud iam service-accounts add-iam-policy-binding "${RUNTIME_SA}" \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role=roles/iam.serviceAccountUser \
+  --quiet >/dev/null
+
+say "Preparing the reminder queue"
+if ! gcloud tasks queues describe "${REMINDER_QUEUE}" --location "${REGION}" >/dev/null 2>&1; then
+  gcloud tasks queues create "${REMINDER_QUEUE}" \
+    --location "${REGION}" \
+    --max-attempts 20 \
+    --max-retry-duration 24h \
+    --min-backoff 10s \
+    --max-backoff 10m \
+    --max-doublings 5 \
+    --quiet
+fi
 
 # put_secret writes a value to Secret Manager, creating the secret on first use
 # and adding a version on every run. Values arrive from the environment and are
@@ -142,7 +169,19 @@ if [[ ${#SECRET_MAPPINGS[@]} -gt 0 ]]; then
 fi
 
 # Settings that are not credentials travel as plain environment variables.
-ENV_VARS="APP_ENV=production,LOG_LEVEL=${LOG_LEVEL},STORAGE_BACKEND=firestore,GCP_PROJECT_ID=${PROJECT_ID}"
+EXISTING_SERVICE_URL="$(gcloud run services describe "${SERVICE}" --region "${REGION}" \
+  --format='value(status.url)' 2>/dev/null || true)"
+
+ENV_VARS="APP_ENV=production,LOG_LEVEL=${LOG_LEVEL},STORAGE_BACKEND=firestore,GCP_PROJECT_ID=${PROJECT_ID},REMINDER_LEAD_TIME=${REMINDER_LEAD_TIME}"
+if [[ -n "${EXISTING_SERVICE_URL}" ]]; then
+  ENV_VARS+=",PUBLIC_BASE_URL=${EXISTING_SERVICE_URL}"
+  ENV_VARS+=",REMINDER_BACKEND=cloudtasks,CLOUD_TASKS_LOCATION=${REGION},CLOUD_TASKS_QUEUE=${REMINDER_QUEUE}"
+  ENV_VARS+=",CLOUD_TASKS_TARGET_URL=${EXISTING_SERVICE_URL}/tasks/reminders,CLOUD_TASKS_AUDIENCE=${EXISTING_SERVICE_URL}"
+  ENV_VARS+=",CLOUD_TASKS_SERVICE_ACCOUNT=${RUNTIME_SA}"
+else
+  # The first revision is needed to learn Cloud Run's stable service URL.
+  ENV_VARS+=",REMINDER_BACKEND=disabled"
+fi
 [[ -n "${BUSINESS_NAME:-}" ]]     && ENV_VARS+=",BUSINESS_NAME=${BUSINESS_NAME}"
 [[ -n "${ALTEGIO_COMPANY_ID:-}" ]] && ENV_VARS+=",ALTEGIO_COMPANY_ID=${ALTEGIO_COMPANY_ID}"
 [[ -n "${ALTEGIO_TIMEZONE:-}" ]]  && ENV_VARS+=",ALTEGIO_TIMEZONE=${ALTEGIO_TIMEZONE}"
@@ -168,14 +207,12 @@ gcloud run deploy "${SERVICE}" \
   --quiet
 
 SERVICE_URL="$(gcloud run services describe "${SERVICE}" --region "${REGION}" --format='value(status.url)')"
-CURRENT_BASE_URL="$(gcloud run services describe "${SERVICE}" --region "${REGION}" \
-  --format='value(spec.template.spec.containers[0].env.filter("name", "PUBLIC_BASE_URL").extract("value"))' 2>/dev/null || true)"
 
-if [[ "${CURRENT_BASE_URL}" != *"${SERVICE_URL}"* ]]; then
-  say "Telling the service its own address so it can register webhooks"
+if [[ -z "${EXISTING_SERVICE_URL}" ]]; then
+  say "Enabling webhooks and authenticated reminder tasks at the service address"
   gcloud run services update "${SERVICE}" \
     --region "${REGION}" \
-    --update-env-vars "PUBLIC_BASE_URL=${SERVICE_URL}" \
+    --update-env-vars "PUBLIC_BASE_URL=${SERVICE_URL},REMINDER_BACKEND=cloudtasks,CLOUD_TASKS_LOCATION=${REGION},CLOUD_TASKS_QUEUE=${REMINDER_QUEUE},CLOUD_TASKS_TARGET_URL=${SERVICE_URL}/tasks/reminders,CLOUD_TASKS_AUDIENCE=${SERVICE_URL},CLOUD_TASKS_SERVICE_ACCOUNT=${RUNTIME_SA}" \
     --quiet
 fi
 

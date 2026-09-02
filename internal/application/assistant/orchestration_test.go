@@ -72,6 +72,20 @@ type stubScheduling struct {
 	movedTo   []time.Time
 }
 
+type stubReminderPlanner struct {
+	planned []booking.Booking
+	err     error
+}
+
+func (p *stubReminderPlanner) Plan(
+	_ context.Context,
+	b booking.Booking,
+	_ conversation.Conversation,
+) error {
+	p.planned = append(p.planned, b)
+	return p.err
+}
+
 func (s *stubScheduling) Check(_ context.Context, selection booking.Selection) error {
 	s.checked = append(s.checked, selection)
 	return s.checkErr

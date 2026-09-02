@@ -27,7 +27,7 @@ required before launch.
 | Booking from a conversation | done |
 | Durable Firestore storage | done |
 | Cancel and reschedule | done |
-| Reminders | not started |
+| Delayed reminders | done, local timers or Cloud Tasks |
 | WhatsApp, Instagram, Messenger, Viber | not started |
 
 ## Design
@@ -155,6 +155,13 @@ found, rather than failing later inside a request.
 | `OPENAI_BASE_URL` | no | | Overrides the OpenAI host, for local stubs or proxies |
 | `STORAGE_BACKEND` | no | `memory` locally, `firestore` in production | Durable state backend |
 | `GCP_PROJECT_ID` | with Firestore | | Project containing the Firestore database |
+| `REMINDER_BACKEND` | no | `memory` locally, `disabled` before production wiring | `disabled`, `memory` or `cloudtasks` |
+| `REMINDER_LEAD_TIME` | no | `24h` | How far before an appointment to send its reminder |
+| `CLOUD_TASKS_LOCATION` | with Cloud Tasks | | Queue region |
+| `CLOUD_TASKS_QUEUE` | with Cloud Tasks | | Reminder queue name |
+| `CLOUD_TASKS_TARGET_URL` | with Cloud Tasks | | Full HTTPS reminder handler URL |
+| `CLOUD_TASKS_AUDIENCE` | with Cloud Tasks | | Expected OIDC audience, normally the Cloud Run origin |
+| `CLOUD_TASKS_SERVICE_ACCOUNT` | with Cloud Tasks | | Only identity allowed to invoke reminder tasks |
 
 A channel is enabled by supplying its credentials and disabled by leaving them
 out, in which case its endpoint is not served at all. Enabling Telegram without
@@ -323,6 +330,21 @@ The local record changes only after Altegio confirms. If a requested new time is
 taken during confirmation, the original appointment remains unchanged. If the
 provider's response is ambiguous, the assistant claims neither success nor
 failure and hands the conversation to a colleague.
+
+### Reminders
+
+One reminder is planned for each exact appointment start. The delayed task
+carries only a reminder id; at delivery time the service reloads the current
+booking and sends only if it is still confirmed at that same time. Cancelling
+or rescheduling therefore makes an old task harmless without relying on task
+deletion racing its delivery.
+
+Local development uses in-process timers. Production uses named Cloud Tasks
+with an OIDC token restricted to the runtime service account. The HTTP endpoint
+validates the token's signature, audience and service-account email; Cloud Tasks
+metadata headers are never trusted as authentication. Cloud Tasks accepts at
+most a 30-day delay, so reminders farther away chain deterministic 29-day
+wake-ups until they are due.
 
 ### Why the prompt is not the security boundary
 

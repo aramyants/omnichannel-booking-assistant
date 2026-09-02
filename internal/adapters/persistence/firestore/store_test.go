@@ -1,7 +1,9 @@
 package firestore
 
 import (
+	"context"
 	"errors"
+	"net"
 	"os"
 	"testing"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/reminder"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/platform/id"
 )
 
@@ -23,9 +26,21 @@ var testNow = time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 func newStore(t *testing.T) *Store {
 	t.Helper()
 
-	if os.Getenv("FIRESTORE_EMULATOR_HOST") == "" {
+	host := os.Getenv("FIRESTORE_EMULATOR_HOST")
+	if host == "" {
 		t.Skip("set FIRESTORE_EMULATOR_HOST to run these; see make emulator")
 	}
+
+	// The client connects lazily, so an emulator that is not running would
+	// otherwise turn every test into a minute of waiting before it failed.
+	// Dialling first turns that into an immediate, explanatory failure.
+	dialer := net.Dialer{Timeout: 2 * time.Second}
+	conn, err := dialer.DialContext(t.Context(), "tcp", host)
+	if err != nil {
+		t.Fatalf("FIRESTORE_EMULATOR_HOST is %s but nothing is listening there: %v\n"+
+			"start it with: make emulator", host, err)
+	}
+	_ = conn.Close()
 
 	store, err := New(t.Context(), "test-project")
 	if err != nil {
@@ -34,6 +49,16 @@ func newStore(t *testing.T) *Store {
 	t.Cleanup(func() { _ = store.Close() })
 
 	return store
+}
+
+// opCtx bounds one emulator operation, so a hang is reported as a failure
+// rather than as a test that never finishes.
+func opCtx(t *testing.T) context.Context {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	t.Cleanup(cancel)
+	return ctx
 }
 
 // unique keeps tests independent without clearing the emulator between them,
@@ -86,12 +111,21 @@ func TestConcurrentIdentityResolution(t *testing.T) {
 	externalID := unique(t, "tg-concurrent")
 
 	const attempts = 8
-	results := make(chan string, attempts)
 
+	// Errors are carried separately from ids. Folding them into the same
+	// channel of strings would let a run where every call failed identically
+	// pass as agreement.
+	type outcome struct {
+		customerID string
+		err        error
+	}
+	results := make(chan outcome, attempts)
+
+	ctx := opCtx(t)
 	for i := range attempts {
 		go func() {
 			customerID := "cust-" + string(rune('a'+i))
-			resolved, err := store.FindOrCreateByChannelIdentity(t.Context(),
+			resolved, err := store.FindOrCreateByChannelIdentity(ctx,
 				customer.ChannelIdentity{
 					ID:             "identity-" + customerID,
 					CustomerID:     customerID,
@@ -101,18 +135,22 @@ func TestConcurrentIdentityResolution(t *testing.T) {
 				},
 				customer.Customer{ID: customerID, CreatedAt: testNow, UpdatedAt: testNow},
 			)
-			if err != nil {
-				results <- "error: " + err.Error()
-				return
-			}
-			results <- resolved.ID
+			results <- outcome{customerID: resolved.ID, err: err}
 		}()
 	}
 
-	first := <-results
-	for range attempts - 1 {
-		if got := <-results; got != first {
-			t.Fatalf("concurrent calls resolved to %q and %q", first, got)
+	var resolved []string
+	for range attempts {
+		got := <-results
+		if got.err != nil {
+			t.Fatalf("a concurrent call failed: %v", got.err)
+		}
+		resolved = append(resolved, got.customerID)
+	}
+
+	for _, got := range resolved[1:] {
+		if got != resolved[0] {
+			t.Fatalf("concurrent calls resolved to %q and %q", resolved[0], got)
 		}
 	}
 }
@@ -472,6 +510,74 @@ func TestSavingTheSameBookingTwiceUpdatesIt(t *testing.T) {
 	}
 	if got[0].Status != booking.StatusCancelled {
 		t.Errorf("status = %q, want the update to have replaced it", got[0].Status)
+	}
+}
+
+func TestReminderRoundTripAndClaim(t *testing.T) {
+	store := newStore(t)
+	r := reminder.Reminder{
+		ID: unique(t, "reminder"), BookingExternalID: "998877", CustomerID: "cust-1",
+		ConversationID: "conv-1", Provider: messaging.ProviderTelegram,
+		ExternalThreadID: "thread-1", ExpectedStartsAt: testNow.Add(48 * time.Hour),
+		DueAt: testNow.Add(24 * time.Hour), Status: reminder.StatusScheduled, CreatedAt: testNow,
+	}
+	if err := store.EnsureReminder(t.Context(), r); err != nil {
+		t.Fatalf("EnsureReminder() returned error: %v", err)
+	}
+	loaded, err := store.FindReminder(t.Context(), r.ID)
+	if err != nil || !loaded.DueAt.Equal(r.DueAt) {
+		t.Fatalf("FindReminder() = %+v, %v", loaded, err)
+	}
+
+	claimed, owned, err := store.ClaimReminder(
+		t.Context(), r.ID, "claim-1", testNow, testNow.Add(5*time.Minute),
+	)
+	if err != nil || !owned || claimed.ClaimID != "claim-1" {
+		t.Fatalf("ClaimReminder() = %+v, %t, %v", claimed, owned, err)
+	}
+	if _, owned, err := store.ClaimReminder(
+		t.Context(), r.ID, "claim-2", testNow, testNow.Add(5*time.Minute),
+	); err != nil || owned {
+		t.Errorf("concurrent ClaimReminder() owned = %t, error = %v", owned, err)
+	}
+	if err := store.FinishReminder(
+		t.Context(), r.ID, "claim-1", reminder.StatusSent, testNow,
+	); err != nil {
+		t.Fatalf("FinishReminder() returned error: %v", err)
+	}
+
+	// Planning the same deterministic reminder again must not reset sent state.
+	if err := store.EnsureReminder(t.Context(), r); err != nil {
+		t.Fatalf("second EnsureReminder() returned error: %v", err)
+	}
+	finished, _ := store.FindReminder(t.Context(), r.ID)
+	if finished.Status != reminder.StatusSent {
+		t.Errorf("status = %q, want sent to survive repeated planning", finished.Status)
+	}
+}
+
+func TestReminderClaimCanBeReleasedOrRecovered(t *testing.T) {
+	store := newStore(t)
+	r := reminder.Reminder{
+		ID: unique(t, "reminder-retry"), BookingExternalID: "998877", CustomerID: "cust-1",
+		ConversationID: "conv-1", Provider: messaging.ProviderTelegram,
+		ExternalThreadID: "thread-1", ExpectedStartsAt: testNow.Add(48 * time.Hour),
+		DueAt: testNow.Add(24 * time.Hour), Status: reminder.StatusScheduled, CreatedAt: testNow,
+	}
+	_ = store.EnsureReminder(t.Context(), r)
+	_, _, _ = store.ClaimReminder(t.Context(), r.ID, "failed", testNow, testNow.Add(5*time.Minute))
+	if err := store.ReleaseReminder(t.Context(), r.ID, "failed"); err != nil {
+		t.Fatalf("ReleaseReminder() returned error: %v", err)
+	}
+	if _, owned, err := store.ClaimReminder(
+		t.Context(), r.ID, "retry", testNow, testNow.Add(5*time.Minute),
+	); err != nil || !owned {
+		t.Errorf("claim after release = %t, %v", owned, err)
+	}
+	if _, owned, err := store.ClaimReminder(
+		t.Context(), r.ID, "recovered", testNow.Add(6*time.Minute), testNow.Add(11*time.Minute),
+	); err != nil || !owned {
+		t.Errorf("claim after lease expiry = %t, %v", owned, err)
 	}
 }
 

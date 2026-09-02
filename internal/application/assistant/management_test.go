@@ -201,6 +201,8 @@ func TestConfirmedRescheduleChangesProviderThenLocalState(t *testing.T) {
 		textResponse("Your appointment has been moved."),
 	}}
 	svc, store := newAIService(t, model, scheduling, &fakeSender{})
+	planner := &stubReminderPlanner{}
+	svc.tools.reminders = planner
 	seedOwnedBooking(t, store)
 
 	if err := svc.Handle(t.Context(), incoming("move-confirm")); err != nil {
@@ -214,6 +216,9 @@ func TestConfirmedRescheduleChangesProviderThenLocalState(t *testing.T) {
 	}
 	if len(scheduling.movedTo) != 1 {
 		t.Fatalf("moved %d provider appointments, want 1", len(scheduling.movedTo))
+	}
+	if len(planner.planned) != 1 || !planner.planned[0].StartsAt.Equal(appointmentAt(3)) {
+		t.Errorf("planned reminders = %+v, want the rescheduled appointment", planner.planned)
 	}
 	want := appointmentAt(3)
 	if !scheduling.movedTo[0].Equal(want) {
