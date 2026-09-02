@@ -19,8 +19,9 @@ booked yet.
 | HTTP gateway, config, logging, graceful shutdown | done |
 | Telegram: webhook, normalisation, replies | done |
 | Customer identity, conversations, transcript, deduplication | done, in-process store |
-| Altegio: catalogue, availability, booking | done, not yet reachable from a conversation |
-| AI orchestration | next |
+| Altegio: catalogue, availability, booking | done |
+| AI orchestration and tool calling | done |
+| Booking from a conversation | next |
 | Durable storage | not started |
 | Asynchronous processing | not started |
 | WhatsApp, Instagram, Messenger, Viber | not started |
@@ -147,6 +148,11 @@ found, rather than failing later inside a request.
 | `ALTEGIO_COMPANY_ID` | with token | | The Altegio location this deployment serves |
 | `ALTEGIO_TIMEZONE` | no | `UTC` | The business's timezone, as an IANA name |
 | `ALTEGIO_CURRENCY` | no | | Labels the prices Altegio returns |
+| `ALTEGIO_BASE_URL` | no | | Overrides the Altegio host, for local stubs |
+| `BUSINESS_NAME` | no | | What the assistant calls the business |
+| `OPENAI_API_KEY` | no | | Enables the language model when set |
+| `OPENAI_MODEL` | no | adapter default | Model identifier |
+| `OPENAI_BASE_URL` | no | | Overrides the OpenAI host, for local stubs or proxies |
 
 A channel is enabled by supplying its credentials and disabled by leaving them
 out, in which case its endpoint is not served at all. Enabling Telegram without
@@ -215,6 +221,58 @@ The response shapes follow Altegio's published documentation, which does not
 fully specify them. The mapping is tolerant of missing fields and covered by
 fixtures in `internal/adapters/altegio/testdata`, which is where to correct any
 difference found against a live account.
+
+## The assistant
+
+The model interprets; it never decides. It cannot reach Altegio, never sees a
+credential, and has no way to state a fact the business has not confirmed. What
+it can do is ask for named tools, which ordinary Go code then validates and
+runs:
+
+```
+customer message
+      |
+      v
+model  ->  "run find_available_slots{staff_id, date}"
+      |
+      v
+application  validates the arguments, refuses a date in the past,
+             parses it in the business timezone, calls Altegio
+      |
+      v
+model  ->  phrases the real answer
+      |
+      v
+customer
+```
+
+Every fact in a reply comes from a tool. The catalogue is filtered before the
+model sees it, so a service the business has withdrawn cannot be offered no
+matter what the model does with it.
+
+The loop is bounded. A model that keeps asking for the same lookup is stopped
+after a few rounds and the conversation goes to a colleague, rather than
+spending money and the customer's patience.
+
+A tool that fails hands the model an explanation rather than an error, because a
+customer asking about a day the salon is closed should be told so, not met with
+silence. If the model itself cannot be reached, the customer still gets an
+answer and a person picks the conversation up.
+
+Only what a person could have read is stored or replayed: customer messages and
+the replies they were sent. The model's private reasoning is discarded, and
+OpenAI is asked not to retain the conversation, because this system keeps the
+only copy that matters.
+
+### Why the prompt is not the security boundary
+
+A determined customer can talk any model out of any instruction. So nothing
+important depends on one. Whether the assistant replies at all is stored
+conversation state, not a sentence in a prompt: once a colleague takes a
+conversation over, no wording in a customer's message can start it answering
+again, and a test asserts exactly that against an injection attempt. Tool
+arguments are decoded with unknown fields refused, so a model inventing a
+plausible extra parameter is rejected rather than quietly acted on.
 
 ## Deployment
 
