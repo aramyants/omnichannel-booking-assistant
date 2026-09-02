@@ -47,9 +47,32 @@ type Config struct {
 	// service serves its webhook endpoints but does not register them.
 	PublicBaseURL string
 
+	// BusinessName is what the assistant calls the business when it introduces
+	// itself. Empty makes it speak generically rather than fail.
+	BusinessName string
+
 	Telegram Telegram
 	Altegio  Altegio
+	AI       AI
 }
+
+// AI holds the language model settings. The assistant falls back to a fixed
+// reply, rather than failing, when no key is set.
+type AI struct {
+	APIKey string
+
+	// Model is the model identifier. It is configurable because model names
+	// change faster than deployments do, so correcting one is a configuration
+	// change rather than a release. Empty uses the adapter's default.
+	Model string
+
+	// BaseURL overrides the API host, for exercising the assistant locally
+	// against a stub and for routing through a proxy. Empty means the real API.
+	BaseURL string
+}
+
+// Enabled reports whether a language model is configured.
+func (a AI) Enabled() bool { return a.APIKey != "" }
 
 // Altegio holds the credentials and settings for the scheduling system. It is
 // disabled when the partner token is absent.
@@ -74,6 +97,10 @@ type Altegio struct {
 	// Currency labels the prices Altegio returns, which carry no currency of
 	// their own.
 	Currency string
+
+	// BaseURL overrides the API host, for exercising the assistant locally
+	// against a stub. Empty means the real API.
+	BaseURL string
 }
 
 // Enabled reports whether the scheduling system is configured.
@@ -163,6 +190,16 @@ func Load() (Config, error) {
 	cfg.Altegio = altegio
 	errs = append(errs, altegioErrs...)
 
+	cfg.BusinessName = getenv("BUSINESS_NAME", "")
+	cfg.AI = AI{
+		APIKey:  getenv("OPENAI_API_KEY", ""),
+		Model:   getenv("OPENAI_MODEL", ""),
+		BaseURL: strings.TrimSuffix(getenv("OPENAI_BASE_URL", ""), "/"),
+	}
+	if !cfg.AI.Enabled() && cfg.AI.Model != "" {
+		errs = append(errs, errors.New("OPENAI_MODEL is set but OPENAI_API_KEY is not"))
+	}
+
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("load config: %w", errors.Join(errs...))
 	}
@@ -219,6 +256,7 @@ func loadAltegio() (Altegio, []error) {
 		UserToken:    getenv("ALTEGIO_USER_TOKEN", ""),
 		CompanyID:    getenv("ALTEGIO_COMPANY_ID", ""),
 		Currency:     getenv("ALTEGIO_CURRENCY", ""),
+		BaseURL:      strings.TrimSuffix(getenv("ALTEGIO_BASE_URL", ""), "/"),
 		Location:     time.UTC,
 	}
 

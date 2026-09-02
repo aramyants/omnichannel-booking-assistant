@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
@@ -82,6 +83,17 @@ type Deps struct {
 	Processed     ProcessedEvents
 	Logger        *slog.Logger
 
+	// AI interprets the conversation. When it is absent the assistant falls
+	// back to a fixed reply rather than failing, so the channels keep working
+	// without a provider configured.
+	AI ai.Provider
+
+	// Scheduling is the calendar. Without it the assistant can talk but cannot
+	// answer anything about services or availability.
+	Scheduling Scheduling
+
+	Business Business
+
 	// Now supplies the current time. It is injected so tests can assert on
 	// stored timestamps rather than tolerate whatever the clock said.
 	Now func() time.Time
@@ -96,6 +108,9 @@ type Service struct {
 	processed     ProcessedEvents
 	logger        *slog.Logger
 	now           func() time.Time
+	ai            ai.Provider
+	tools         *toolset
+	business      Business
 }
 
 // NewService returns a Service, or reports which collaborator is missing.
@@ -123,6 +138,11 @@ func NewService(deps Deps) (*Service, error) {
 		senders = map[messaging.Provider]Sender{}
 	}
 
+	business := deps.Business
+	if business.Location == nil {
+		business.Location = time.UTC
+	}
+
 	return &Service{
 		senders:       senders,
 		customers:     deps.Customers,
@@ -131,8 +151,22 @@ func NewService(deps Deps) (*Service, error) {
 		processed:     deps.Processed,
 		logger:        deps.Logger,
 		now:           now,
+		ai:            deps.AI,
+		business:      business,
+		tools: &toolset{
+			scheduling: deps.Scheduling,
+			now:        now,
+			location:   business.Location,
+		},
 	}, nil
 }
+
+// maxToolRounds bounds the tool-calling loop.
+//
+// Without a limit a model that keeps asking for the same lookup would spend
+// money and the customer's patience indefinitely. Four rounds is more than any
+// legitimate booking question needs.
+const maxToolRounds = 4
 
 // recentMessageLimit bounds how much transcript is read back. The AI context
 // builder will need a window, not the whole history.
@@ -212,7 +246,23 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 		return fmt.Errorf("no sender configured for %s", msg.Provider)
 	}
 
-	reply := msg.Reply(s.compose(msg, cust))
+	history, err := s.messages.Recent(ctx, conv.ID, recentMessageLimit)
+	if err != nil {
+		return fmt.Errorf("read the conversation history: %w", err)
+	}
+
+	text, err := s.reply(ctx, &conv, cust, msg, history)
+	if err != nil {
+		return err
+	}
+
+	// A tool may have handed the conversation to a colleague, and that state
+	// change has to survive whatever happens next.
+	if err := s.conversations.Save(ctx, conv); err != nil {
+		return fmt.Errorf("save the conversation: %w", err)
+	}
+
+	reply := msg.Reply(text)
 	if err := sender.Send(ctx, reply); err != nil {
 		return fmt.Errorf("send the reply: %w", err)
 	}
@@ -313,10 +363,85 @@ func (s *Service) markProcessed(ctx context.Context, msg messaging.Envelope, at 
 	}
 }
 
-// compose builds the reply text.
+// reply produces what to say back, using the model when one is configured.
 //
-// This is where the AI orchestrator will take over. Until then the replies are
-// deliberately honest about what the assistant can and cannot yet do, rather
+// The loop is the whole mechanism: the model asks for named tools, this code
+// runs them, and the results go back for the model to phrase. The model never
+// reaches the scheduling system, never sees a credential and never decides what
+// is true; it decides only how to say what the tools returned.
+func (s *Service) reply(
+	ctx context.Context,
+	conv *conversation.Conversation,
+	cust customer.Customer,
+	msg messaging.Envelope,
+	history []conversation.Message,
+) (string, error) {
+	if s.ai == nil {
+		return s.compose(msg, cust), nil
+	}
+
+	req := ai.Request{
+		Instructions: s.instructions(cust),
+		Messages:     toAIMessages(history),
+		Tools:        s.tools.definitions(),
+	}
+
+	for round := 1; round <= maxToolRounds; round++ {
+		resp, err := s.ai.Complete(ctx, req)
+		if err != nil {
+			// A model that cannot be reached must not silence the assistant.
+			// The customer gets an honest answer and a colleague picks it up.
+			s.logger.ErrorContext(ctx, "the ai provider failed",
+				"error", err, "conversation_id", conv.ID, "model", s.ai.Model())
+			return s.escalate(ctx, conv)
+		}
+
+		s.logger.InfoContext(ctx, "completed an ai turn",
+			"conversation_id", conv.ID,
+			"model", s.ai.Model(),
+			"round", round,
+			"input_tokens", resp.Usage.InputTokens,
+			"output_tokens", resp.Usage.OutputTokens,
+			"tool_calls", len(resp.ToolCalls),
+		)
+
+		if !resp.WantsTools() {
+			if resp.Text == "" {
+				s.logger.WarnContext(ctx, "the model returned nothing to say",
+					"conversation_id", conv.ID)
+				return s.escalate(ctx, conv)
+			}
+			return resp.Text, nil
+		}
+
+		turn := ai.Turn{Calls: resp.ToolCalls}
+		for _, tc := range resp.ToolCalls {
+			s.logger.InfoContext(ctx, "running a tool for the assistant",
+				"conversation_id", conv.ID, "tool", tc.Name)
+			turn.Results = append(turn.Results, s.tools.execute(ctx, conv, tc))
+		}
+		req.Turns = append(req.Turns, turn)
+	}
+
+	// Out of rounds. Something is wrong with the conversation rather than with
+	// the customer, so a colleague takes it rather than the loop continuing.
+	s.logger.WarnContext(ctx, "gave up after too many tool rounds",
+		"conversation_id", conv.ID, "rounds", maxToolRounds)
+	return s.escalate(ctx, conv)
+}
+
+// escalate hands the conversation to a colleague and returns what to say.
+func (s *Service) escalate(ctx context.Context, conv *conversation.Conversation) (string, error) {
+	if err := conv.TransitionTo(conversation.StateHumanRequested, s.now()); err != nil {
+		s.logger.ErrorContext(ctx, "could not hand the conversation over",
+			"error", err, "conversation_id", conv.ID)
+	}
+	return "Sorry, I cannot check that for you right now. A colleague will get back to you shortly.", nil
+}
+
+// compose is the reply used when no model is configured.
+//
+// It is deliberately honest about what the assistant can and cannot do, rather
 // than pretending to take a booking it has no way to make.
 func (s *Service) compose(msg messaging.Envelope, cust customer.Customer) string {
 	if msg.Content.Type == messaging.ContentTypeUnsupported {
@@ -327,7 +452,7 @@ func (s *Service) compose(msg messaging.Envelope, cust customer.Customer) string
 	}
 
 	return fmt.Sprintf(
-		"Thanks%s, I have your message. Booking is not connected yet, so a colleague will follow up with you shortly.",
+		"Thanks%s, I have your message. A colleague will follow up with you shortly.",
 		greetingName(cust.Name),
 	)
 }
