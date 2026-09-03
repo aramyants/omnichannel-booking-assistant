@@ -58,6 +58,11 @@ type Conversation struct {
 	// built during one exchange and either confirmed or abandoned in it.
 	Draft *booking.Draft
 
+	// HandoffAt is when the conversation was last passed to a colleague. It is
+	// kept separately from UpdatedAt, which moves on every message, so that
+	// "how long has this customer been waiting for a person" stays answerable.
+	HandoffAt time.Time
+
 	// BookingChange is a cancellation or reschedule the customer has been
 	// shown and not yet confirmed. Like Draft, it makes the confirmation step
 	// consume stored facts rather than model-supplied arguments.
@@ -76,6 +81,29 @@ func Key(provider messaging.Provider, externalThreadID string) string {
 // Key is the unique address of this conversation.
 func (c Conversation) Key() string {
 	return Key(c.Provider, c.ExternalThreadID)
+}
+
+// WaitingForHumanLongerThan reports whether a colleague was asked for and has
+// still not picked the conversation up after d.
+//
+// It exists so that a request nobody acted on cannot silence the assistant
+// permanently. A customer left with no reply at all is a worse outcome than an
+// assistant that starts helping again.
+func (c Conversation) WaitingForHumanLongerThan(d time.Duration, now time.Time) bool {
+	if c.State != StateHumanRequested {
+		return false
+	}
+
+	// A conversation waiting with no recorded start time was stored before that
+	// time was recorded at all. Treating it as expired is deliberate: such a
+	// record can only have come from the behaviour this check exists to undo,
+	// where a handover was never announced to anyone and the customer was left
+	// talking to nobody. Resuming is the safe reading.
+	if c.HandoffAt.IsZero() {
+		return true
+	}
+
+	return now.Sub(c.HandoffAt) > d
 }
 
 // AssistantMayReply reports whether the assistant should answer.
@@ -108,6 +136,10 @@ func (c *Conversation) TransitionTo(next State, at time.Time) error {
 		if allowed == next {
 			c.State = next
 			c.UpdatedAt = at
+
+			if next == StateHumanRequested {
+				c.HandoffAt = at
+			}
 			return nil
 		}
 	}

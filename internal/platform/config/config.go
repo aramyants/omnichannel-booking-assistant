@@ -169,6 +169,11 @@ type Telegram struct {
 	// be exercised locally against a stub, and so traffic can be routed through
 	// an egress proxy. Empty means the real API.
 	APIBaseURL string
+
+	// StaffChatID is the chat the business is told about handovers in, usually
+	// a group everyone on shift is in. Without it a customer asking for a
+	// person changes a stored state and nobody ever learns they are waiting.
+	StaffChatID string
 }
 
 // Enabled reports whether the Telegram channel is configured.
@@ -231,6 +236,7 @@ func Load() (Config, error) {
 		BotToken:      getenv("TELEGRAM_BOT_TOKEN", ""),
 		WebhookSecret: getenv("TELEGRAM_WEBHOOK_SECRET", ""),
 		APIBaseURL:    strings.TrimSuffix(getenv("TELEGRAM_API_BASE_URL", ""), "/"),
+		StaffChatID:   getenv("TELEGRAM_STAFF_CHAT_ID", ""),
 	}
 	errs = append(errs, cfg.Telegram.validate()...)
 

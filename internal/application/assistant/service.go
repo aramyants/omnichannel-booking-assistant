@@ -49,6 +49,11 @@ type ConversationRepository interface {
 	// candidate names, or stores and returns candidate if there is none.
 	FindOrOpen(ctx context.Context, candidate conversation.Conversation) (conversation.Conversation, error)
 
+	// FindByID returns one conversation, reporting conversation.ErrNotFound
+	// when there is none. It is how a colleague acting on a notification
+	// reaches the conversation it names.
+	FindByID(ctx context.Context, conversationID string) (conversation.Conversation, error)
+
 	Save(ctx context.Context, conv conversation.Conversation) error
 }
 
@@ -102,6 +107,10 @@ type Deps struct {
 	// Bookings records the appointments this system has made.
 	Bookings BookingRepository
 
+	// Staff is told when a conversation needs a person. Without it a handover
+	// changes a stored state and nobody ever learns the customer is waiting.
+	Staff StaffNotifier
+
 	// Reminders plans delayed notifications after a confirmed create or move.
 	Reminders ReminderPlanner
 
@@ -124,6 +133,7 @@ type Service struct {
 	ai            ai.Provider
 	tools         *toolset
 	business      Business
+	staff         StaffNotifier
 }
 
 // NewService returns a Service, or reports which collaborator is missing.
@@ -166,6 +176,7 @@ func NewService(deps Deps) (*Service, error) {
 		now:           now,
 		ai:            deps.AI,
 		business:      business,
+		staff:         deps.Staff,
 		tools: &toolset{
 			scheduling: deps.Scheduling,
 			bookings:   deps.Bookings,
@@ -264,6 +275,20 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 		"content_length", len(msg.Content.Text),
 	)
 
+	// A colleague was asked for and never arrived. Resuming is better than
+	// leaving the customer talking to nobody indefinitely.
+	if conv.WaitingForHumanLongerThan(handoffTimeout, now) {
+		if err := conv.TransitionTo(conversation.StateAssistantActive, now); err != nil {
+			s.logger.ErrorContext(ctx, "could not resume a conversation nobody picked up",
+				"error", err, "conversation_id", conv.ID)
+		} else {
+			s.logger.InfoContext(ctx, "resumed a conversation nobody picked up",
+				"conversation_id", conv.ID,
+				"waited", now.Sub(conv.HandoffAt).String(),
+			)
+		}
+	}
+
 	// A colleague handling the conversation must not be talked over, and a
 	// customer waiting for a person must not be answered by the bot again.
 	if !conv.AssistantMayReply() {
@@ -284,7 +309,13 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 		return fmt.Errorf("read the conversation history: %w", err)
 	}
 
-	text, err := s.reply(ctx, &conv, cust, msg, history)
+	sess := &session{
+		conv:              &conv,
+		customer:          cust,
+		incomingMessageID: msg.ExternalMessageID,
+	}
+
+	text, err := s.reply(ctx, sess, msg, history)
 	if err != nil {
 		return err
 	}
@@ -293,6 +324,22 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 	// change has to survive whatever happens next.
 	if err := s.conversations.Save(ctx, conv); err != nil {
 		return fmt.Errorf("save the conversation: %w", err)
+	}
+
+	// Told after the conversation is saved, so a colleague acting on the
+	// notification cannot arrive before the state they are told about exists.
+	if sess.handoffReason != "" {
+		s.notifyStaff(ctx, HandoffNotice{
+			ConversationID: conv.ID,
+			Reason:         sess.handoffReason,
+			Detail:         sess.handoffDetail,
+			Provider:       msg.Provider,
+			Customer:       cust,
+			Handle:         msg.Sender.DisplayName,
+			Recent:         history,
+			Draft:          conv.Draft,
+			RequestedAt:    now,
+		})
 	}
 
 	reply := msg.Reply(text)
@@ -421,23 +468,18 @@ func (s *Service) releaseDelivery(ctx context.Context, key, claimID string) {
 // is true; it decides only how to say what the tools returned.
 func (s *Service) reply(
 	ctx context.Context,
-	conv *conversation.Conversation,
-	cust customer.Customer,
+	sess *session,
 	msg messaging.Envelope,
 	history []conversation.Message,
 ) (string, error) {
+	conv, cust := sess.conv, sess.customer
+
 	if s.ai == nil {
 		return s.compose(msg, cust), nil
 	}
 
-	sess := &session{
-		conv:              conv,
-		customer:          cust,
-		incomingMessageID: msg.ExternalMessageID,
-	}
-
 	req := ai.Request{
-		Instructions: s.instructions(cust),
+		Instructions: s.instructions(cust, msg.Sender.Language),
 		Messages:     toAIMessages(history),
 		Tools:        s.tools.definitions(),
 	}
@@ -449,7 +491,7 @@ func (s *Service) reply(
 			// The customer gets an honest answer and a colleague picks it up.
 			s.logger.ErrorContext(ctx, "the ai provider failed",
 				"error", err, "conversation_id", conv.ID, "model", s.ai.Model())
-			return s.escalate(ctx, conv)
+			return s.apologise(ctx, conv)
 		}
 
 		s.logger.InfoContext(ctx, "completed an ai turn",
@@ -465,7 +507,7 @@ func (s *Service) reply(
 			if resp.Text == "" {
 				s.logger.WarnContext(ctx, "the model returned nothing to say",
 					"conversation_id", conv.ID)
-				return s.escalate(ctx, conv)
+				return s.apologise(ctx, conv)
 			}
 			return resp.Text, nil
 		}
@@ -483,16 +525,23 @@ func (s *Service) reply(
 	// the customer, so a colleague takes it rather than the loop continuing.
 	s.logger.WarnContext(ctx, "gave up after too many tool rounds",
 		"conversation_id", conv.ID, "rounds", maxToolRounds)
-	return s.escalate(ctx, conv)
+	return s.apologise(ctx, conv)
 }
 
-// escalate hands the conversation to a colleague and returns what to say.
-func (s *Service) escalate(ctx context.Context, conv *conversation.Conversation) (string, error) {
-	if err := conv.TransitionTo(conversation.StateHumanRequested, s.now()); err != nil {
-		s.logger.ErrorContext(ctx, "could not hand the conversation over",
-			"error", err, "conversation_id", conv.ID)
-	}
-	return "Sorry, I cannot check that for you right now. A colleague will get back to you shortly.", nil
+// apologise is the reply when the assistant itself failed: the model was
+// unreachable, said nothing, or went round in circles.
+//
+// It deliberately does NOT hand the conversation to a colleague. A technical
+// fault is not a reason to mute the assistant for the rest of this customer's
+// life, and that is exactly what handing over would do: every later message
+// would be silently swallowed. Leaving the state alone means the next message
+// is attempted normally, which is usually all that is needed.
+func (s *Service) apologise(ctx context.Context, conv *conversation.Conversation) (string, error) {
+	s.logger.WarnContext(ctx, "answering with an apology after an assistant failure",
+		"conversation_id", conv.ID, "conversation_state", string(conv.State))
+
+	return "Sorry, I could not check that just now. Please try again in a moment, " +
+		"or say \"person\" and a colleague will take over.", nil
 }
 
 // compose is the reply used when no model is configured.

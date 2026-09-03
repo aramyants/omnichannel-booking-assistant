@@ -161,6 +161,35 @@ func defaultScheduling() *stubScheduling {
 	}
 }
 
+// recordingStaff stands in for the channel the business is told about
+// handovers on.
+type recordingStaff struct {
+	notices []HandoffNotice
+	err     error
+}
+
+func (r *recordingStaff) NotifyHandoff(_ context.Context, notice HandoffNotice) error {
+	if r.err != nil {
+		return r.err
+	}
+	r.notices = append(r.notices, notice)
+	return nil
+}
+
+func newAIServiceWithStaff(
+	t *testing.T,
+	model ai.Provider,
+	scheduling Scheduling,
+	sender Sender,
+	staff StaffNotifier,
+) (*Service, *memory.Store) {
+	t.Helper()
+
+	svc, store := newAIService(t, model, scheduling, sender)
+	svc.staff = staff
+	return svc, store
+}
+
 func newAIService(t *testing.T, model ai.Provider, scheduling Scheduling, sender Sender) (*Service, *memory.Store) {
 	t.Helper()
 
@@ -273,9 +302,14 @@ func TestUnknownToolIsRefused(t *testing.T) {
 	}
 }
 
-// TestModelFailureHandsOverRatherThanGoingSilent: a provider outage must not
-// leave a customer without an answer.
-func TestModelFailureHandsOverRatherThanGoingSilent(t *testing.T) {
+// TestModelFailureDoesNotMuteTheAssistant is the fix for a customer falling
+// into a hole. A technical fault used to hand the conversation to a colleague,
+// which set the state that stops the assistant replying, so every later message
+// from that customer was swallowed in silence and nobody was told.
+//
+// The customer is answered, the state is left alone, and the next message is
+// attempted normally.
+func TestModelFailureDoesNotMuteTheAssistant(t *testing.T) {
 	sender := &fakeSender{}
 	model := &scriptedAI{err: errors.New("openai unreachable")}
 	svc, store := newAIService(t, model, defaultScheduling(), sender)
@@ -287,13 +321,159 @@ func TestModelFailureHandsOverRatherThanGoingSilent(t *testing.T) {
 	if len(sender.sent) != 1 {
 		t.Fatalf("the customer got %d replies, want 1", len(sender.sent))
 	}
-	if !strings.Contains(sender.sent[0].Text, "colleague") {
-		t.Errorf("reply = %q, want it to say a person will follow up", sender.sent[0].Text)
+	if !strings.Contains(sender.sent[0].Text, "try again") {
+		t.Errorf("reply = %q, want it to invite another attempt", sender.sent[0].Text)
+	}
+
+	if conv := openConversation(t, store); conv.State != conversation.StateAssistantActive {
+		t.Fatalf("state = %q, want the assistant still active after a technical fault", conv.State)
+	}
+
+	// The provider recovers and the very next message is answered properly,
+	// rather than disappearing.
+	model.err = nil
+	model.responses = []ai.Response{textResponse("We are open until six.")}
+	model.calls = 0
+
+	if err := svc.Handle(t.Context(), incoming("4128")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+
+	if len(sender.sent) != 2 {
+		t.Fatalf("the customer got %d replies, want 2", len(sender.sent))
+	}
+	if sender.sent[1].Text != "We are open until six." {
+		t.Errorf("reply = %q, want the assistant working again", sender.sent[1].Text)
+	}
+}
+
+// TestStaffAreToldWhenACustomerAsksForAPerson: a handover that notifies nobody
+// leaves the customer waiting on someone who does not know they exist.
+func TestStaffAreToldWhenACustomerAsksForAPerson(t *testing.T) {
+	sender := &fakeSender{}
+	staff := &recordingStaff{}
+	model := &scriptedAI{responses: []ai.Response{
+		toolResponse("call_1", toolRequestHandoff, `{"reason":"the customer wants to speak to someone"}`),
+		textResponse("A colleague will reply shortly."),
+	}}
+	svc, _ := newAIServiceWithStaff(t, model, defaultScheduling(), sender, staff)
+
+	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+
+	if len(staff.notices) != 1 {
+		t.Fatalf("staff were told %d times, want once", len(staff.notices))
+	}
+
+	notice := staff.notices[0]
+	if notice.Reason != ReasonCustomerAsked {
+		t.Errorf("reason = %q, want %q", notice.Reason, ReasonCustomerAsked)
+	}
+	if !strings.Contains(notice.Detail, "speak to someone") {
+		t.Errorf("detail = %q, want the reason the tool gave", notice.Detail)
+	}
+	if notice.Customer.Name != "Anna" {
+		t.Errorf("customer = %q, want the person to contact", notice.Customer.Name)
+	}
+	if len(notice.Recent) == 0 {
+		t.Error("the notice carries no transcript, so the colleague must make the customer repeat themselves")
+	}
+}
+
+// TestATechnicalFaultDoesNotPageTheStaff: an unreachable model is not something
+// a colleague can do anything about, and notifying on every failed call would
+// bury the handovers that do need a person.
+func TestATechnicalFaultDoesNotPageTheStaff(t *testing.T) {
+	staff := &recordingStaff{}
+	model := &scriptedAI{err: errors.New("openai unreachable")}
+	svc, _ := newAIServiceWithStaff(t, model, defaultScheduling(), &fakeSender{}, staff)
+
+	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+
+	if len(staff.notices) != 0 {
+		t.Errorf("staff were paged %d times for a technical fault", len(staff.notices))
+	}
+}
+
+// TestAConversationNobodyPicksUpResumes: a handover request that no colleague
+// acts on must not silence the assistant forever.
+func TestAConversationNobodyPicksUpResumes(t *testing.T) {
+	sender := &fakeSender{}
+	staff := &recordingStaff{}
+	model := &scriptedAI{responses: []ai.Response{
+		toolResponse("call_1", toolRequestHandoff, `{"reason":"wants a person"}`),
+		textResponse("A colleague will reply shortly."),
+	}}
+	svc, store := newAIServiceWithStaff(t, model, defaultScheduling(), sender, staff)
+
+	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+	if conv := openConversation(t, store); conv.State != conversation.StateHumanRequested {
+		t.Fatalf("state = %q, want the conversation waiting for a person", conv.State)
+	}
+
+	// Nobody arrives. The customer writes again a few minutes later and is
+	// still met with silence, which is correct while the request is fresh.
+	model.responses = []ai.Response{textResponse("Of course.")}
+	model.calls = 0
+	svc.now = func() time.Time { return testNow.Add(10 * time.Minute) }
+
+	if err := svc.Handle(t.Context(), incoming("4128")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+	if len(sender.sent) != 1 {
+		t.Errorf("the assistant answered while a colleague was still expected")
+	}
+
+	// Long enough later, nobody has come, and silence is now the worse option.
+	svc.now = func() time.Time { return testNow.Add(handoffTimeout + time.Minute) }
+
+	if err := svc.Handle(t.Context(), incoming("4129")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+	if len(sender.sent) != 2 {
+		t.Fatalf("the customer got %d replies, want the assistant to resume", len(sender.sent))
+	}
+	if conv := openConversation(t, store); conv.State != conversation.StateAssistantActive {
+		t.Errorf("state = %q, want the assistant active again", conv.State)
+	}
+}
+
+// TestResumeHandsBackToTheAssistant covers a colleague finishing with a
+// customer.
+func TestResumeHandsBackToTheAssistant(t *testing.T) {
+	sender := &fakeSender{}
+	staff := &recordingStaff{}
+	model := &scriptedAI{responses: []ai.Response{
+		toolResponse("call_1", toolRequestHandoff, `{"reason":"wants a person"}`),
+		textResponse("A colleague will reply shortly."),
+	}}
+	svc, store := newAIServiceWithStaff(t, model, defaultScheduling(), sender, staff)
+
+	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
 	}
 
 	conv := openConversation(t, store)
-	if conv.State != conversation.StateHumanRequested {
-		t.Errorf("state = %q, want the conversation handed over", conv.State)
+	if err := svc.Resume(t.Context(), conv.ID); err != nil {
+		t.Fatalf("Resume() returned error: %v", err)
+	}
+
+	if conv := openConversation(t, store); conv.State != conversation.StateAssistantActive {
+		t.Fatalf("state = %q, want the assistant active", conv.State)
+	}
+
+	model.responses = []ai.Response{textResponse("Where were we?")}
+	model.calls = 0
+	if err := svc.Handle(t.Context(), incoming("4128")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+	if len(sender.sent) != 2 {
+		t.Errorf("the assistant did not answer after being handed back")
 	}
 }
 
@@ -313,8 +493,14 @@ func TestTheLoopIsBounded(t *testing.T) {
 	if model.calls != maxToolRounds {
 		t.Errorf("the model was called %d times, want it capped at %d", model.calls, maxToolRounds)
 	}
-	if conv := openConversation(t, store); conv.State != conversation.StateHumanRequested {
-		t.Errorf("state = %q, want the conversation handed over", conv.State)
+
+	// The customer is answered, and the assistant stays available: going round
+	// in circles once is not a reason to stop serving this person for good.
+	if len(sender.sent) != 1 {
+		t.Errorf("the customer got %d replies, want 1", len(sender.sent))
+	}
+	if conv := openConversation(t, store); conv.State != conversation.StateAssistantActive {
+		t.Errorf("state = %q, want the assistant still active", conv.State)
 	}
 }
 
