@@ -60,6 +60,10 @@ type Store struct {
 	bookings  map[string][]booking.Booking
 	reminders map[string]reminder.Reminder
 
+	// staffThreads maps a message posted in the staff chat to the conversation
+	// it announced, so a colleague replying to it is understood.
+	staffThreads map[string]string
+
 	processedTTL time.Duration
 	claimTTL     time.Duration
 	now          func() time.Time
@@ -94,6 +98,7 @@ func New(opts ...Option) *Store {
 		processed:           make(map[string]processedEntry),
 		bookings:            make(map[string][]booking.Booking),
 		reminders:           make(map[string]reminder.Reminder),
+		staffThreads:        make(map[string]string),
 		processedTTL:        defaultProcessedTTL,
 		claimTTL:            defaultClaimTTL,
 		now:                 time.Now,
@@ -394,4 +399,22 @@ func (s *Store) pruneProcessed() {
 			delete(s.processed, key)
 		}
 	}
+}
+
+// LinkStaffThread records that a staff-chat message announced a conversation.
+func (s *Store) LinkStaffThread(_ context.Context, staffMessageID, conversationID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.staffThreads[staffMessageID] = conversationID
+	return nil
+}
+
+// ConversationForStaffThread returns the conversation a staff-chat message
+// announced, or an empty string when the message announced nothing.
+func (s *Store) ConversationForStaffThread(_ context.Context, staffMessageID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.staffThreads[staffMessageID], nil
 }

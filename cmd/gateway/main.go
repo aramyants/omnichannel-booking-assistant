@@ -96,19 +96,6 @@ func run() error {
 
 	// Without a staff channel a customer asking for a person changes a stored
 	// state and nobody is told, so the absence is worth saying out loud.
-	var staff assistant.StaffNotifier
-	if telegramClient != nil && cfg.Telegram.StaffChatID != "" {
-		notifier, err := telegram.NewStaffNotifier(telegramClient, cfg.Telegram.StaffChatID)
-		if err != nil {
-			return err
-		}
-		staff = notifier
-		logger.Info("handovers will be announced to the staff chat",
-			"chat_id", cfg.Telegram.StaffChatID)
-	} else {
-		logger.Warn("no staff chat configured: customers asking for a person will " +
-			"wait without anyone being told. Set TELEGRAM_STAFF_CHAT_ID")
-	}
 
 	var scheduling assistant.Scheduling
 	if cfg.Altegio.Enabled() {
@@ -159,6 +146,19 @@ func run() error {
 		return err
 	}
 	defer closeStore()
+	var staff assistant.StaffNotifier
+	if telegramClient != nil && cfg.Telegram.StaffChatID != "" {
+		notifier, err := telegram.NewStaffNotifier(telegramClient, cfg.Telegram.StaffChatID, store)
+		if err != nil {
+			return err
+		}
+		staff = notifier
+		logger.Info("handovers will be announced to the staff chat",
+			"chat_id", cfg.Telegram.StaffChatID)
+	} else {
+		logger.Warn("no staff chat configured: customers asking for a person will " +
+			"wait without anyone being told. Set TELEGRAM_STAFF_CHAT_ID")
+	}
 
 	reminderService, reminderHandler, closeReminders, err := openReminders(
 		ctx, cfg, store, senders, logger,
@@ -197,6 +197,9 @@ func run() error {
 			assistantService,
 			logger,
 			telegram.WithStaffChat(cfg.Telegram.StaffChatID),
+			// Turns the staff chat from a noticeboard into a desk: replying to
+			// a notification reaches the customer it names.
+			telegram.WithStaffDesk(assistantService, store, telegramClient, cfg.Telegram.StaffChatID),
 		)
 	}
 
@@ -255,6 +258,10 @@ type appStore interface {
 	assistant.MessageRepository
 	assistant.ProcessedEvents
 	assistant.BookingRepository
+
+	// Staff notifications are linked to the conversation they announce, so a
+	// colleague replying to one is understood.
+	telegram.StaffThreads
 	reminders.Repository
 }
 

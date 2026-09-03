@@ -1,5 +1,7 @@
 package telegram
 
+import "encoding/json"
+
 // The types in this file mirror the Telegram Bot API wire format. They are
 // unexported on purpose: nothing outside this package should depend on how
 // Telegram happens to shape its payloads.
@@ -23,6 +25,11 @@ type message struct {
 	Date      int64  `json:"date"`
 	Text      string `json:"text"`
 	Caption   string `json:"caption"`
+
+	// ReplyToMessage is set when this message answers another. In the staff
+	// chat it is how a colleague's reply is tied to the notification, and so
+	// to the customer it concerns.
+	ReplyToMessage *message `json:"reply_to_message"`
 
 	// Attachment members, declared only so an unreadable message can be
 	// described accurately to the customer rather than silently dropped.
@@ -80,10 +87,22 @@ type sendMessageRequest struct {
 
 // apiResponse is the envelope Telegram wraps every method result in.
 type apiResponse struct {
-	OK          bool   `json:"ok"`
+	OK bool `json:"ok"`
+
+	// Result is the method's payload. It is read only where the id of a
+	// message this system sent is needed later, such as a staff notification a
+	// colleague will reply to.
+	Result json.RawMessage `json:"result"`
+
 	ErrorCode   int    `json:"error_code"`
 	Description string `json:"description"`
 	Parameters  *struct {
 		RetryAfter int `json:"retry_after"`
 	} `json:"parameters"`
+}
+
+// sentMessage is the part of a sendMessage result this system keeps: the id of
+// the message it just posted, so a reply to it can be recognised later.
+type sentMessage struct {
+	MessageID int64 `json:"message_id"`
 }
