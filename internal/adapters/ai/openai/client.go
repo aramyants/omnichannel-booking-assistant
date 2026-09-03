@@ -22,7 +22,12 @@ const (
 	// DefaultModel is the model used when none is configured. Model names
 	// change faster than deployments, so it is overridable: a wrong one is a
 	// configuration fix rather than a release.
-	DefaultModel = "gpt-5.6-terra"
+	//
+	// Luna is the tier OpenAI sizes for high-volume chat and simple tool calls,
+	// which is exactly this workload, and it costs about a tenth of the
+	// balanced tier. Set OPENAI_MODEL to gpt-5.6-terra if replies need more
+	// reasoning than it gives.
+	DefaultModel = "gpt-5.6-luna"
 
 	// defaultTimeout is generous because a customer is waiting on the reply,
 	// but bounded because they will not wait forever.

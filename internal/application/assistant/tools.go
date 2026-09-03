@@ -60,6 +60,12 @@ type session struct {
 	conv              *conversation.Conversation
 	customer          customer.Customer
 	incomingMessageID string
+
+	// handoffReason and handoffDetail record why a person was asked for during
+	// this exchange, so the notification sent afterwards can say what happened
+	// rather than only that something did.
+	handoffReason HandoffReason
+	handoffDetail string
 }
 
 // Tool names. They are constants because they appear in three places that must
@@ -300,7 +306,7 @@ func (t *toolset) run(ctx context.Context, s *session, call ai.ToolCall) (string
 	case toolConfirmMove:
 		return t.confirmReschedule(ctx, s)
 	case toolRequestHandoff:
-		return t.requestHandoff(s.conv, call)
+		return t.requestHandoff(s, call)
 	default:
 		return "", fmt.Errorf("there is no tool called %q", call.Name)
 	}
@@ -601,6 +607,17 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 			"starts_at", draft.StartsAt.Format(time.RFC3339),
 		)
 
+		// The draft is kept rather than cleared: it is the only description of
+		// the appointment somebody now has to go and look for in the calendar.
+		s.handoffReason = ReasonBookingUnresolved
+		s.handoffDetail = fmt.Sprintf(
+			"A booking was sent but never confirmed. Check the calendar for %s with %s at %s and tell the customer what happened. Reference to look for: %s",
+			strings.Join(draft.ServiceNames, ", "),
+			draft.StaffName,
+			draft.StartsAt.In(t.location).Format("2 Jan 15:04"),
+			draft.IdempotencyKey,
+		)
+
 		if handoffErr := s.conv.TransitionTo(conversation.StateHumanRequested, t.now()); handoffErr != nil {
 			t.logger.ErrorContext(ctx, "could not hand over an unresolved booking",
 				"error", handoffErr, "conversation_id", s.conv.ID)
@@ -725,7 +742,7 @@ func normalisePhone(raw string) (string, error) {
 //
 // The state change is what actually stops the assistant replying. Telling the
 // model to stop would be a request; changing the state is a rule.
-func (t *toolset) requestHandoff(conv *conversation.Conversation, call ai.ToolCall) (string, error) {
+func (t *toolset) requestHandoff(s *session, call ai.ToolCall) (string, error) {
 	var args struct {
 		Reason string `json:"reason"`
 	}
@@ -733,9 +750,12 @@ func (t *toolset) requestHandoff(conv *conversation.Conversation, call ai.ToolCa
 		return "", err
 	}
 
-	if err := conv.TransitionTo(conversation.StateHumanRequested, t.now()); err != nil {
+	if err := s.conv.TransitionTo(conversation.StateHumanRequested, t.now()); err != nil {
 		return "", err
 	}
+
+	s.handoffReason = ReasonCustomerAsked
+	s.handoffDetail = strings.TrimSpace(args.Reason)
 
 	return encode(map[string]any{
 		"handed_over": true,

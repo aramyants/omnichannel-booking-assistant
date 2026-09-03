@@ -77,6 +77,77 @@ func TestTransitions(t *testing.T) {
 	}
 }
 
+func TestWaitingForHumanLongerThan(t *testing.T) {
+	const timeout = 2 * time.Hour
+
+	tests := map[string]struct {
+		conv Conversation
+		now  time.Time
+		want bool
+	}{
+		"the assistant is answering": {
+			conv: Conversation{State: StateAssistantActive, HandoffAt: at},
+			now:  at.Add(9 * time.Hour),
+		},
+		"a colleague is already handling it": {
+			conv: Conversation{State: StateHumanActive, HandoffAt: at},
+			now:  at.Add(9 * time.Hour),
+		},
+		"the request is still fresh": {
+			conv: Conversation{State: StateHumanRequested, HandoffAt: at},
+			now:  at.Add(30 * time.Minute),
+		},
+		"nobody came": {
+			conv: Conversation{State: StateHumanRequested, HandoffAt: at},
+			now:  at.Add(3 * time.Hour),
+			want: true,
+		},
+
+		// Records written before handovers were timed carry no start time. They
+		// can only have come from the behaviour that left customers waiting on
+		// nobody, so they resume rather than staying stuck forever.
+		"stored before handovers were timed": {
+			conv: Conversation{State: StateHumanRequested},
+			now:  at,
+			want: true,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := tt.conv.WaitingForHumanLongerThan(timeout, tt.now); got != tt.want {
+				t.Errorf("WaitingForHumanLongerThan() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestHandoffIsTimed records when a colleague was asked for, separately from
+// UpdatedAt, which moves on every message and so cannot answer how long a
+// customer has been waiting.
+func TestHandoffIsTimed(t *testing.T) {
+	conv := Conversation{State: StateAssistantActive}
+
+	if err := conv.TransitionTo(StateHumanRequested, at); err != nil {
+		t.Fatalf("TransitionTo() returned error: %v", err)
+	}
+	if !conv.HandoffAt.Equal(at) {
+		t.Errorf("HandoffAt = %s, want %s", conv.HandoffAt, at)
+	}
+
+	// Handing back and forth re-times the wait rather than keeping the first.
+	later := at.Add(4 * time.Hour)
+	if err := conv.TransitionTo(StateAssistantActive, later); err != nil {
+		t.Fatalf("TransitionTo() returned error: %v", err)
+	}
+	if err := conv.TransitionTo(StateHumanRequested, later); err != nil {
+		t.Fatalf("TransitionTo() returned error: %v", err)
+	}
+	if !conv.HandoffAt.Equal(later) {
+		t.Errorf("HandoffAt = %s, want the second request at %s", conv.HandoffAt, later)
+	}
+}
+
 // TestTransitionToTheCurrentStateIsAllowed means a caller reacting to a
 // repeated request does not have to check the state first.
 func TestTransitionToTheCurrentStateIsAllowed(t *testing.T) {

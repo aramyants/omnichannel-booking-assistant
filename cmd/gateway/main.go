@@ -94,6 +94,22 @@ func run() error {
 		senders[messaging.ProviderTelegram] = telegramClient
 	}
 
+	// Without a staff channel a customer asking for a person changes a stored
+	// state and nobody is told, so the absence is worth saying out loud.
+	var staff assistant.StaffNotifier
+	if telegramClient != nil && cfg.Telegram.StaffChatID != "" {
+		notifier, err := telegram.NewStaffNotifier(telegramClient, cfg.Telegram.StaffChatID)
+		if err != nil {
+			return err
+		}
+		staff = notifier
+		logger.Info("handovers will be announced to the staff chat",
+			"chat_id", cfg.Telegram.StaffChatID)
+	} else {
+		logger.Warn("no staff chat configured: customers asking for a person will " +
+			"wait without anyone being told. Set TELEGRAM_STAFF_CHAT_ID")
+	}
+
 	var scheduling assistant.Scheduling
 	if cfg.Altegio.Enabled() {
 		opts := []altegio.Option{
@@ -163,6 +179,7 @@ func run() error {
 		AI:            model,
 		Scheduling:    scheduling,
 		Bookings:      store,
+		Staff:         staff,
 		Reminders:     reminderService,
 		Business: assistant.Business{
 			Name:     cfg.BusinessName,
