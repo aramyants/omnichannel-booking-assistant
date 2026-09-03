@@ -34,7 +34,12 @@ const (
 	collectionMessages      = "messages"
 	collectionProcessed     = "processed_events"
 	collectionBookings      = "bookings"
-	collectionReminders     = "reminders"
+
+	// collectionStaffThreads maps a message posted in the staff chat to the
+	// conversation it announced. It has to outlive the instance that posted
+	// the notification, because the colleague may reply hours later.
+	collectionStaffThreads = "staff_threads"
+	collectionReminders    = "reminders"
 )
 
 // processedRetention is how long a handled delivery is remembered.
@@ -823,4 +828,42 @@ func (s *Store) ReleaseReminder(ctx context.Context, reminderID, claimID string)
 		return fmt.Errorf("firestore: release reminder: %w", err)
 	}
 	return nil
+}
+
+type staffThreadDoc struct {
+	ConversationID string    `firestore:"conversation_id"`
+	CreatedAt      time.Time `firestore:"created_at"`
+}
+
+// LinkStaffThread records that a staff-chat message announced a conversation.
+func (s *Store) LinkStaffThread(ctx context.Context, staffMessageID, conversationID string) error {
+	_, err := s.client.Collection(collectionStaffThreads).Doc(staffMessageID).Set(ctx, staffThreadDoc{
+		ConversationID: conversationID,
+		CreatedAt:      time.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("firestore: link a staff thread: %w", err)
+	}
+	return nil
+}
+
+// ConversationForStaffThread returns the conversation a staff-chat message
+// announced, or an empty string when the message announced nothing.
+//
+// An unknown message is not an error: colleagues talk among themselves in that
+// chat, and most of what they say is not a reply to a customer.
+func (s *Store) ConversationForStaffThread(ctx context.Context, staffMessageID string) (string, error) {
+	snapshot, err := s.client.Collection(collectionStaffThreads).Doc(staffMessageID).Get(ctx)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return "", nil
+		}
+		return "", fmt.Errorf("firestore: read a staff thread: %w", err)
+	}
+
+	var doc staffThreadDoc
+	if err := snapshot.DataTo(&doc); err != nil {
+		return "", fmt.Errorf("firestore: decode a staff thread: %w", err)
+	}
+	return doc.ConversationID, nil
 }

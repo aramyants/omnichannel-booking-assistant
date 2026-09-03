@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -96,10 +97,38 @@ func (c *Client) Send(ctx context.Context, msg messaging.Outgoing) error {
 		return err
 	}
 
-	return c.call(ctx, "sendMessage", sendMessageRequest{
+	_, err := c.SendReturningID(ctx, msg)
+	return err
+}
+
+// SendReturningID delivers a message and reports the id Telegram gave it.
+//
+// The id is what makes a conversation out of a notification: a colleague
+// replying to that message produces an update carrying this id, which is how
+// the reply is matched back to the customer it concerns.
+func (c *Client) SendReturningID(ctx context.Context, msg messaging.Outgoing) (string, error) {
+	if msg.Provider != messaging.ProviderTelegram {
+		return "", fmt.Errorf("telegram client cannot deliver to %s", msg.Provider)
+	}
+	if err := msg.Validate(); err != nil {
+		return "", err
+	}
+
+	result, err := c.call(ctx, "sendMessage", sendMessageRequest{
 		ChatID: msg.ExternalThreadID,
 		Text:   msg.Text,
 	})
+	if err != nil {
+		return "", err
+	}
+
+	// A message that was delivered but whose id could not be read is still
+	// delivered. Losing the id only costs the ability to thread replies to it.
+	var sent sentMessage
+	if err := json.Unmarshal(result, &sent); err != nil || sent.MessageID == 0 {
+		return "", nil
+	}
+	return strconv.FormatInt(sent.MessageID, 10), nil
 }
 
 // setWebhookRequest registers the endpoint Telegram delivers updates to.
@@ -120,40 +149,41 @@ type setWebhookRequest struct {
 // allowed_updates is restricted to messages: subscribing to update types the
 // assistant ignores only costs bandwidth and log noise.
 func (c *Client) SetWebhook(ctx context.Context, callbackURL, secret string) error {
-	return c.call(ctx, "setWebhook", setWebhookRequest{
+	_, err := c.call(ctx, "setWebhook", setWebhookRequest{
 		URL:            callbackURL,
 		SecretToken:    secret,
 		AllowedUpdates: []string{"message"},
 		MaxConnections: 40,
 	})
+	return err
 }
 
-func (c *Client) call(ctx context.Context, method string, payload any) error {
+func (c *Client) call(ctx context.Context, method string, payload any) (json.RawMessage, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("telegram %s: encode request: %w", method, err)
+		return nil, fmt.Errorf("telegram %s: encode request: %w", method, err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.methodURL(method), bytes.NewReader(body))
 	if err != nil {
-		return c.redact(fmt.Errorf("telegram %s: build request: %w", method, err))
+		return nil, c.redact(fmt.Errorf("telegram %s: build request: %w", method, err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return c.redact(fmt.Errorf("telegram %s: %w", method, err))
+		return nil, c.redact(fmt.Errorf("telegram %s: %w", method, err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		return c.redact(fmt.Errorf("telegram %s: read response: %w", method, err))
+		return nil, c.redact(fmt.Errorf("telegram %s: read response: %w", method, err))
 	}
 
 	var parsed apiResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return &APIError{
+		return nil, &APIError{
 			Method:      method,
 			StatusCode:  resp.StatusCode,
 			Description: fmt.Sprintf("unreadable response with status %d", resp.StatusCode),
@@ -170,10 +200,10 @@ func (c *Client) call(ctx context.Context, method string, payload any) error {
 		if parsed.Parameters != nil && parsed.Parameters.RetryAfter > 0 {
 			apiErr.RetryAfter = time.Duration(parsed.Parameters.RetryAfter) * time.Second
 		}
-		return apiErr
+		return nil, apiErr
 	}
 
-	return nil
+	return parsed.Result, nil
 }
 
 func (c *Client) methodURL(method string) string {
