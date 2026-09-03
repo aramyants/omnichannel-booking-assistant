@@ -186,6 +186,14 @@ else
   ENV_VARS+=",REMINDER_BACKEND=disabled"
 fi
 [[ -n "${BUSINESS_NAME:-}" ]]     && ENV_VARS+=",BUSINESS_NAME=${BUSINESS_NAME}"
+
+# The description can contain commas and newlines, which the comma-separated
+# --set-env-vars form cannot carry. It travels as its own delimited assignment.
+if [[ -n "${BUSINESS_DESCRIPTION:-}" ]]; then
+  DESCRIPTION_FLAG=(--set-env-vars "^@@^BUSINESS_DESCRIPTION=${BUSINESS_DESCRIPTION}")
+else
+  DESCRIPTION_FLAG=()
+fi
 [[ -n "${ALTEGIO_COMPANY_ID:-}" ]] && ENV_VARS+=",ALTEGIO_COMPANY_ID=${ALTEGIO_COMPANY_ID}"
 [[ -n "${ALTEGIO_TIMEZONE:-}" ]]  && ENV_VARS+=",ALTEGIO_TIMEZONE=${ALTEGIO_TIMEZONE}"
 [[ -n "${ALTEGIO_CURRENCY:-}" ]]  && ENV_VARS+=",ALTEGIO_CURRENCY=${ALTEGIO_CURRENCY}"
@@ -207,6 +215,7 @@ gcloud run deploy "${SERVICE}" \
   --memory "${MEMORY}" \
   --service-account "${RUNTIME_SA}" \
   --set-env-vars "${ENV_VARS}" \
+  "${DESCRIPTION_FLAG[@]}" \
   "${SECRET_FLAGS[@]}" \
   --quiet
 
