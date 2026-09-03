@@ -154,9 +154,12 @@ func defaultScheduling() *stubScheduling {
 			{ID: "501", Name: "Mariam", Specialisation: "Stylist", Bookable: true},
 			{ID: "504", Name: "Nare", Specialisation: "Stylist", Bookable: false},
 		},
+		// The times a booking is actually prepared against. A real scheduling
+		// system reports the appointment length here even when the service
+		// itself carries none, which is where the duration comes from.
 		slots: []booking.Slot{
-			{Start: testNow.Add(48 * time.Hour), Duration: time.Hour, StaffID: "501"},
-			{Start: testNow.Add(49 * time.Hour), Duration: time.Hour, StaffID: "501"},
+			{Start: bookingStart(), Duration: 90 * time.Minute, StaffID: "501"},
+			{Start: bookingStart().Add(30 * time.Minute), Duration: 90 * time.Minute, StaffID: "501"},
 		},
 	}
 }

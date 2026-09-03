@@ -287,6 +287,29 @@ func fromConversationDoc(doc conversationDoc) conversation.Conversation {
 	return conv
 }
 
+// UpdateContact records the name and phone a customer has given.
+//
+// Only the fields that were given are written, so a later booking that collects
+// a name cannot blank a phone number an earlier one recorded.
+func (s *Store) UpdateContact(ctx context.Context, customerID, name, phone string) error {
+	updates := []firestore.Update{{Path: "updated_at", Value: time.Now().UTC()}}
+	if name != "" {
+		updates = append(updates, firestore.Update{Path: "name", Value: name})
+	}
+	if phone != "" {
+		updates = append(updates, firestore.Update{Path: "phone", Value: phone})
+	}
+
+	_, err := s.client.Collection(collectionCustomers).Doc(customerID).Update(ctx, updates)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return customer.ErrNotFound
+		}
+		return fmt.Errorf("firestore: record contact details: %w", err)
+	}
+	return nil
+}
+
 // FindOrOpen returns the conversation on candidate's channel thread, storing
 // candidate as a new one if there is none.
 func (s *Store) FindOrOpen(

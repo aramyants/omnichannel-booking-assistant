@@ -223,6 +223,28 @@ func (s *Store) FindOrCreateByChannelIdentity(
 	return candidate, nil
 }
 
+// UpdateContact records the name and phone a customer has given.
+func (s *Store) UpdateContact(_ context.Context, customerID, name, phone string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stored, ok := s.customers[customerID]
+	if !ok {
+		return customer.ErrNotFound
+	}
+
+	if name != "" {
+		stored.Name = name
+	}
+	if phone != "" {
+		stored.Phone = phone
+	}
+	stored.UpdatedAt = s.now()
+
+	s.customers[customerID] = stored
+	return nil
+}
+
 // FindOrOpen returns the conversation on candidate's channel thread, storing
 // candidate as a new one if there is none.
 func (s *Store) FindOrOpen(

@@ -69,13 +69,19 @@ func formatHandoff(notice assistant.HandoffNotice) string {
 
 	if phone := strings.TrimSpace(notice.Customer.Phone); phone != "" {
 		fmt.Fprintf(&b, "Phone: %s\n", phone)
-	} else {
-		// Messaging providers do not hand out phone numbers, so this is the
-		// normal case unless the customer volunteered one while booking.
-		fmt.Fprintf(&b, "Phone: not given - reply on %s\n", notice.Provider)
 	}
 
-	fmt.Fprintf(&b, "Channel: %s\n", notice.Provider)
+	// A colleague reading this on their phone needs something they can act on.
+	// A username is tappable; failing that, a direct link to the account works
+	// even for somebody who has never set one, which is the common case.
+	switch {
+	case notice.Handle != "":
+		fmt.Fprintf(&b, "Telegram: @%s\n", strings.TrimPrefix(notice.Handle, "@"))
+	case notice.ExternalUserID != "":
+		fmt.Fprintf(&b, "Open the chat: tg://user?id=%s\n", notice.ExternalUserID)
+	default:
+		fmt.Fprintf(&b, "Channel: %s\n", notice.Provider)
+	}
 
 	if detail := strings.TrimSpace(notice.Detail); detail != "" {
 		fmt.Fprintf(&b, "\nWhy: %s\n", detail)

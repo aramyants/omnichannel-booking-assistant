@@ -41,6 +41,14 @@ type CustomerRepository interface {
 		identity customer.ChannelIdentity,
 		candidate customer.Customer,
 	) (customer.Customer, error)
+
+	// UpdateContact records the name and phone number a customer has given.
+	//
+	// Messaging providers do not hand out phone numbers, so this is usually the
+	// only way the business can call somebody back. It is written as soon as the
+	// customer says it, so that a booking which then fails still leaves a way to
+	// reach them.
+	UpdateContact(ctx context.Context, customerID, name, phone string) error
 }
 
 // ConversationRepository stores conversations.
@@ -180,6 +188,7 @@ func NewService(deps Deps) (*Service, error) {
 		tools: &toolset{
 			scheduling: deps.Scheduling,
 			bookings:   deps.Bookings,
+			customers:  deps.Customers,
 			reminders:  deps.Reminders,
 			now:        now,
 			location:   business.Location,
@@ -334,8 +343,12 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 			Reason:         sess.handoffReason,
 			Detail:         sess.handoffDetail,
 			Provider:       msg.Provider,
-			Customer:       cust,
-			Handle:         msg.Sender.DisplayName,
+			// Read from the session, not the value loaded at the start: a tool
+			// may have recorded a phone number during this exchange, and that is
+			// exactly the detail the colleague needs.
+			Customer:       sess.customer,
+			Handle:         msg.Sender.Username,
+			ExternalUserID: msg.ExternalUserID,
 			Recent:         history,
 			Draft:          conv.Draft,
 			RequestedAt:    now,
