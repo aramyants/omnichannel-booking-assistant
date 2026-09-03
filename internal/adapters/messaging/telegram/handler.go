@@ -20,14 +20,31 @@ type MessageHandler interface {
 
 // Handler serves Telegram webhook deliveries.
 type Handler struct {
-	webhook  *Webhook
-	messages MessageHandler
-	logger   *slog.Logger
+	webhook     *Webhook
+	messages    MessageHandler
+	logger      *slog.Logger
+	staffChatID string
+}
+
+// HandlerOption customises a Handler.
+type HandlerOption func(*Handler)
+
+// WithStaffChat names the chat the business is notified in.
+//
+// Adding the bot to a staff group means the group's own messages arrive at this
+// same webhook. Without this, colleagues talking among themselves would each be
+// treated as a customer and answered by the assistant.
+func WithStaffChat(chatID string) HandlerOption {
+	return func(h *Handler) { h.staffChatID = chatID }
 }
 
 // NewHandler returns an http.Handler for the Telegram webhook endpoint.
-func NewHandler(webhook *Webhook, messages MessageHandler, logger *slog.Logger) *Handler {
-	return &Handler{webhook: webhook, messages: messages, logger: logger}
+func NewHandler(webhook *Webhook, messages MessageHandler, logger *slog.Logger, opts ...HandlerOption) *Handler {
+	h := &Handler{webhook: webhook, messages: messages, logger: logger}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // ServeHTTP verifies, parses and processes one webhook delivery.
@@ -70,6 +87,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, envelope := range envelopes {
+		// Colleagues talking in the staff group are not customers, and must not
+		// be answered as though they were.
+		if h.staffChatID != "" && envelope.ExternalThreadID == h.staffChatID {
+			h.logger.DebugContext(ctx, "ignored a message in the staff chat",
+				"chat_id", h.staffChatID)
+			continue
+		}
+
 		if err := h.messages.Handle(ctx, envelope); err != nil {
 			if errors.Is(err, context.Canceled) {
 				// The caller hung up or the process is shutting down. Telegram

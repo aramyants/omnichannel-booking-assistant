@@ -104,6 +104,44 @@ func TestHandlerAsksForRedeliveryWhenProcessingFails(t *testing.T) {
 	}
 }
 
+// TestStaffChatIsNotTreatedAsACustomer: adding the bot to a staff group means
+// the group's own messages arrive at this webhook. Answering colleagues as
+// though they were customers would make the group unusable.
+func TestStaffChatIsNotTreatedAsACustomer(t *testing.T) {
+	messages := &recordingHandler{}
+
+	// The group fixture's own chat id, nominated here as the staff group.
+	handler := NewHandler(testWebhook(), messages,
+		slog.New(slog.NewTextHandler(io.Discard, nil)), WithStaffChat("-1001234567890"))
+
+	rec := post(t, handler, "s3cret-token", fixture(t, "group_message.json"))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if len(messages.got) != 0 {
+		t.Errorf("a staff message was handled as a customer: %+v", messages.got)
+	}
+}
+
+// TestOtherChatsStillReachTheAssistant guards the obvious way to get that guard
+// wrong: silencing every group rather than the one nominated.
+func TestOtherChatsStillReachTheAssistant(t *testing.T) {
+	messages := &recordingHandler{}
+
+	handler := NewHandler(testWebhook(), messages,
+		slog.New(slog.NewTextHandler(io.Discard, nil)), WithStaffChat("-100999999999"))
+
+	rec := post(t, handler, "s3cret-token", fixture(t, "group_message.json"))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if len(messages.got) != 1 {
+		t.Errorf("handled %d messages, want the customer's to get through", len(messages.got))
+	}
+}
+
 func TestHandlerAcknowledgesUpdatesWithNothingToAnswer(t *testing.T) {
 	messages := &recordingHandler{}
 	rec := post(t, newTestHandler(messages), "s3cret-token", fixture(t, "callback_query.json"))

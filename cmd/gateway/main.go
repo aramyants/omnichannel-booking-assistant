@@ -195,6 +195,7 @@ func run() error {
 			telegram.NewWebhook(cfg.Telegram.WebhookSecret),
 			assistantService,
 			logger,
+			telegram.WithStaffChat(cfg.Telegram.StaffChatID),
 		)
 	}
 
