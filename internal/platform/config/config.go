@@ -57,6 +57,7 @@ type Config struct {
 	BusinessDescription string
 
 	Telegram  Telegram
+	WhatsApp  WhatsApp
 	Altegio   Altegio
 	AI        AI
 	Storage   Storage
@@ -181,6 +182,59 @@ type Telegram struct {
 	StaffChatID string
 }
 
+// WhatsApp holds the credentials for the WhatsApp Cloud API. The channel is
+// disabled, and its endpoint not served, when the access token is absent.
+type WhatsApp struct {
+	// AccessToken authorises sending. It belongs to the Meta app.
+	AccessToken string
+
+	// PhoneNumberID is the WhatsApp number messages are sent from.
+	PhoneNumberID string
+
+	// AppSecret signs every incoming delivery. It is the only thing
+	// distinguishing a genuine webhook from anyone who found the URL, so it is
+	// required whenever the channel is enabled.
+	AppSecret string
+
+	// VerifyToken is echoed back during subscription, proving to Meta that the
+	// endpoint belongs to whoever configured the app.
+	VerifyToken string
+
+	// GraphVersion pins the API version. Meta retires versions on a schedule,
+	// so moving to the next one is a configuration change, not a release.
+	GraphVersion string
+}
+
+// Enabled reports whether the WhatsApp channel is configured.
+func (w WhatsApp) Enabled() bool { return w.AccessToken != "" }
+
+// validate reports every problem with the WhatsApp settings.
+//
+// An enabled channel without an app secret would be an unauthenticated public
+// endpoint that anyone could post customer messages to, so it is refused rather
+// than defaulted.
+func (w WhatsApp) validate() []error {
+	if !w.Enabled() {
+		if w.PhoneNumberID != "" || w.AppSecret != "" || w.VerifyToken != "" {
+			return []error{errors.New(
+				"WHATSAPP_* settings are present but WHATSAPP_ACCESS_TOKEN is not")}
+		}
+		return nil
+	}
+
+	var errs []error
+	if w.PhoneNumberID == "" {
+		errs = append(errs, errors.New("WHATSAPP_PHONE_NUMBER_ID is required when WHATSAPP_ACCESS_TOKEN is set"))
+	}
+	if w.AppSecret == "" {
+		errs = append(errs, errors.New("META_APP_SECRET is required when WHATSAPP_ACCESS_TOKEN is set"))
+	}
+	if w.VerifyToken == "" {
+		errs = append(errs, errors.New("META_VERIFY_TOKEN is required when WHATSAPP_ACCESS_TOKEN is set"))
+	}
+	return errs
+}
+
 // Enabled reports whether the Telegram channel is configured.
 func (t Telegram) Enabled() bool { return t.BotToken != "" }
 
@@ -244,6 +298,15 @@ func Load() (Config, error) {
 		StaffChatID:   getenv("TELEGRAM_STAFF_CHAT_ID", ""),
 	}
 	errs = append(errs, cfg.Telegram.validate()...)
+
+	cfg.WhatsApp = WhatsApp{
+		AccessToken:   getenv("WHATSAPP_ACCESS_TOKEN", ""),
+		PhoneNumberID: getenv("WHATSAPP_PHONE_NUMBER_ID", ""),
+		AppSecret:     getenv("META_APP_SECRET", ""),
+		VerifyToken:   getenv("META_VERIFY_TOKEN", ""),
+		GraphVersion:  getenv("META_GRAPH_VERSION", ""),
+	}
+	errs = append(errs, cfg.WhatsApp.validate()...)
 
 	altegio, altegioErrs := loadAltegio()
 	cfg.Altegio = altegio

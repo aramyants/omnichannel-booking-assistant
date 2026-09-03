@@ -20,6 +20,7 @@ import (
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/ai/openai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/altegio"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/meta"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/telegram"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/persistence/firestore"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/persistence/memory"
@@ -92,6 +93,18 @@ func run() error {
 		}
 		telegramClient = telegram.NewClient(cfg.Telegram.BotToken, opts...)
 		senders[messaging.ProviderTelegram] = telegramClient
+	}
+
+	var whatsappClient *meta.Client
+	if cfg.WhatsApp.Enabled() {
+		opts := []meta.Option{meta.WithGraphVersion(cfg.WhatsApp.GraphVersion)}
+
+		client, err := meta.NewClient(cfg.WhatsApp.AccessToken, cfg.WhatsApp.PhoneNumberID, opts...)
+		if err != nil {
+			return err
+		}
+		whatsappClient = client
+		senders[messaging.ProviderWhatsApp] = client
 	}
 
 	// Without a staff channel a customer asking for a person changes a stored
@@ -201,6 +214,14 @@ func run() error {
 			// a notification reaches the customer it names.
 			telegram.WithStaffDesk(assistantService, store, telegramClient, cfg.Telegram.StaffChatID),
 		)
+	}
+
+	if whatsappClient != nil {
+		webhook, err := meta.NewWebhook(cfg.WhatsApp.AppSecret, cfg.WhatsApp.VerifyToken)
+		if err != nil {
+			return err
+		}
+		gw.whatsapp = meta.NewWhatsAppHandler(webhook, assistantService, logger)
 	}
 
 	srv, err := httpserver.New(ctx, cfg.Addr(), gw.routes(), logger, cfg.ShutdownTimeout)
@@ -415,6 +436,9 @@ func enabledChannels(cfg config.Config) []string {
 	channels := []string{}
 	if cfg.Telegram.Enabled() {
 		channels = append(channels, string(messaging.ProviderTelegram))
+	}
+	if cfg.WhatsApp.Enabled() {
+		channels = append(channels, string(messaging.ProviderWhatsApp))
 	}
 	return channels
 }
