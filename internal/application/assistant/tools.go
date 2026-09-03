@@ -13,6 +13,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/platform/id"
 )
 
@@ -66,6 +67,77 @@ type session struct {
 	// rather than only that something did.
 	handoffReason HandoffReason
 	handoffDetail string
+
+	// language is what fixed phrases are written in for this exchange.
+	language language
+
+	// choices are options a tool offered, to be shown as buttons by channels
+	// that have them. They are the tool's own words: a service name, a time, a
+	// specialist. Nothing here is translated, because none of it is this
+	// system's language to begin with.
+	choices []messaging.Choice
+
+	// offering names a set of labels this system does choose the words for.
+	// It is kept as an intent rather than as text because the language to
+	// write them in is not settled until the reply itself has been written.
+	offering offering
+}
+
+// offering names a fixed set of buttons.
+type offering int
+
+const (
+	offerWhatToolsSaid offering = iota
+	offerBookingConfirmation
+	offerChangeConfirmation
+	offerHelp
+	offerMenu
+)
+
+// offer records the options a tool has put in front of the customer.
+//
+// Calling it with nothing clears the offer, which is what a tool that ends the
+// choosing does: the previous question has been answered, and its buttons must
+// not follow the answer down the screen.
+func (s *session) offer(labels ...string) {
+	s.offering = offerWhatToolsSaid
+	if len(labels) == 0 {
+		s.choices = nil
+		return
+	}
+	s.choices = choicesOf(labels...)
+}
+
+// offerFixed records a set of buttons whose words this system chooses.
+func (s *session) offerFixed(kind offering) {
+	s.offering = kind
+	s.choices = nil
+}
+
+// buttons are the options to send with replyText.
+//
+// The language comes from the reply itself where the reply says: the model
+// writes in the customer's language, so its own words settle the case the
+// transcript cannot, where somebody types Armenian in Latin letters and no
+// script anywhere gives them away.
+func (s *session) buttons(replyText string) []messaging.Choice {
+	lang := s.language
+	if written := scriptLanguage(replyText); written != "" {
+		lang = written
+	}
+
+	switch s.offering {
+	case offerBookingConfirmation:
+		return confirmBookingChoices(lang)
+	case offerChangeConfirmation:
+		return confirmChangeChoices(lang)
+	case offerHelp:
+		return helpChoices(lang)
+	case offerMenu:
+		return menuChoices(lang)
+	default:
+		return s.choices
+	}
 }
 
 // Tool names. They are constants because they appear in three places that must
@@ -95,6 +167,10 @@ const dateLayout = "2006-01-02"
 // maxSlotsReturned bounds what one tool call hands back. A full day of slots is
 // more than a customer can read and more context than the answer needs.
 const maxSlotsReturned = 12
+
+// buttonDateLayout is how a day is written on a button: digits only, so that it
+// needs no language.
+const buttonDateLayout = "02.01"
 
 // noArguments is the schema for a tool that takes none. Strict mode requires
 // the object to be described even when it is empty.
@@ -285,13 +361,13 @@ func (t *toolset) run(ctx context.Context, s *session, call ai.ToolCall) (string
 	// A name that is not here is refused rather than resolved.
 	switch call.Name {
 	case toolListServices:
-		return t.listServices(ctx)
+		return t.listServices(ctx, s)
 	case toolListStaff:
-		return t.listStaff(ctx)
+		return t.listStaff(ctx, s)
 	case toolAvailableDates:
-		return t.availableDates(ctx, call)
+		return t.availableDates(ctx, s, call)
 	case toolAvailableSlots:
-		return t.availableSlots(ctx, call)
+		return t.availableSlots(ctx, s, call)
 	case toolPrepareBooking:
 		return t.prepareBooking(ctx, s, call)
 	case toolConfirmBooking:
@@ -313,7 +389,7 @@ func (t *toolset) run(ctx context.Context, s *session, call ai.ToolCall) (string
 	}
 }
 
-func (t *toolset) listServices(ctx context.Context) (string, error) {
+func (t *toolset) listServices(ctx context.Context, s *session) (string, error) {
 	services, err := t.scheduling.ListServices(ctx)
 	if err != nil {
 		return "", err
@@ -332,6 +408,7 @@ func (t *toolset) listServices(ctx context.Context) (string, error) {
 	}
 
 	items := make([]item, 0, len(services))
+	names := make([]string, 0, len(services))
 	for _, service := range services {
 		items = append(items, item{
 			ID:       service.ID,
@@ -340,11 +417,18 @@ func (t *toolset) listServices(ctx context.Context) (string, error) {
 			Minutes:  int(service.Duration.Minutes()),
 			Price:    service.PriceLabel(),
 		})
+		names = append(names, service.Name)
 	}
+
+	// Offered as buttons carrying the names exactly as the calendar stores
+	// them, so tapping one is the same as typing it and the model is handed a
+	// name it can look up rather than a paraphrase of one.
+	s.offer(names...)
+
 	return encode(map[string]any{"services": items})
 }
 
-func (t *toolset) listStaff(ctx context.Context) (string, error) {
+func (t *toolset) listStaff(ctx context.Context, s *session) (string, error) {
 	staff, err := t.scheduling.ListStaff(ctx)
 	if err != nil {
 		return "", err
@@ -358,6 +442,7 @@ func (t *toolset) listStaff(ctx context.Context) (string, error) {
 	}
 
 	items := make([]item, 0, len(staff))
+	names := make([]string, 0, len(staff))
 	for _, member := range staff {
 		items = append(items, item{
 			ID:             member.ID,
@@ -365,11 +450,25 @@ func (t *toolset) listStaff(ctx context.Context) (string, error) {
 			Specialisation: member.Specialisation,
 			Bookable:       member.Bookable,
 		})
+		// Only the ones who can be booked. A button for somebody who is not
+		// taking appointments can only disappoint whoever presses it.
+		if member.Bookable {
+			names = append(names, member.Name)
+		}
 	}
+
+	// One specialist is not a choice, and a button asking a customer to pick
+	// them reads as a system going through the motions.
+	if len(names) > 1 {
+		s.offer(names...)
+	} else {
+		s.offer()
+	}
+
 	return encode(map[string]any{"specialists": items})
 }
 
-func (t *toolset) availableDates(ctx context.Context, call ai.ToolCall) (string, error) {
+func (t *toolset) availableDates(ctx context.Context, s *session, call ai.ToolCall) (string, error) {
 	var args struct {
 		StaffID string `json:"staff_id"`
 	}
@@ -386,13 +485,22 @@ func (t *toolset) availableDates(ctx context.Context, call ai.ToolCall) (string,
 	}
 
 	formatted := make([]string, 0, len(dates))
+	labels := make([]string, 0, len(dates))
 	for _, day := range dates {
 		formatted = append(formatted, day.Format(dateLayout))
+
+		// Day and month in digits. A weekday or a month name would have to be
+		// written in the customer's language, and a date is the one thing that
+		// reads the same in all of them.
+		labels = append(labels, day.Format(buttonDateLayout))
 	}
+
+	s.offer(labels...)
+
 	return encode(map[string]any{"dates": formatted})
 }
 
-func (t *toolset) availableSlots(ctx context.Context, call ai.ToolCall) (string, error) {
+func (t *toolset) availableSlots(ctx context.Context, s *session, call ai.ToolCall) (string, error) {
 	var args struct {
 		StaffID string `json:"staff_id"`
 		Date    string `json:"date"`
@@ -436,6 +544,11 @@ func (t *toolset) availableSlots(ctx context.Context, call ai.ToolCall) (string,
 		}
 		times = append(times, slot.Start.In(t.location).Format("15:04"))
 	}
+
+	// Offered as buttons as well as named in the answer. A time is short enough
+	// that they sit three abreast, and it is the one part of this exchange that
+	// is genuinely easier to tap than to type.
+	s.offer(times...)
 
 	return encode(map[string]any{
 		"date":  args.Date,
@@ -531,6 +644,9 @@ func (t *toolset) prepareBooking(ctx context.Context, s *session, call ai.ToolCa
 	s.conv.Draft = &draft
 	s.conv.BookingChange = nil
 
+	// The one question in the whole exchange with exactly two answers.
+	s.offerFixed(offerBookingConfirmation)
+
 	return encode(map[string]any{
 		"prepared":    true,
 		"service":     service.Name,
@@ -570,6 +686,9 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 		// Only now, with a confirmed appointment in hand, may the customer be
 		// told they have one.
 		s.conv.Draft = nil
+
+		// Nothing left to ask, so nothing left to tap.
+		s.offer()
 
 		recorded := false
 		if t.bookings != nil {
@@ -771,6 +890,9 @@ func (t *toolset) requestHandoff(s *session, call ai.ToolCall) (string, error) {
 
 	s.handoffReason = ReasonCustomerAsked
 	s.handoffDetail = strings.TrimSpace(args.Reason)
+
+	// A customer waiting for a person is waiting, not choosing.
+	s.offer()
 
 	return encode(map[string]any{
 		"handed_over": true,

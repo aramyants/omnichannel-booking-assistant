@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -243,8 +244,11 @@ func TestSetWebhookRegistersTheEndpoint(t *testing.T) {
 	if gotBody.SecretToken != "s3cret" {
 		t.Errorf("secret_token = %q, want s3cret", gotBody.SecretToken)
 	}
-	if len(gotBody.AllowedUpdates) != 1 || gotBody.AllowedUpdates[0] != "message" {
-		t.Errorf("allowed_updates = %v, want [message]", gotBody.AllowedUpdates)
+	// Button presses are subscribed to explicitly. A webhook registered without
+	// callback_query leaves every keyboard the assistant sends dead on screen.
+	want := []string{"message", "callback_query"}
+	if !slices.Equal(gotBody.AllowedUpdates, want) {
+		t.Errorf("allowed_updates = %v, want %v", gotBody.AllowedUpdates, want)
 	}
 }
 

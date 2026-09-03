@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -44,6 +45,15 @@ const (
 // unavailable"; treating the latter that way would hide a deployment fault as
 // a customer scheduling race.
 var errRequestRejected = errors.New("altegio request rejected")
+
+// errRequestInvalid reports a request Altegio refused because it was malformed,
+// naming the fields it objected to.
+//
+// It is kept apart from errRequestRejected because the two mean opposite things
+// to a customer. A rejected booking request that was well formed means the time
+// has gone and they should pick another; a malformed one means this system got
+// something wrong, and telling them their time was taken would be a lie.
+var errRequestInvalid = errors.New("altegio rejected the request as malformed")
 
 // Client calls the Altegio API.
 //
@@ -157,6 +167,11 @@ type envelope[T any] struct {
 	Success bool            `json:"success"`
 	Data    T               `json:"data"`
 	Meta    json.RawMessage `json:"meta"`
+
+	// Errors names the request fields Altegio objected to. It is present only
+	// when the request itself was wrong, which is what separates a booking this
+	// system built badly from a time somebody else has taken.
+	Errors json.RawMessage `json:"errors"`
 }
 
 // metaMessage is the explanation carried on a failure. On success meta is an
@@ -280,7 +295,7 @@ func (c *Client) attempt(ctx context.Context, req request, body []byte) (json.Ra
 	decodeErr := json.Unmarshal(raw, &env)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || (decodeErr == nil && !env.Success) {
-		return nil, c.translate(req, resp.StatusCode, env.Meta)
+		return nil, c.translate(req, resp.StatusCode, env.Meta, env.Errors)
 	}
 	if decodeErr != nil {
 		return nil, fmt.Errorf("altegio %s: decode response: %w", req.path, decodeErr)
@@ -303,13 +318,17 @@ func (c *Client) authorization() string {
 
 // translate turns an HTTP failure into an error the application can act on,
 // which is the only vocabulary that should cross this package's boundary.
-func (c *Client) translate(req request, status int, meta json.RawMessage) error {
+func (c *Client) translate(req request, status int, meta, fieldErrors json.RawMessage) error {
 	var detail metaMessage
 	_ = json.Unmarshal(meta, &detail) // meta is an empty array on success; absent detail is fine
 
 	message := detail.Message
 	if message == "" {
 		message = http.StatusText(status)
+	}
+
+	if fields := rejectedFields(fieldErrors); len(fields) > 0 {
+		message += ": " + strings.Join(fields, ", ")
 	}
 
 	switch {
@@ -328,9 +347,43 @@ func (c *Client) translate(req request, status int, meta json.RawMessage) error 
 		return fmt.Errorf("altegio %s: %w: %s", req.path, booking.ErrUnavailable, message)
 
 	default:
+		// Altegio names the fields it objected to only when the request itself
+		// was malformed. That distinction is the whole point of this branch: a
+		// refusal with named fields is a bug in this system, and reporting it
+		// as a slot that has gone tells the customer their time was taken when
+		// nothing of the kind happened.
+		if len(rejectedFields(fieldErrors)) > 0 {
+			return fmt.Errorf("altegio %s: %w: %w: %s",
+				req.path, booking.ErrRejected, errRequestInvalid, message)
+		}
+
 		return fmt.Errorf("altegio %s: %w: %w: %s",
 			req.path, booking.ErrRejected, errRequestRejected, message)
 	}
+}
+
+// rejectedFields lists the request fields Altegio named in its refusal.
+//
+// The payload is `{"errors": {"email": ["..."]}}` when there are any, and
+// absent, null or an empty array when there are none, so anything that is not
+// a populated object means the request was accepted as well formed.
+func rejectedFields(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	var byField map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &byField); err != nil || len(byField) == 0 {
+		return nil
+	}
+
+	fields := make([]string, 0, len(byField))
+	for field := range byField {
+		fields = append(fields, field)
+	}
+	// Sorted so the same refusal reads the same way in every log line.
+	sort.Strings(fields)
+	return fields
 }
 
 // backoff returns how long to wait before retrying, growing exponentially with

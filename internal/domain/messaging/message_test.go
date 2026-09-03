@@ -88,3 +88,42 @@ func TestOutgoingValidateRejectsEmptyText(t *testing.T) {
 		t.Errorf("Validate() = %v, want ErrInvalidEnvelope", err)
 	}
 }
+
+func TestWithChoicesKeepsOnlyWhatCanBeTapped(t *testing.T) {
+	msg := validEnvelope().Reply("Which time suits you?").WithChoices([]Choice{
+		{Label: " 10:00 "},
+		{Label: ""},
+		{Label: "10:30"},
+		// A repeat is indistinguishable once tapped, so the second one could
+		// only ever confuse.
+		{Label: "10:00"},
+	})
+
+	if len(msg.Choices) != 2 {
+		t.Fatalf("choices = %v, want the empty and the repeated dropped", msg.Choices)
+	}
+	if msg.Choices[0].Label != "10:00" || msg.Choices[1].Label != "10:30" {
+		t.Errorf("choices = %v, want them trimmed and in order", msg.Choices)
+	}
+}
+
+func TestWithChoicesCapsWhatOneReplyMayCarry(t *testing.T) {
+	many := make([]Choice, 0, maxChoices*2)
+	for i := range cap(many) {
+		many = append(many, Choice{Label: string(rune('a' + i))})
+	}
+
+	msg := validEnvelope().Reply("pick one").WithChoices(many)
+	if len(msg.Choices) != maxChoices {
+		t.Errorf("kept %d choices, want no more than %d", len(msg.Choices), maxChoices)
+	}
+}
+
+func TestWithNoChoicesLeavesNoKeyboard(t *testing.T) {
+	msg := validEnvelope().Reply("Your appointment is booked.").
+		WithChoices([]Choice{{Label: "  "}})
+
+	if msg.Choices != nil {
+		t.Errorf("choices = %v, want nothing to tap", msg.Choices)
+	}
+}

@@ -6,6 +6,7 @@ package messaging
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -113,6 +114,20 @@ func (e Envelope) DedupeKey() string {
 	return string(e.Provider) + ":" + e.ExternalMessageID
 }
 
+// Choice is one tappable option offered alongside a reply.
+//
+// The label is the whole of it. Whatever a customer taps is fed back into the
+// conversation exactly as though they had typed it, so a channel with buttons
+// and a channel without behave identically above this line, and nothing has to
+// be remembered between offering a choice and receiving the answer.
+type Choice struct {
+	Label string
+}
+
+// maxChoices bounds how many options one reply may carry. More than this is a
+// wall rather than a choice, and no phone shows it without scrolling.
+const maxChoices = 12
+
 // Outgoing is a message the assistant wants to deliver back to a customer.
 type Outgoing struct {
 	Provider Provider
@@ -122,6 +137,44 @@ type Outgoing struct {
 	ExternalThreadID string
 
 	Text string
+
+	// Choices are options to offer as buttons. A channel that cannot render
+	// them ignores the field: the reply text names the options either way, so
+	// a customer there simply types their answer instead of tapping it.
+	Choices []Choice
+}
+
+// WithChoices returns a copy of o offering choices, dropping the empty and the
+// repeated and keeping no more than a customer can be shown at once.
+//
+// Repeats are dropped because two identical buttons are indistinguishable once
+// tapped, so the second one can only ever confuse.
+func (o Outgoing) WithChoices(choices []Choice) Outgoing {
+	kept := make([]Choice, 0, len(choices))
+	seen := make(map[string]struct{}, len(choices))
+
+	for _, choice := range choices {
+		label := strings.TrimSpace(choice.Label)
+		if label == "" {
+			continue
+		}
+		if _, duplicate := seen[label]; duplicate {
+			continue
+		}
+		seen[label] = struct{}{}
+
+		kept = append(kept, Choice{Label: label})
+		if len(kept) == maxChoices {
+			break
+		}
+	}
+
+	if len(kept) == 0 {
+		o.Choices = nil
+		return o
+	}
+	o.Choices = kept
+	return o
 }
 
 // Validate reports whether the message can be delivered.

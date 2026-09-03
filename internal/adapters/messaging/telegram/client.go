@@ -115,8 +115,9 @@ func (c *Client) SendReturningID(ctx context.Context, msg messaging.Outgoing) (s
 	}
 
 	result, err := c.call(ctx, "sendMessage", sendMessageRequest{
-		ChatID: msg.ExternalThreadID,
-		Text:   msg.Text,
+		ChatID:      msg.ExternalThreadID,
+		Text:        msg.Text,
+		ReplyMarkup: keyboardFor(msg.Choices),
 	})
 	if err != nil {
 		return "", err
@@ -124,6 +125,32 @@ func (c *Client) SendReturningID(ctx context.Context, msg messaging.Outgoing) (s
 
 	// A message that was delivered but whose id could not be read is still
 	// delivered. Losing the id only costs the ability to thread replies to it.
+	var sent sentMessage
+	if err := json.Unmarshal(result, &sent); err != nil || sent.MessageID == 0 {
+		return "", nil
+	}
+	return strconv.FormatInt(sent.MessageID, 10), nil
+}
+
+// sendWithMarkup delivers a message under a keyboard this package built itself.
+//
+// It is separate from Send because those buttons stand for an action rather
+// than for words a customer could have typed, and so carry a reference in their
+// callback data instead of standing for their own label.
+func (c *Client) sendWithMarkup(
+	ctx context.Context,
+	chatID, text string,
+	markup *inlineKeyboardMarkup,
+) (string, error) {
+	result, err := c.call(ctx, "sendMessage", sendMessageRequest{
+		ChatID:      chatID,
+		Text:        text,
+		ReplyMarkup: markup,
+	})
+	if err != nil {
+		return "", err
+	}
+
 	var sent sentMessage
 	if err := json.Unmarshal(result, &sent); err != nil || sent.MessageID == 0 {
 		return "", nil
@@ -146,16 +173,74 @@ type setWebhookRequest struct {
 // only step needed to make it reachable, and so a changed URL cannot be left
 // pointing at a previous deployment.
 //
-// allowed_updates is restricted to messages: subscribing to update types the
-// assistant ignores only costs bandwidth and log noise.
+// allowed_updates is restricted to what the assistant acts on: subscribing to
+// update types it ignores only costs bandwidth and log noise. Button presses
+// are among them, and a webhook registered without callback_query would leave
+// every keyboard this system sends dead on the screen.
 func (c *Client) SetWebhook(ctx context.Context, callbackURL, secret string) error {
 	_, err := c.call(ctx, "setWebhook", setWebhookRequest{
 		URL:            callbackURL,
 		SecretToken:    secret,
-		AllowedUpdates: []string{"message"},
+		AllowedUpdates: []string{"message", "callback_query"},
 		MaxConnections: 40,
 	})
 	return err
+}
+
+// AnswerCallback acknowledges a button press.
+//
+// Telegram spins the button until this arrives and then shows the customer a
+// failure, so it is called for every press including ones this system cannot
+// act on. text, when given, appears as a brief toast over the chat.
+func (c *Client) AnswerCallback(ctx context.Context, callbackQueryID, text string) error {
+	_, err := c.call(ctx, "answerCallbackQuery", answerCallbackQueryRequest{
+		CallbackQueryID: callbackQueryID,
+		Text:            text,
+	})
+	return err
+}
+
+// ClearKeyboard removes the buttons under a message.
+//
+// A question that has been answered must stop being answerable: without this a
+// customer can scroll back a week and tap a time that was free then, and a
+// colleague can hand back a conversation somebody else already picked up.
+func (c *Client) ClearKeyboard(ctx context.Context, chatID string, messageID int64) error {
+	_, err := c.call(ctx, "editMessageReplyMarkup", editMessageReplyMarkupRequest{
+		ChatID:    chatID,
+		MessageID: messageID,
+	})
+	return err
+}
+
+// SetCommands publishes the menu shown beside the text box.
+//
+// scope is a chat id to publish the menu only there, or empty for the default
+// menu every customer sees. Nothing about a command is enforced by publishing
+// it: the menu is a hint to the customer, and the code that receives the
+// command is what decides what it does.
+func (c *Client) SetCommands(ctx context.Context, scope string, commands []Command) error {
+	entries := make([]botCommand, 0, len(commands))
+	for _, command := range commands {
+		entries = append(entries, botCommand{
+			Command:     strings.TrimPrefix(command.Name, "/"),
+			Description: command.Description,
+		})
+	}
+
+	req := setMyCommandsRequest{Commands: entries}
+	if scope != "" {
+		req.Scope = &commandScope{Type: "chat", ChatID: scope}
+	}
+
+	_, err := c.call(ctx, "setMyCommands", req)
+	return err
+}
+
+// Command is one entry in the menu Telegram shows beside the text box.
+type Command struct {
+	Name        string
+	Description string
 }
 
 func (c *Client) call(ctx context.Context, method string, payload any) (json.RawMessage, error) {

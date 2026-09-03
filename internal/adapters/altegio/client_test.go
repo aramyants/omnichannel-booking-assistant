@@ -789,3 +789,56 @@ func TestCancellationStopsWaiting(t *testing.T) {
 		t.Error("ListStaff() succeeded despite the deadline")
 	}
 }
+
+// TestAMalformedRequestIsNotATakenSlot is the fix for the assistant telling
+// customers their time had gone when nothing of the kind had happened.
+//
+// Altegio answers a booking it cannot accept and a booking it cannot parse with
+// the same status. Only the second names the fields it objected to, and only
+// the first means somebody else took the time.
+func TestAMalformedRequestIsNotATakenSlot(t *testing.T) {
+	srv, _, _ := serveFixture(t, "error_field_invalid.json", http.StatusUnprocessableEntity)
+	client := newTestClient(t, srv)
+
+	err := client.Check(t.Context(), validRequest().Selection())
+
+	if errors.Is(err, booking.ErrSlotUnavailable) {
+		t.Errorf("error = %v, want a malformed request not to read as a taken slot", err)
+	}
+	if !errors.Is(err, booking.ErrRejected) {
+		t.Errorf("error = %v, want ErrRejected", err)
+	}
+	if !strings.Contains(err.Error(), "email") {
+		t.Errorf("error %v does not name the field Altegio objected to", err)
+	}
+}
+
+// TestACreatedBookingIsNotInventedFromAMalformedRequest is the same distinction
+// where it costs the most: at the moment of booking, where reporting a taken
+// slot sends the customer away to choose a time that was free all along.
+func TestACreatedBookingIsNotInventedFromAMalformedRequest(t *testing.T) {
+	srv, _, _ := serveFixture(t, "error_field_invalid.json", http.StatusUnprocessableEntity)
+	client := newTestClient(t, srv)
+
+	_, err := client.Create(t.Context(), validRequest())
+
+	if errors.Is(err, booking.ErrSlotUnavailable) {
+		t.Errorf("error = %v, want a malformed request not to read as a taken slot", err)
+	}
+	if !errors.Is(err, booking.ErrRejected) {
+		t.Errorf("error = %v, want ErrRejected", err)
+	}
+}
+
+func TestRejectedFieldsIgnoresAnythingButAPopulatedObject(t *testing.T) {
+	for _, raw := range []string{"", "null", "[]", "{}", `"nope"`} {
+		if fields := rejectedFields([]byte(raw)); len(fields) != 0 {
+			t.Errorf("rejectedFields(%q) = %v, want none", raw, fields)
+		}
+	}
+
+	fields := rejectedFields([]byte(`{"phone":["required"],"email":["required"]}`))
+	if len(fields) != 2 || fields[0] != "email" || fields[1] != "phone" {
+		t.Errorf("rejectedFields() = %v, want the names sorted", fields)
+	}
+}

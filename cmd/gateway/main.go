@@ -213,6 +213,9 @@ func run() error {
 			// Turns the staff chat from a noticeboard into a desk: replying to
 			// a notification reaches the customer it names.
 			telegram.WithStaffDesk(assistantService, store, telegramClient, cfg.Telegram.StaffChatID),
+			// Lets a pressed button be acknowledged and an answered question
+			// stop being answerable.
+			telegram.WithButtons(telegramClient),
 		)
 	}
 
@@ -234,6 +237,7 @@ func run() error {
 	// delivery arriving in the gap waits in the backlog rather than failing.
 	if telegramClient != nil {
 		registerTelegramWebhook(ctx, telegramClient, cfg, logger)
+		publishTelegramMenu(ctx, telegramClient, cfg, logger)
 	}
 
 	logger.Info("gateway starting",
@@ -268,6 +272,44 @@ func registerTelegramWebhook(ctx context.Context, client *telegram.Client, cfg c
 	}
 
 	logger.Info("registered the telegram webhook", "callback_url", callbackURL)
+}
+
+// publishTelegramMenu tells Telegram what to show beside the text box.
+//
+// It is published on every start for the same reason the webhook is: the menu
+// belongs to the deployment, so it is stated rather than assumed, and a menu
+// left behind by an older version cannot outlive it.
+//
+// A failure is logged rather than fatal. A menu is a convenience, and refusing
+// to serve customers because a hint could not be published would be an odd
+// trade.
+func publishTelegramMenu(ctx context.Context, client *telegram.Client, cfg config.Config, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(ctx, webhookRegistrationTimeout)
+	defer cancel()
+
+	commands := make([]telegram.Command, 0, len(assistant.Menu()))
+	for _, entry := range assistant.Menu() {
+		commands = append(commands, telegram.Command{
+			Name:        entry.Name,
+			Description: entry.Description,
+		})
+	}
+
+	if err := client.SetCommands(ctx, "", commands); err != nil {
+		logger.Error("could not publish the telegram command menu", "error", err)
+		return
+	}
+
+	// The staff group gets no menu at all. Everything a colleague does there is
+	// a button on the notification it belongs to, and a customer menu offering
+	// to book them an appointment would only be in the way.
+	if cfg.Telegram.StaffChatID != "" {
+		if err := client.SetCommands(ctx, cfg.Telegram.StaffChatID, nil); err != nil {
+			logger.Warn("could not clear the command menu in the staff chat", "error", err)
+		}
+	}
+
+	logger.Info("published the telegram command menu", "commands", len(commands))
 }
 
 // appStore is everything the assistant needs to persist. Both the in-process

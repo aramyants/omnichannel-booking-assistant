@@ -1,0 +1,10 @@
+{
+  "success": false,
+  "data": null,
+  "meta": {
+    "message": "The given data was invalid."
+  },
+  "errors": {
+    "email": ["The email field is required."]
+  }
+}

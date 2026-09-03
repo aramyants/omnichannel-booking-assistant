@@ -41,6 +41,9 @@ func (c *Client) Check(ctx context.Context, selection booking.Selection) error {
 	}
 
 	// A rejection of a well-formed request means the slot is no longer free.
+	// A refusal naming fields means this system built the request wrongly, and
+	// is deliberately not translated: it keeps ErrRejected and reaches the
+	// customer as a failure rather than as a time somebody else has taken.
 	// Transport failures keep their own meaning so the caller can retry them.
 	if errors.Is(err, errRequestRejected) {
 		return fmt.Errorf("%w: %w", booking.ErrSlotUnavailable, err)

@@ -33,6 +33,18 @@ type StaffDesk interface {
 	RunStaffCommand(ctx context.Context, command assistant.StaffCommand, conversationID string) (string, error)
 }
 
+// Buttons is what the handler needs to keep an inline keyboard honest.
+//
+// Telegram shows a spinner on a pressed button and then, a few seconds later,
+// an error the customer can see, so every press has to be acknowledged whether
+// or not it can be acted on. A keyboard also has to be taken away once its
+// question has been answered, or a customer can scroll back a week and tap a
+// time that was free then.
+type Buttons interface {
+	AnswerCallback(ctx context.Context, callbackQueryID, text string) error
+	ClearKeyboard(ctx context.Context, chatID string, messageID int64) error
+}
+
 type Handler struct {
 	webhook     *Webhook
 	messages    MessageHandler
@@ -46,6 +58,9 @@ type Handler struct {
 
 	// staffReplies posts acknowledgements back into the staff chat.
 	staffReplies func(ctx context.Context, text string) error
+
+	// buttons is set when the handler may answer and retire inline keyboards.
+	buttons Buttons
 }
 
 // HandlerOption customises a Handler.
@@ -74,6 +89,14 @@ func WithStaffDesk(desk StaffDesk, threads StaffThreads, client *Client, chatID 
 			})
 		}
 	}
+}
+
+// WithButtons lets the handler act on the inline keyboards it sends.
+//
+// Without it the buttons are still drawn and still deliver a press, but the
+// press is never acknowledged, so the customer watches it spin and then fail.
+func WithButtons(buttons Buttons) HandlerOption {
+	return func(h *Handler) { h.buttons = buttons }
 }
 
 // NewHandler returns an http.Handler for the Telegram webhook endpoint.
@@ -111,6 +134,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logger.ErrorContext(ctx, "could not read a telegram delivery", "error", err)
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	// A button press is not a message and arrives on its own, so it is looked
+	// for first. It becomes a message immediately afterwards: what the customer
+	// tapped enters the conversation exactly as though they had typed it.
+	callback, err := h.webhook.ParseCallback(body)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "discarded an unreadable telegram button press",
+			"error", err, "bytes", len(body))
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if callback != nil {
+		if !h.handleCallback(ctx, *callback) {
+			http.Error(w, "processing failed", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
@@ -171,7 +213,8 @@ func (h *Handler) handleStaffMessage(ctx context.Context, body []byte) {
 	// are left alone.
 	if staff.ReplyToMessageID == "" {
 		if staff.IsCommand() {
-			h.tellStaff(ctx, "Reply to the notification for the customer you mean, then send the command.")
+			h.tellStaff(ctx, "Use the buttons under the customer's notification. "+
+				"To answer them instead, reply to that notification and write your message.")
 		}
 		return
 	}
@@ -231,6 +274,114 @@ func (h *Handler) runStaffCommand(ctx context.Context, staff StaffMessage, conve
 
 	default:
 		h.tellStaff(ctx, describeUnknownCommand(staff.Command))
+	}
+}
+
+// handleCallback acts on a button press, reporting whether the delivery may be
+// answered 200.
+//
+// The press is acknowledged before anything else is attempted. Telegram spins
+// the button until that arrives and then shows the customer a failure, and the
+// work below can easily outlast its patience.
+func (h *Handler) handleCallback(ctx context.Context, callback Callback) bool {
+	if action, ok := parseStaffAction(callback.Data); ok {
+		h.acknowledge(ctx, callback.QueryID, "")
+		h.handleStaffAction(ctx, callback, action)
+		return true
+	}
+
+	// Anything else pressed in the staff chat is a keyboard from an older
+	// deployment, or one this system did not send. Feeding it to the assistant
+	// would answer the staff group as though it were a customer.
+	if h.staffChatID != "" && callback.ChatID == h.staffChatID {
+		h.logger.InfoContext(ctx, "ignored a staff-chat button that names no action",
+			"data", callback.Data)
+		h.acknowledge(ctx, callback.QueryID, "")
+		return true
+	}
+
+	if !callback.Understood {
+		// A keyboard from a message this deployment did not send, or one
+		// Telegram no longer describes. Saying so beats a button that quietly
+		// does nothing.
+		h.logger.InfoContext(ctx, "could not read which button was pressed",
+			"chat_id", callback.ChatID, "data", callback.Data)
+		h.acknowledge(ctx, callback.QueryID,
+			"That menu is no longer available. Please type your answer instead.")
+		return true
+	}
+
+	h.acknowledge(ctx, callback.QueryID, "")
+
+	// The question has been answered, so it stops being answerable. Without
+	// this a customer can scroll back and tap a time that was free last week.
+	h.clearKeyboard(ctx, callback.ChatID, callback.MessageID)
+
+	if err := h.messages.Handle(ctx, callback.Envelope); err != nil {
+		if errors.Is(err, context.Canceled) {
+			h.logger.WarnContext(ctx, "abandoned a telegram button press mid-flight",
+				"dedupe_key", callback.Envelope.DedupeKey())
+		} else {
+			h.logger.ErrorContext(ctx, "could not process a telegram button press",
+				"error", err, "dedupe_key", callback.Envelope.DedupeKey())
+		}
+		return false
+	}
+	return true
+}
+
+// handleStaffAction applies a button a colleague pressed on a notification.
+//
+// Nothing here fails the delivery: as with anything else said in a staff group,
+// having Telegram redeliver it forever would help nobody.
+func (h *Handler) handleStaffAction(ctx context.Context, callback Callback, action staffAction) {
+	if h.desk == nil {
+		h.logger.WarnContext(ctx, "ignored a staff button: no desk is configured")
+		return
+	}
+
+	// The buttons carry a conversation and change who answers it, so a press
+	// is only honoured where the business is the one pressing.
+	if h.staffChatID == "" || callback.ChatID != h.staffChatID {
+		h.logger.WarnContext(ctx, "refused a staff button pressed outside the staff chat",
+			"chat_id", callback.ChatID)
+		return
+	}
+
+	answer, err := h.desk.RunStaffCommand(ctx,
+		assistant.StaffCommand(action.Command), action.ConversationID)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "could not apply a staff button",
+			"error", err, "command", action.Command, "conversation_id", action.ConversationID)
+		h.tellStaff(ctx, "That did not work: "+err.Error())
+		return
+	}
+
+	// The keyboard stays. The two buttons are a switch rather than a question:
+	// whoever took a conversation hands it back with the other one later.
+	h.tellStaff(ctx, answer)
+}
+
+// acknowledge answers a button press. Failure is logged and nothing else: the
+// press has already been acted on, and the worst outcome is a spinner.
+func (h *Handler) acknowledge(ctx context.Context, queryID, text string) {
+	if h.buttons == nil || queryID == "" {
+		return
+	}
+	if err := h.buttons.AnswerCallback(ctx, queryID, text); err != nil {
+		h.logger.WarnContext(ctx, "could not acknowledge a telegram button press", "error", err)
+	}
+}
+
+// clearKeyboard takes the buttons away from a message that has been answered.
+func (h *Handler) clearKeyboard(ctx context.Context, chatID string, messageID int64) {
+	if h.buttons == nil || chatID == "" || messageID == 0 {
+		return
+	}
+	if err := h.buttons.ClearKeyboard(ctx, chatID, messageID); err != nil {
+		// Telegram refuses this once a message is old, which is normal and not
+		// worth an error: the press it belonged to was already handled.
+		h.logger.DebugContext(ctx, "could not remove an answered keyboard", "error", err)
 	}
 }
 

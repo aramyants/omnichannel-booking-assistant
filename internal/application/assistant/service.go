@@ -322,6 +322,10 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 		conv:              &conv,
 		customer:          cust,
 		incomingMessageID: msg.ExternalMessageID,
+
+		// Settled once, from what has been said so far, and used for the few
+		// phrases this system writes itself rather than asking the model for.
+		language: conversationLanguage(history, msg.Sender.Language),
 	}
 
 	text, err := s.reply(ctx, sess, msg, history)
@@ -355,7 +359,10 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 		})
 	}
 
-	reply := msg.Reply(text)
+	// Whatever the exchange ended up offering travels with the reply. A channel
+	// with buttons draws them; one without ignores them, and the reply names
+	// the same options in words either way.
+	reply := msg.Reply(text).WithChoices(sess.buttons(text))
 	if err := sender.Send(ctx, reply); err != nil {
 		return fmt.Errorf("send the reply: %w", err)
 	}
@@ -487,6 +494,13 @@ func (s *Service) reply(
 ) (string, error) {
 	conv, cust := sess.conv, sess.customer
 
+	// Some menu entries are answered here rather than by the model: they say
+	// the same thing every time, and answering them from a table means they
+	// arrive instantly and keep working when nothing else does.
+	if text, ok := s.menuReply(sess, msg); ok {
+		return text, nil
+	}
+
 	if s.ai == nil {
 		return s.compose(msg, cust), nil
 	}
@@ -504,7 +518,7 @@ func (s *Service) reply(
 			// The customer gets an honest answer and a colleague picks it up.
 			s.logger.ErrorContext(ctx, "the ai provider failed",
 				"error", err, "conversation_id", conv.ID, "model", s.ai.Model())
-			return s.apologise(ctx, conv)
+			return s.apologise(ctx, sess)
 		}
 
 		s.logger.InfoContext(ctx, "completed an ai turn",
@@ -520,7 +534,7 @@ func (s *Service) reply(
 			if resp.Text == "" {
 				s.logger.WarnContext(ctx, "the model returned nothing to say",
 					"conversation_id", conv.ID)
-				return s.apologise(ctx, conv)
+				return s.apologise(ctx, sess)
 			}
 			return resp.Text, nil
 		}
@@ -538,7 +552,22 @@ func (s *Service) reply(
 	// the customer, so a colleague takes it rather than the loop continuing.
 	s.logger.WarnContext(ctx, "gave up after too many tool rounds",
 		"conversation_id", conv.ID, "rounds", maxToolRounds)
-	return s.apologise(ctx, conv)
+	return s.apologise(ctx, sess)
+}
+
+// menuReply answers the menu entries that do not need a model.
+//
+// Opening the chat is the first thing anybody does and the one thing that must
+// never be slow, wrong or missing, so its answer is written here and shipped
+// with the code rather than asked for at the moment it is needed.
+func (s *Service) menuReply(sess *session, msg messaging.Envelope) (string, bool) {
+	switch commandIn(msg.Content.Text) {
+	case "start", "help":
+		sess.offerFixed(offerMenu)
+		return s.greeting(sess.language), true
+	default:
+		return "", false
+	}
 }
 
 // apologise is the reply when the assistant itself failed: the model was
@@ -549,12 +578,16 @@ func (s *Service) reply(
 // life, and that is exactly what handing over would do: every later message
 // would be silently swallowed. Leaving the state alone means the next message
 // is attempted normally, which is usually all that is needed.
-func (s *Service) apologise(ctx context.Context, conv *conversation.Conversation) (string, error) {
+func (s *Service) apologise(ctx context.Context, sess *session) (string, error) {
 	s.logger.WarnContext(ctx, "answering with an apology after an assistant failure",
-		"conversation_id", conv.ID, "conversation_state", string(conv.State))
+		"conversation_id", sess.conv.ID, "conversation_state", string(sess.conv.State))
 
-	return "Sorry, I could not check that just now. Please try again in a moment, " +
-		"or say \"person\" and a colleague will take over.", nil
+	// The one button worth showing when this system has just failed: somebody
+	// who has not. Written here in the customer's language because the part of
+	// the system that would normally do the writing is the part that failed.
+	sess.offerFixed(offerHelp)
+
+	return speak(sess.language).apology, nil
 }
 
 // compose is the reply used when no model is configured.
