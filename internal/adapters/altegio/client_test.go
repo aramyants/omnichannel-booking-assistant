@@ -350,6 +350,40 @@ func validRequest() booking.Request {
 	}
 }
 
+// TestCreateSendsTheFieldNamesAltegioActuallyWants guards two differences
+// between the published documentation and the live API, each of which made
+// every booking fail with a 422 that named neither the cause nor the fix.
+//
+// The name field is "fullname", one word, not "full_name". The email field must
+// be present even when empty, so it carries no omitempty.
+func TestCreateSendsTheFieldNamesAltegioActuallyWants(t *testing.T) {
+	srv, _, gotBody := serveFixture(t, "book_record.json", http.StatusOK)
+	client := newTestClient(t, srv)
+
+	// A customer who gave no email address, which is the usual case.
+	req := validRequest()
+	req.Email = ""
+
+	if _, err := client.Create(t.Context(), req); err != nil {
+		t.Fatalf("Create() returned error: %v", err)
+	}
+
+	var sent map[string]any
+	if err := json.Unmarshal(*gotBody, &sent); err != nil {
+		t.Fatalf("decode sent body: %v", err)
+	}
+
+	if _, wrong := sent["full_name"]; wrong {
+		t.Error("sent full_name, which the live API rejects; it wants fullname")
+	}
+	if got, ok := sent["fullname"]; !ok || got != "Anna Petrosyan" {
+		t.Errorf("fullname = %v, want the customer's name", sent["fullname"])
+	}
+	if _, present := sent["email"]; !present {
+		t.Error("email was omitted; the live API refuses the booking without the field")
+	}
+}
+
 func TestCreateSendsTheIdempotencyKey(t *testing.T) {
 	srv, gotReq, gotBody := serveFixture(t, "book_record.json", http.StatusOK)
 	client := newTestClient(t, srv)
