@@ -207,6 +207,12 @@ fi
 
 VERSION="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
 
+# The revision travels as an environment variable rather than a build argument.
+# A source deploy builds through Cloud Build, which offers no way to pass one to
+# the Dockerfile, so the binary's link-time stamp stays "dev" however this is
+# invoked and every log line would claim to be an unreleased build.
+ENV_VARS+=",BUILD_VERSION=${VERSION}"
+
 say "Building and deploying revision ${VERSION}"
 # --allow-unauthenticated is required: messaging providers call the webhook
 # endpoints and cannot present a Google identity. The endpoints authenticate

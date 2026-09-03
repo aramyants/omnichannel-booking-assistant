@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -40,6 +41,21 @@ import (
 // -ldflags "-X main.version=<revision>" and stays "dev" for local builds.
 var version = "dev"
 
+// buildVersion is the revision to log and report on the health endpoint.
+//
+// A source deploy builds the container through Cloud Build, which offers no way
+// to pass a Docker build argument, so the link-time stamp above is always "dev"
+// there no matter what the deploy script worked out. BUILD_VERSION carries the
+// revision as an ordinary environment variable instead and wins when it is set.
+// Builds that can stamp the binary, such as the Makefile's, still do and set
+// nothing, so neither path has to know about the other.
+func buildVersion() string {
+	if stamped := strings.TrimSpace(os.Getenv("BUILD_VERSION")); stamped != "" {
+		return stamped
+	}
+	return version
+}
+
 // webhookRegistrationTimeout bounds the calls that tell providers where to
 // deliver updates. They run during startup, so they must not be able to hang it.
 const webhookRegistrationTimeout = 15 * time.Second
@@ -69,7 +85,7 @@ func run() error {
 		return err
 	}
 
-	logger := logging.New(os.Stdout, cfg.LogLevel).With("version", version)
+	logger := logging.New(os.Stdout, cfg.LogLevel).With("version", buildVersion())
 
 	// Replace the bootstrap logger with the configured one. Everything that
 	// reaches for slog directly, including the standard library's log package,
@@ -81,7 +97,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	gw := &gateway{logger: logger, version: version}
+	gw := &gateway{logger: logger, version: buildVersion()}
 	senders := make(map[messaging.Provider]assistant.Sender)
 
 	var telegramClient *telegram.Client
