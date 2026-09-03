@@ -324,8 +324,19 @@ func TestModelFailureDoesNotMuteTheAssistant(t *testing.T) {
 	if len(sender.sent) != 1 {
 		t.Fatalf("the customer got %d replies, want 1", len(sender.sent))
 	}
-	if !strings.Contains(sender.sent[0].Text, "try again") {
-		t.Errorf("reply = %q, want it to invite another attempt", sender.sent[0].Text)
+	// The apology is one of the few sentences this system writes itself, so it
+	// is written in the customer's language rather than in the code's. This
+	// customer's app is set to Armenian and they have written nothing that says
+	// otherwise.
+	if want := speak(languageArmenian).apology; sender.sent[0].Text != want {
+		t.Errorf("reply = %q, want %q", sender.sent[0].Text, want)
+	}
+
+	// And it offers the one thing worth offering when the assistant has just
+	// failed: somebody who has not.
+	if choices := sender.sent[0].Choices; len(choices) != 1 ||
+		choices[0].Label != speak(languageArmenian).talkToAPerson {
+		t.Errorf("choices = %v, want a single offer of a person", sender.sent[0].Choices)
 	}
 
 	if conv := openConversation(t, store); conv.State != conversation.StateAssistantActive {

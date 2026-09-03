@@ -69,6 +69,91 @@ func (w *Webhook) Parse(body []byte) ([]messaging.Envelope, error) {
 	return []messaging.Envelope{envelope}, nil
 }
 
+// Callback is one press of a button this system offered.
+//
+// It is not a message, but it is an answer, so it becomes one: the label the
+// customer tapped is fed into the conversation exactly as though they had typed
+// it. Nothing above this package has to know a button was involved.
+type Callback struct {
+	// QueryID identifies the press. Telegram shows a spinner on the button
+	// until it is acknowledged with this, and it is unique per press, which is
+	// also what makes a redelivered press safe to deduplicate.
+	QueryID string
+
+	// ChatID and MessageID address the message the button sits under, so the
+	// keyboard can be taken away once it has been used.
+	ChatID    string
+	MessageID int64
+
+	// Data is what the button carried: a position in the keyboard for a
+	// customer's answer, or an action and a conversation for a colleague's.
+	Data string
+
+	// Envelope is the press expressed as a customer message. It is valid only
+	// when Understood is true.
+	Envelope messaging.Envelope
+
+	// Understood reports whether the pressed button could be read back. A
+	// keyboard Telegram no longer sends the markup for, or one left over from a
+	// message this deployment did not send, cannot be, and the customer is told
+	// so rather than left with a button that does nothing.
+	Understood bool
+}
+
+// ParseCallback reads a button press out of a delivery, reporting nil for a
+// delivery that is not one.
+func (w *Webhook) ParseCallback(body []byte) (*Callback, error) {
+	var u update
+	if err := json.Unmarshal(body, &u); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrMalformedUpdate, err)
+	}
+	if u.CallbackQuery == nil {
+		return nil, nil
+	}
+
+	query := u.CallbackQuery
+	if query.ID == "" || query.From == nil || query.Message == nil || query.Message.Chat == nil {
+		return nil, fmt.Errorf("%w: callback query is missing its sender or message", ErrMalformedUpdate)
+	}
+
+	now := w.now().UTC()
+	callback := &Callback{
+		QueryID:   query.ID,
+		ChatID:    strconv.FormatInt(query.Message.Chat.ID, 10),
+		MessageID: query.Message.MessageID,
+		Data:      query.Data,
+	}
+
+	label, ok := labelForCallback(query.Message.ReplyMarkup, query.Data)
+	if !ok {
+		return callback, nil
+	}
+
+	envelope := messaging.Envelope{
+		Provider: messaging.ProviderTelegram,
+		// The query id, not the message id: the message is the assistant's own
+		// and would collide with itself on every press of the same keyboard.
+		ExternalMessageID: "callback:" + query.ID,
+		ExternalUserID:    strconv.FormatInt(query.From.ID, 10),
+		ExternalThreadID:  callback.ChatID,
+		SentAt:            now,
+		ReceivedAt:        now,
+		Sender: messaging.Sender{
+			DisplayName: displayName(query.From),
+			Language:    query.From.LanguageCode,
+			Username:    query.From.Username,
+		},
+		Content: messaging.Content{Type: messaging.ContentTypeText, Text: label},
+	}
+	if err := envelope.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrMalformedUpdate, err)
+	}
+
+	callback.Envelope = envelope
+	callback.Understood = true
+	return callback, nil
+}
+
 func (w *Webhook) toEnvelope(m *message) (messaging.Envelope, error) {
 	if m.Chat == nil {
 		return messaging.Envelope{}, fmt.Errorf("%w: message has no chat", ErrMalformedUpdate)

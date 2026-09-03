@@ -7,7 +7,6 @@ import (
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/assistant"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
-	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 )
 
 // staffTranscriptLines is how much of the conversation is quoted to the
@@ -51,11 +50,8 @@ func NewStaffNotifier(client *Client, chatID string, threads StaffThreads) (*Sta
 
 // NotifyHandoff tells the staff chat that a customer needs a person.
 func (n *StaffNotifier) NotifyHandoff(ctx context.Context, notice assistant.HandoffNotice) error {
-	messageID, err := n.client.SendReturningID(ctx, messaging.Outgoing{
-		Provider:         messaging.ProviderTelegram,
-		ExternalThreadID: n.chatID,
-		Text:             formatHandoff(notice),
-	})
+	messageID, err := n.client.sendWithMarkup(ctx, n.chatID,
+		formatHandoff(notice), handoffButtons(notice.ConversationID))
 	if err != nil {
 		return err
 	}
@@ -132,12 +128,37 @@ func formatHandoff(notice assistant.HandoffNotice) string {
 
 	// The assistant stays quiet until somebody replies or the timeout passes,
 	// so the colleague needs to know the clock is running.
+	//
+	// Only the reply is explained in words. The two things a colleague does
+	// without writing anything are buttons underneath instead, because an
+	// instruction that has to be typed correctly, on a phone, in a busy group
+	// chat, is an instruction that gets typed onto the wrong message.
 	text += "\nThe assistant has stopped replying to this customer." +
-		"\nReply to this message and the customer receives it, signed with your name." +
-		"\nSend /resume to hand the conversation back to the assistant." +
-		fmt.Sprintf("\n\nConversation: %s", notice.ConversationID)
+		"\nReply to this message and the customer receives it, signed with your name."
 
 	return text
+}
+
+// handoffButtons are the two things a colleague does to a notification.
+//
+// The conversation travels in the callback data rather than being inferred from
+// what the press was a reply to, so a button works wherever it is tapped and
+// whatever else has been posted in the chat since.
+func handoffButtons(conversationID string) *inlineKeyboardMarkup {
+	if conversationID == "" {
+		return nil
+	}
+
+	return &inlineKeyboardMarkup{Keyboard: [][]inlineKeyboardButton{{
+		{
+			Text:         "I am taking this one",
+			CallbackData: staffActionData(string(assistant.CommandTake), conversationID),
+		},
+		{
+			Text:         "Back to the assistant",
+			CallbackData: staffActionData(string(assistant.CommandResume), conversationID),
+		},
+	}}}
 }
 
 // formatTranscript renders the tail of the conversation, oldest first.

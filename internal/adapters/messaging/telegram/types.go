@@ -16,6 +16,23 @@ type update struct {
 	UpdateID      int64    `json:"update_id"`
 	Message       *message `json:"message"`
 	EditedMessage *message `json:"edited_message"`
+
+	// CallbackQuery is a button press. It arrives instead of a message, and
+	// carries the message the button was attached to, which is how the tapped
+	// button is turned back into the words it stood for.
+	CallbackQuery *callbackQuery `json:"callback_query"`
+}
+
+// callbackQuery is one press of an inline-keyboard button.
+type callbackQuery struct {
+	ID      string   `json:"id"`
+	From    *user    `json:"from"`
+	Message *message `json:"message"`
+
+	// Data is what the button carried. Telegram caps it at 64 bytes, which no
+	// service name or Armenian sentence fits inside, so it holds a position in
+	// the keyboard rather than the label itself.
+	Data string `json:"data"`
 }
 
 type message struct {
@@ -30,6 +47,11 @@ type message struct {
 	// chat it is how a colleague's reply is tied to the notification, and so
 	// to the customer it concerns.
 	ReplyToMessage *message `json:"reply_to_message"`
+
+	// ReplyMarkup is the keyboard shown under this message. Telegram sends it
+	// back with every callback query, which is what makes a button press
+	// resolvable to its label without this system storing the keyboard it sent.
+	ReplyMarkup *inlineKeyboardMarkup `json:"reply_markup"`
 
 	// Attachment members, declared only so an unreadable message can be
 	// described accurately to the customer rather than silently dropped.
@@ -83,6 +105,65 @@ type contact struct {
 type sendMessageRequest struct {
 	ChatID string `json:"chat_id"`
 	Text   string `json:"text"`
+
+	// ReplyMarkup is omitted when there is nothing to offer, because sending
+	// an empty keyboard leaves a blank strip under the message.
+	ReplyMarkup *inlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
+
+// inlineKeyboardMarkup is a grid of buttons shown under a message.
+type inlineKeyboardMarkup struct {
+	Keyboard [][]inlineKeyboardButton `json:"inline_keyboard"`
+}
+
+type inlineKeyboardButton struct {
+	Text string `json:"text"`
+
+	// CallbackData is what Telegram sends back when the button is pressed.
+	CallbackData string `json:"callback_data"`
+}
+
+// answerCallbackQueryRequest acknowledges a button press.
+//
+// Telegram shows a loading indicator on the button until this is called, and
+// gives up after a few seconds with an error the customer can see. It is not
+// optional politeness.
+type answerCallbackQueryRequest struct {
+	CallbackQueryID string `json:"callback_query_id"`
+	Text            string `json:"text,omitempty"`
+}
+
+// editMessageReplyMarkupRequest replaces the keyboard under a message. Sent
+// with no markup it removes one, which is how an answered question stops being
+// answerable a second time.
+type editMessageReplyMarkupRequest struct {
+	ChatID      string                `json:"chat_id"`
+	MessageID   int64                 `json:"message_id"`
+	ReplyMarkup *inlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
+
+// botCommand is one entry in the menu Telegram shows beside the text box.
+type botCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
+type setMyCommandsRequest struct {
+	Commands []botCommand `json:"commands"`
+
+	// LanguageCode scopes the menu to customers whose app is set to that
+	// language. Empty is the default menu, shown to everyone else.
+	LanguageCode string `json:"language_code,omitempty"`
+
+	// Scope keeps the customer menu out of the staff group, which needs a
+	// different set of commands entirely.
+	Scope *commandScope `json:"scope,omitempty"`
+}
+
+// commandScope names where a command menu applies.
+type commandScope struct {
+	Type   string `json:"type"`
+	ChatID string `json:"chat_id,omitempty"`
 }
 
 // apiResponse is the envelope Telegram wraps every method result in.

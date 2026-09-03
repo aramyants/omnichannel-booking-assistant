@@ -1,0 +1,30 @@
+{
+  "update_id": 758345129,
+  "callback_query": {
+    "id": "4382042044176398",
+    "from": {
+      "id": 219847362,
+      "is_bot": false,
+      "first_name": "Anna",
+      "language_code": "hy"
+    },
+    "message": {
+      "message_id": 4128,
+      "from": { "id": 7712345678, "is_bot": true, "first_name": "E-motion" },
+      "chat": { "id": 219847362, "type": "private" },
+      "date": 1756728100,
+      "text": "Which time suits you?",
+      "reply_markup": {
+        "inline_keyboard": [
+          [
+            { "text": "15:30", "callback_data": "c:0" },
+            { "text": "16:00", "callback_data": "c:1" },
+            { "text": "16:30", "callback_data": "c:2" }
+          ]
+        ]
+      }
+    },
+    "chat_instance": "-3424222437402620",
+    "data": "c:1"
+  }
+}

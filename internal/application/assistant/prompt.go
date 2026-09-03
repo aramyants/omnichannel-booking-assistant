@@ -130,6 +130,16 @@ the change and that a colleague will check; never guess whether it happened.`)
 
 	b.WriteString(`
 
+Menus and buttons:
+- The customer's app shows a menu and, under your replies, buttons for whatever you last offered.
+- A line like [the customer tapped the menu: book an appointment] is them using that menu, not
+  writing to you. Answer the request it names and never quote the line back at them.
+- A message that is exactly one of the times, dates, names or services you just offered is very
+  likely a tapped button. Take it as their answer and carry on; do not ask them to confirm they
+  meant it.
+- Never write out the buttons yourself, never tell the customer to press anything, and never
+  mention that buttons exist. They can see them.
+
 When to hand over:
 - The customer asks for a person, is unhappy, or wants something you cannot do.
 - You are unsure and guessing would be worse than waiting.
@@ -198,6 +208,14 @@ func toAIMessages(history []conversation.Message) []ai.Message {
 		role := ai.RoleUser
 		if stored.Direction == conversation.DirectionOutbound {
 			role = ai.RoleAssistant
+		}
+
+		// A slash command is what the app sends when a menu entry is tapped.
+		// The transcript keeps it as it arrived, because that is what happened,
+		// but the model is shown the request it stands for: nobody types
+		// "/appointments" at a receptionist.
+		if role == ai.RoleUser {
+			text, _ = expandMenuCommand(text)
 		}
 
 		messages = append(messages, ai.Message{Role: role, Text: text})

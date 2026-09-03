@@ -1,0 +1,36 @@
+{
+  "update_id": 758345130,
+  "callback_query": {
+    "id": "4382042044176399",
+    "from": {
+      "id": 447112233,
+      "is_bot": false,
+      "first_name": "Garik",
+      "last_name": "Grigoryan",
+      "language_code": "hy"
+    },
+    "message": {
+      "message_id": 91,
+      "from": { "id": 7712345678, "is_bot": true, "first_name": "E-motion" },
+      "chat": { "id": -1001234567890, "type": "supergroup" },
+      "date": 1756728200,
+      "text": "A customer is waiting for a person",
+      "reply_markup": {
+        "inline_keyboard": [
+          [
+            {
+              "text": "I am taking this one",
+              "callback_data": "s:take:01a062bc-3adb-722a-b7a8-eaf79378f0f6"
+            },
+            {
+              "text": "Back to the assistant",
+              "callback_data": "s:resume:01a062bc-3adb-722a-b7a8-eaf79378f0f6"
+            }
+          ]
+        ]
+      }
+    },
+    "chat_instance": "-3424222437402621",
+    "data": "s:resume:01a062bc-3adb-722a-b7a8-eaf79378f0f6"
+  }
+}

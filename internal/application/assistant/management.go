@@ -47,6 +47,8 @@ func (t *toolset) prepareCancellation(
 		PreparedFromMessageID: s.incomingMessageID,
 	}
 
+	s.offerFixed(offerChangeConfirmation)
+
 	return encode(map[string]any{
 		"prepared":  true,
 		"reference": b.ExternalID,
@@ -94,6 +96,7 @@ func (t *toolset) confirmCancellation(ctx context.Context, s *session) (string, 
 	// into a message claiming it failed.
 	b.Status = booking.StatusCancelled
 	s.conv.BookingChange = nil
+	s.offer()
 	t.recordChangedBooking(ctx, b, "cancelled")
 
 	return encode(map[string]any{
@@ -158,6 +161,8 @@ func (t *toolset) prepareReschedule(
 		PreparedFromMessageID: s.incomingMessageID,
 	}
 
+	s.offerFixed(offerChangeConfirmation)
+
 	return encode(map[string]any{
 		"prepared":  true,
 		"reference": b.ExternalID,
@@ -203,6 +208,7 @@ func (t *toolset) confirmReschedule(ctx context.Context, s *session) (string, er
 	switch {
 	case err == nil:
 		s.conv.BookingChange = nil
+		s.offer()
 		if t.recordChangedBooking(ctx, moved, "rescheduled") && t.reminders != nil {
 			if planErr := t.reminders.Plan(ctx, moved, *s.conv); planErr != nil {
 				t.logger.ErrorContext(ctx, "rescheduled an appointment but could not plan its reminder",
