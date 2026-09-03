@@ -155,6 +155,9 @@ store TELEGRAM_WEBHOOK_SECRET  telegram-webhook-secret  "${TELEGRAM_WEBHOOK_SECR
 store ALTEGIO_PARTNER_TOKEN    altegio-partner-token    "${ALTEGIO_PARTNER_TOKEN:-}"
 store ALTEGIO_USER_TOKEN       altegio-user-token       "${ALTEGIO_USER_TOKEN:-}"
 store OPENAI_API_KEY           openai-api-key           "${OPENAI_API_KEY:-}"
+store WHATSAPP_ACCESS_TOKEN    whatsapp-access-token    "${WHATSAPP_ACCESS_TOKEN:-}"
+store META_APP_SECRET          meta-app-secret          "${META_APP_SECRET:-}"
+store META_VERIFY_TOKEN        meta-verify-token        "${META_VERIFY_TOKEN:-}"
 
 SECRET_FLAGS=()
 if [[ ${#SECRET_MAPPINGS[@]} -gt 0 ]]; then
@@ -198,6 +201,8 @@ fi
 [[ -n "${ALTEGIO_TIMEZONE:-}" ]]  && ENV_VARS+=",ALTEGIO_TIMEZONE=${ALTEGIO_TIMEZONE}"
 [[ -n "${ALTEGIO_CURRENCY:-}" ]]  && ENV_VARS+=",ALTEGIO_CURRENCY=${ALTEGIO_CURRENCY}"
 [[ -n "${OPENAI_MODEL:-}" ]]      && ENV_VARS+=",OPENAI_MODEL=${OPENAI_MODEL}"
+[[ -n "${WHATSAPP_PHONE_NUMBER_ID:-}" ]] && ENV_VARS+=",WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}"
+[[ -n "${META_GRAPH_VERSION:-}" ]]       && ENV_VARS+=",META_GRAPH_VERSION=${META_GRAPH_VERSION}"
 [[ -n "${TELEGRAM_STAFF_CHAT_ID:-}" ]] && ENV_VARS+=",TELEGRAM_STAFF_CHAT_ID=${TELEGRAM_STAFF_CHAT_ID}"
 
 VERSION="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"

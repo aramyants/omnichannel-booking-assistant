@@ -22,6 +22,10 @@ const (
 	// two must not be allowed to drift apart.
 	TelegramWebhookPath = "/webhooks/telegram"
 
+	// WhatsAppWebhookPath serves both halves of Meta's contract: the GET that
+	// completes subscription and the signed POSTs that carry messages.
+	WhatsAppWebhookPath = "/webhooks/whatsapp"
+
 	// ReminderTaskPath receives authenticated Cloud Tasks wake-ups.
 	ReminderTaskPath = "/tasks/reminders"
 )
@@ -33,6 +37,7 @@ type gateway struct {
 	logger   *slog.Logger
 	version  string
 	telegram http.Handler
+	whatsapp http.Handler
 	reminder http.Handler
 }
 
@@ -42,6 +47,13 @@ func (g *gateway) routes() http.Handler {
 
 	if g.telegram != nil {
 		mux.Handle("POST "+TelegramWebhookPath, g.telegram)
+	}
+
+	// Meta subscribes with a GET and delivers with a POST, so both reach the
+	// same handler.
+	if g.whatsapp != nil {
+		mux.Handle("GET "+WhatsAppWebhookPath, g.whatsapp)
+		mux.Handle("POST "+WhatsAppWebhookPath, g.whatsapp)
 	}
 	if g.reminder != nil {
 		mux.Handle("POST "+ReminderTaskPath, g.reminder)
