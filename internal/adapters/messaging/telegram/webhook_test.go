@@ -59,7 +59,13 @@ func TestParseTextMessage(t *testing.T) {
 		ExternalThreadID:  "219847362",
 		SentAt:            time.Unix(1756728000, 0).UTC(),
 		ReceivedAt:        time.Unix(1756728500, 0).UTC(),
-		Sender:            messaging.Sender{DisplayName: "Anna Petrosyan", Language: "hy"},
+		Sender: messaging.Sender{
+			DisplayName: "Anna Petrosyan",
+			Language:    "hy",
+			// Carried so a colleague can open a chat with the customer after a
+			// handover, since Telegram gives out no phone number.
+			Username: "annap",
+		},
 		Content: messaging.Content{
 			Type: messaging.ContentTypeText,
 			Text: "Hi, can I book a haircut on Friday afternoon?",

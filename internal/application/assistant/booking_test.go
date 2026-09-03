@@ -11,9 +11,16 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 )
 
-// bookingDay is a date comfortably in the future relative to testNow.
+// bookingStart is the slot bookings are prepared against in these tests:
+// comfortably in the future, and one the stub calendar actually offers.
+func bookingStart() time.Time {
+	day := testNow.Add(48 * time.Hour)
+	return time.Date(day.Year(), day.Month(), day.Day(), 10, 0, 0, 0, time.UTC)
+}
+
+// bookingDay is that slot's calendar day.
 func bookingDay() string {
-	return testNow.Add(48 * time.Hour).Format("2006-01-02")
+	return bookingStart().Format("2006-01-02")
 }
 
 func prepareCall(id string) ai.Response {
@@ -141,6 +148,113 @@ func TestConfirmingBooksTheAppointment(t *testing.T) {
 	}
 	if len(booked) != 1 || booked[0].ExternalID != "998877" {
 		t.Errorf("stored bookings = %+v, want the new appointment", booked)
+	}
+}
+
+// TestBookingWorksWhenTheServiceHasNoDuration is the bug that broke every
+// booking on a live account.
+//
+// Altegio returns a null duration on the service unless the business fills the
+// field in, which is the normal state of a real salon. A draft with no duration
+// is refused, so every single booking failed at the last step, and the customer
+// was told the system could not prepare it.
+//
+// The length comes from the offered slot instead, which carries one even when
+// the service does not.
+func TestBookingWorksWhenTheServiceHasNoDuration(t *testing.T) {
+	sender := &fakeSender{}
+	scheduling := defaultScheduling()
+
+	// Exactly what the live account returns: a real service, no duration.
+	scheduling.services = []booking.Service{{
+		ID: "1001", Name: "Массаж", Category: "Motion Sport 115 min",
+		Duration: 0, PriceMin: 39000, PriceMax: 39000, Currency: "AMD",
+	}}
+
+	model := &scriptedAI{responses: []ai.Response{
+		prepareCall("call_1"),
+		textResponse("Shall I book it?"),
+	}}
+	svc, store := newAIService(t, model, scheduling, sender)
+
+	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+
+	output := resultOf(t, model, 1)
+	if strings.Contains(output, "error") {
+		t.Fatalf("preparing failed for a service with no duration: %s", output)
+	}
+
+	conv := openConversation(t, store)
+	if conv.Draft == nil {
+		t.Fatal("no draft was stored")
+	}
+	// 90 minutes is what the slot reports, not the service.
+	if conv.Draft.Duration != 90*time.Minute {
+		t.Errorf("duration = %s, want the slot's 1h30m", conv.Draft.Duration)
+	}
+}
+
+// TestPreparingRefusesATimeTheCalendarDoesNotOffer: looking the slot up to find
+// its length also proves the time is real, catching one the model invented or
+// one that has gone since it was listed.
+func TestPreparingRefusesATimeTheCalendarDoesNotOffer(t *testing.T) {
+	sender := &fakeSender{}
+	scheduling := defaultScheduling()
+
+	model := &scriptedAI{responses: []ai.Response{
+		toolResponse("call_1", toolPrepareBooking, `{
+			"service_id":"1001",
+			"staff_id":"501",
+			"date":"`+bookingDay()+`",
+			"time":"23:30",
+			"phone":"+374 11 223344",
+			"full_name":"Anna Petrosyan"
+		}`),
+		textResponse("That time is not free, sorry."),
+	}}
+	svc, store := newAIService(t, model, scheduling, sender)
+
+	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+
+	// Reported to the model as a slot that has gone, which is the actionable
+	// framing: offer the customer what is left.
+	if output := resultOf(t, model, 1); !strings.Contains(output, "just been taken") {
+		t.Errorf("result = %s, want the time refused", output)
+	}
+	if conv := openConversation(t, store); conv.Draft != nil {
+		t.Error("a draft was stored for a time the calendar does not offer")
+	}
+}
+
+// TestThePhoneIsKeptEvenWhenBookingFails: the number a customer gives is often
+// the only way to reach them, and it was being lost with the failed booking. A
+// colleague reading the handover notice then had no way to call back.
+func TestThePhoneIsKeptEvenWhenBookingFails(t *testing.T) {
+	sender := &fakeSender{}
+	staff := &recordingStaff{}
+	scheduling := defaultScheduling()
+	scheduling.checkErr = booking.ErrSlotUnavailable
+
+	model := &scriptedAI{responses: []ai.Response{
+		prepareCall("call_1"),
+		toolResponse("call_2", toolRequestHandoff, `{"reason":"booking failed"}`),
+		textResponse("A colleague will call you."),
+	}}
+	svc, _ := newAIServiceWithStaff(t, model, scheduling, sender, staff)
+
+	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+
+	if len(staff.notices) != 1 {
+		t.Fatalf("staff were told %d times, want once", len(staff.notices))
+	}
+	if got := staff.notices[0].Customer.Phone; got != "+37411223344" {
+		t.Errorf("phone in the handover notice = %q, want the number the customer gave", got)
 	}
 }
 

@@ -104,6 +104,7 @@ const noArguments = `{"type":"object","properties":{},"required":[],"additionalP
 type toolset struct {
 	scheduling Scheduling
 	bookings   BookingRepository
+	customers  CustomerRepository
 	reminders  ReminderPlanner
 	now        func() time.Time
 	location   *time.Location
@@ -487,6 +488,20 @@ func (t *toolset) prepareBooking(ctx context.Context, s *session, call ai.ToolCa
 		return "", fmt.Errorf("%s is not taking appointments at the moment", staff.Name)
 	}
 
+	// How long the appointment runs for comes from the offered slot, not the
+	// service. A business that has never filled in a duration on the service
+	// still has one on every time it offers, and a draft with no duration
+	// cannot be confirmed. Looking it up here also proves the chosen time is
+	// genuinely on offer rather than one the model invented.
+	duration, err := t.appointmentLength(ctx, staff.ID, startsAt, service.Duration)
+	if err != nil {
+		return "", err
+	}
+
+	// Recorded as soon as the customer gives it, before anything that can fail.
+	// If the booking then falls over, the business can still reach them.
+	t.rememberContact(ctx, s, strings.TrimSpace(args.FullName), phone)
+
 	draft := booking.Draft{
 		// Generated once, here. Reusing it on every confirmation attempt is
 		// what stops a retry becoming a second appointment.
@@ -496,7 +511,7 @@ func (t *toolset) prepareBooking(ctx context.Context, s *session, call ai.ToolCa
 		StaffID:               staff.ID,
 		StaffName:             staff.Name,
 		StartsAt:              startsAt,
-		Duration:              service.Duration,
+		Duration:              duration,
 		Phone:                 phone,
 		CustomerName:          strings.TrimSpace(args.FullName),
 		PreparedAt:            t.now(),
@@ -522,7 +537,7 @@ func (t *toolset) prepareBooking(ctx context.Context, s *session, call ai.ToolCa
 		"specialist":  staff.Name,
 		"date":        startsAt.In(t.location).Format(dateLayout),
 		"time":        startsAt.In(t.location).Format(timeLayout),
-		"minutes":     int(service.Duration.Minutes()),
+		"minutes":     int(duration.Minutes()),
 		"price":       service.PriceLabel(),
 		"phone":       phone,
 		"name":        draft.CustomerName,
@@ -761,6 +776,73 @@ func (t *toolset) requestHandoff(s *session, call ai.ToolCall) (string, error) {
 		"handed_over": true,
 		"instruction": "Tell the customer a colleague will reply shortly. Do not promise a time.",
 	})
+}
+
+// appointmentLength returns how long the appointment at startsAt runs for.
+//
+// The slot is the authority. Altegio reports a duration on each offered time
+// even when the service itself has none, which is the normal state of a
+// business that never filled the field in. The service duration is only a
+// fallback for a scheduling system that does the reverse.
+func (t *toolset) appointmentLength(
+	ctx context.Context,
+	staffID string,
+	startsAt time.Time,
+	serviceDuration time.Duration,
+) (time.Duration, error) {
+	local := startsAt.In(t.location)
+	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, t.location)
+
+	slots, err := t.scheduling.AvailableSlots(ctx, staffID, day)
+	if err != nil {
+		return 0, err
+	}
+
+	for _, slot := range slots {
+		if !slot.Start.Equal(startsAt) {
+			continue
+		}
+		if slot.Duration > 0 {
+			return slot.Duration, nil
+		}
+		if serviceDuration > 0 {
+			return serviceDuration, nil
+		}
+		return 0, fmt.Errorf(
+			"%w: no appointment length is set for this service or time", booking.ErrRejected)
+	}
+
+	// The time is not among those on offer. Either it was never free or it has
+	// gone since it was listed, and both mean the customer needs another.
+	return 0, fmt.Errorf("%w: %s is not one of the free times on %s",
+		booking.ErrSlotUnavailable,
+		local.Format(timeLayout),
+		local.Format(dateLayout))
+}
+
+// rememberContact stores the name and phone a customer gives while booking.
+//
+// It runs before anything that can fail, so a booking that falls over still
+// leaves the business able to call them back. Failure is logged rather than
+// returned: losing the contact detail must not lose the booking with it.
+func (t *toolset) rememberContact(ctx context.Context, s *session, name, phone string) {
+	if t.customers == nil || phone == "" {
+		return
+	}
+	if s.customer.Phone == phone && (name == "" || s.customer.Name == name) {
+		return
+	}
+
+	if err := t.customers.UpdateContact(ctx, s.customer.ID, name, phone); err != nil {
+		t.logger.ErrorContext(ctx, "could not record the contact details a customer gave",
+			"error", err, "customer_id", s.customer.ID)
+		return
+	}
+
+	s.customer.Phone = phone
+	if name != "" {
+		s.customer.Name = name
+	}
 }
 
 // startOfToday is midnight in the business's timezone.

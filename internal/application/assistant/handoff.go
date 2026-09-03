@@ -53,6 +53,11 @@ type HandoffNotice struct {
 	// number is known, such as a Telegram username.
 	Handle string
 
+	// ExternalUserID is the customer's account on the channel. It is the only
+	// reliable way to open a conversation with somebody who has no username and
+	// has given no phone number, which is the common case.
+	ExternalUserID string
+
 	// Recent is the tail of the conversation, oldest first, so the colleague
 	// can see what was already said rather than making the customer repeat it.
 	Recent []conversation.Message

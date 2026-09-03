@@ -87,6 +87,7 @@ func (w *Webhook) toEnvelope(m *message) (messaging.Envelope, error) {
 		Sender: messaging.Sender{
 			DisplayName: displayName(m.From),
 			Language:    m.From.LanguageCode,
+			Username:    m.From.Username,
 		},
 		Content: content(m),
 	}

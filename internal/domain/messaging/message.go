@@ -46,6 +46,11 @@ type Content struct {
 type Sender struct {
 	DisplayName string
 	Language    string
+
+	// Username is the handle the customer can be reached at on their channel,
+	// when they have one. It is how a colleague opens a conversation with them
+	// after a handover, since messaging providers do not give out phone numbers.
+	Username string
 }
 
 // Envelope is a single inbound customer message, normalised across channels.
