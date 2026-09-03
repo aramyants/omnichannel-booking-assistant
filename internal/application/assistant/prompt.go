@@ -15,6 +15,14 @@ import (
 type Business struct {
 	Name string
 
+	// Description is how the business describes itself. It shapes tone and
+	// gives the assistant something to say when a customer asks what this
+	// place actually is, which no catalogue of services answers.
+	//
+	// It is never treated as fact about prices, services or availability: those
+	// come from tools, whatever the description claims.
+	Description string
+
 	// Location is the timezone the business operates in. "Tomorrow at ten"
 	// means ten o'clock here, and the model has no way to know that otherwise.
 	Location *time.Location
@@ -40,6 +48,13 @@ func (s *Service) instructions(cust customer.Customer, languageTag string) strin
 
 	fmt.Fprintf(&b, "You are the booking assistant for %s. You are talking to a customer "+
 		"in a messaging app.\n\n", name)
+
+	if description := strings.TrimSpace(s.business.Description); description != "" {
+		fmt.Fprintf(&b, "How the business describes itself:\n%s\n\n"+
+			"Let that shape your tone and how you answer \"what is this place\". "+
+			"It is not a source of prices, services or free times: those come only from tools.\n\n",
+			description)
+	}
 
 	fmt.Fprintf(&b, "Right now it is %s, %s. All times you mention are in this timezone.\n\n",
 		now.Format("Monday 2 January 2006, 15:04"), s.business.Location.String())

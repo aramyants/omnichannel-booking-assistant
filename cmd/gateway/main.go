@@ -182,8 +182,9 @@ func run() error {
 		Staff:         staff,
 		Reminders:     reminderService,
 		Business: assistant.Business{
-			Name:     cfg.BusinessName,
-			Location: cfg.Altegio.Location,
+			Name:        cfg.BusinessName,
+			Description: cfg.BusinessDescription,
+			Location:    cfg.Altegio.Location,
 		},
 	})
 	if err != nil {

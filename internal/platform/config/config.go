@@ -51,6 +51,11 @@ type Config struct {
 	// itself. Empty makes it speak generically rather than fail.
 	BusinessName string
 
+	// BusinessDescription is how the business describes itself, in its own
+	// words. It shapes the assistant's tone and answers "what is this place",
+	// which no list of services does.
+	BusinessDescription string
+
 	Telegram  Telegram
 	Altegio   Altegio
 	AI        AI
@@ -245,6 +250,7 @@ func Load() (Config, error) {
 	errs = append(errs, altegioErrs...)
 
 	cfg.BusinessName = getenv("BUSINESS_NAME", "")
+	cfg.BusinessDescription = getenv("BUSINESS_DESCRIPTION", "")
 	cfg.AI = AI{
 		APIKey:  getenv("OPENAI_API_KEY", ""),
 		Model:   getenv("OPENAI_MODEL", ""),
