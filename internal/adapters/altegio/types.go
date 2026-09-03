@@ -87,10 +87,21 @@ type bookCheckRequest struct {
 }
 
 type bookRecordRequest struct {
-	Phone    string `json:"phone"`
+	Phone string `json:"phone"`
+
+	// FullName is sent as "fullname", one word. The published documentation
+	// calls it full_name and the live API rejects that.
 	FullName string `json:"fullname"`
-	Email    string `json:"email,omitempty"`
-	Comment  string `json:"comment,omitempty"`
+
+	// Email carries no omitempty on purpose. Altegio requires the field to be
+	// present even when the customer has not given an address, and refuses the
+	// whole booking with a 422 if it is absent. An empty string is accepted.
+	//
+	// Customers reaching a business through a messaging app rarely volunteer an
+	// email, so omitting it when empty made every real booking fail.
+	Email string `json:"email"`
+
+	Comment string `json:"comment,omitempty"`
 
 	Appointments []appointmentRequest `json:"appointments"`
 
