@@ -101,8 +101,13 @@ func TestHandleRepliesIntoTheSameConversation(t *testing.T) {
 	if sender.sent[0].ExternalThreadID != "219847362" {
 		t.Errorf("thread = %q, want 219847362", sender.sent[0].ExternalThreadID)
 	}
-	if !strings.Contains(sender.sent[0].Text, "Anna") {
-		t.Errorf("reply does not address the customer by name: %q", sender.sent[0].Text)
+
+	// No model is configured here, so the reply is the fixed fallback. It is
+	// written in the customer's language like every other phrase this system
+	// chooses for itself: their app is set to Armenian, so it is Armenian.
+	if want := speak(languageArmenian).noModel; sender.sent[0].Text != want {
+		t.Errorf("reply = %q, want the fallback in the customer's language %q",
+			sender.sent[0].Text, want)
 	}
 }
 
@@ -332,8 +337,13 @@ func TestHandleExplainsUnreadableContent(t *testing.T) {
 	if err := svc.Handle(t.Context(), msg); err != nil {
 		t.Fatalf("Handle() returned error: %v", err)
 	}
-	if !strings.Contains(sender.sent[0].Text, "voice message") {
-		t.Errorf("reply does not say what could not be read: %q", sender.sent[0].Text)
+
+	// It says that nothing but text can be read, and it says it in the
+	// customer's language. It does not name the attachment type: the provider
+	// reports that in English, and dropping an English word into an Armenian
+	// sentence is how a localised reply stops reading as one.
+	if want := speak(languageArmenian).noModelUnsupported; sender.sent[0].Text != want {
+		t.Errorf("reply = %q, want %q", sender.sent[0].Text, want)
 	}
 }
 

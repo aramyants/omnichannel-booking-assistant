@@ -191,3 +191,128 @@ func TestMenuCommandsBecomeRequests(t *testing.T) {
 		}
 	}
 }
+
+// TestTheCommandMenuIsWrittenInEveryLanguage. The menu is the only part of this
+// assistant a customer reads before writing a word, and it used to be the only
+// part that was always in English while every button and reply beside it
+// followed them.
+func TestTheCommandMenuIsWrittenInEveryLanguage(t *testing.T) {
+	menus := Menus()
+
+	// The default menu plus one per language. The default is what a customer
+	// whose app is set to German gets, and there has to be one.
+	if want := len(languages) + 1; len(menus) != want {
+		t.Fatalf("published %d menus, want %d", len(menus), want)
+	}
+	if menus[0].LanguageTag != "" {
+		t.Errorf("first menu is scoped to %q, want the default menu first", menus[0].LanguageTag)
+	}
+
+	byTag := map[string][]MenuCommand{}
+	for _, menu := range menus {
+		if len(menu.Commands) != len(menuIn(languageEnglish)) {
+			t.Errorf("the %q menu has %d entries, want every menu to offer the same things",
+				menu.LanguageTag, len(menu.Commands))
+		}
+		for _, command := range menu.Commands {
+			// The name is an identifier the app sends back, not something a
+			// customer reads. Telegram accepts nothing but lowercase Latin.
+			for _, r := range command.Name {
+				if (r < 'a' || r > 'z') && r != '_' {
+					t.Errorf("command %q in the %q menu is not a usable command name",
+						command.Name, menu.LanguageTag)
+					break
+				}
+			}
+			if strings.TrimSpace(command.Description) == "" {
+				t.Errorf("command %q in the %q menu has no description",
+					command.Name, menu.LanguageTag)
+			}
+		}
+		byTag[menu.LanguageTag] = menu.Commands
+	}
+
+	// Every language this system writes has a menu of its own, and it is
+	// actually translated rather than the English one under another tag.
+	for _, lang := range languages {
+		commands, ok := byTag[string(lang)]
+		if !ok {
+			t.Errorf("no menu published for %q", lang)
+			continue
+		}
+		if lang == languageEnglish {
+			continue
+		}
+		for i, command := range commands {
+			if command.Description == byTag[""][i].Description {
+				t.Errorf("the %q menu still reads %q for /%s",
+					lang, command.Description, command.Name)
+			}
+		}
+	}
+}
+
+// TestTheMenuAndItsButtonsAgree: a customer who taps "Book a visit" in the menu
+// and then sees "Book a visit" on a button is meant to understand that these
+// are the same thing, so the two are built from one set of words.
+func TestTheMenuAndItsButtonsAgree(t *testing.T) {
+	for _, lang := range languages {
+		labels := map[string]bool{}
+		for _, choice := range menuChoices(lang) {
+			labels[choice.Label] = true
+		}
+
+		for _, command := range menuIn(lang) {
+			switch command.Name {
+			case "start", "help":
+				// These two have no button of their own.
+				continue
+			}
+			if !labels[command.Description] {
+				t.Errorf("the %q menu offers /%s as %q, which no button says",
+					lang, command.Name, command.Description)
+			}
+		}
+	}
+}
+
+// TestAskingForAPersonNeedsNoModel. Tapping "Talk to a person" is the one
+// request this system never needs a model to understand, and routing it through
+// one only adds a way for it to be missed. It works here with no model
+// configured at all.
+func TestAskingForAPersonNeedsNoModel(t *testing.T) {
+	sender := &fakeSender{}
+	staff := &recordingStaff{}
+	svc, store := newAIServiceWithStaff(t, nil, defaultScheduling(), sender, staff)
+
+	if err := svc.Handle(t.Context(), incomingText("4130", "/person")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+
+	// The state change is what actually stops the assistant replying. Anything
+	// less is a promise the next message would break.
+	if conv := openConversation(t, store); conv.State != conversation.StateHumanRequested {
+		t.Errorf("state = %q, want the conversation waiting for a person", conv.State)
+	}
+
+	// A colleague has to learn the customer is waiting, or the customer waits
+	// for somebody who was never told.
+	if len(staff.notices) != 1 {
+		t.Fatalf("sent %d handoff notices, want 1", len(staff.notices))
+	}
+	if staff.notices[0].Reason != ReasonCustomerAsked {
+		t.Errorf("reason = %q, want %q", staff.notices[0].Reason, ReasonCustomerAsked)
+	}
+
+	if len(sender.sent) != 1 {
+		t.Fatalf("sent %d replies, want 1", len(sender.sent))
+	}
+	if want := speak(languageArmenian).handedOver; sender.sent[0].Text != want {
+		t.Errorf("reply = %q, want %q", sender.sent[0].Text, want)
+	}
+
+	// Somebody waiting for a person is waiting, not choosing.
+	if choices := sender.sent[0].Choices; len(choices) != 0 {
+		t.Errorf("choices = %v, want none while they wait", labelsOf(choices))
+	}
+}

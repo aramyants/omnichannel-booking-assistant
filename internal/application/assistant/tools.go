@@ -269,9 +269,11 @@ func (t *toolset) definitions() []ai.Tool {
 			Parameters: json.RawMessage(noArguments),
 		},
 		{
-			Name:        toolListBookings,
-			Description: "List the appointments this customer has booked through this conversation.",
-			Parameters:  json.RawMessage(noArguments),
+			Name: toolListBookings,
+			Description: "List this customer's upcoming appointments, soonest first, with the service " +
+				"and specialist for each. Cancelled and past appointments are not returned, so what " +
+				"this gives back is everything they still have booked.",
+			Parameters: json.RawMessage(noArguments),
 		},
 	}
 
@@ -769,7 +771,21 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 	}
 }
 
-// listBookings returns what this customer has booked here.
+// listBookings returns what this customer still has booked here.
+//
+// Only appointments that are still to come and have not been cancelled. A
+// customer asking what they have booked is asking what is coming: answering
+// with a visit from March and one they cancelled last week makes them read past
+// the answer to find it. It matters more than tidiness, because this list is
+// also what the model cancels and moves from, and every past or cancelled entry
+// on it is a reference that can only fail once it is used.
+//
+// The names are what turn "an appointment on Friday at 14:00" into something a
+// customer recognises, and without them the assistant cannot say what the
+// appointment is even for. They cost one catalogue read between them and are
+// best effort: an appointment nobody can name is still an appointment that can
+// be cancelled, so a catalogue that will not answer costs the names rather than
+// the list.
 func (t *toolset) listBookings(ctx context.Context, s *session) (string, error) {
 	if t.bookings == nil {
 		return "", errors.New("appointment history is not available")
@@ -780,23 +796,84 @@ func (t *toolset) listBookings(ctx context.Context, s *session) (string, error) 
 		return "", err
 	}
 
-	type item struct {
-		Reference string `json:"reference"`
-		Date      string `json:"date"`
-		Time      string `json:"time"`
-		Status    string `json:"status"`
+	now := t.now()
+	upcoming := make([]booking.Booking, 0, len(booked))
+	for _, b := range booked {
+		if b.Status == booking.StatusConfirmed && b.StartsAt.After(now) {
+			upcoming = append(upcoming, b)
+		}
 	}
 
-	items := make([]item, 0, len(booked))
-	for _, b := range booked {
-		items = append(items, item{
+	if len(upcoming) == 0 {
+		return encode(map[string]any{
+			"appointments": []any{},
+			"instruction": "This customer has nothing booked with us. Tell them so plainly " +
+				"and offer to book something.",
+		})
+	}
+
+	serviceNames, staffNames := t.catalogueNames(ctx)
+
+	type item struct {
+		Reference string   `json:"reference"`
+		Date      string   `json:"date"`
+		Time      string   `json:"time"`
+		Services  []string `json:"services,omitempty"`
+		Staff     string   `json:"staff,omitempty"`
+	}
+
+	items := make([]item, 0, len(upcoming))
+	for _, b := range upcoming {
+		entry := item{
 			Reference: b.ExternalID,
 			Date:      b.StartsAt.In(t.location).Format(dateLayout),
 			Time:      b.StartsAt.In(t.location).Format(timeLayout),
-			Status:    string(b.Status),
-		})
+			Staff:     staffNames[b.StaffID],
+		}
+		for _, serviceID := range b.ServiceIDs {
+			if name := serviceNames[serviceID]; name != "" {
+				entry.Services = append(entry.Services, name)
+			}
+		}
+		items = append(items, entry)
 	}
-	return encode(map[string]any{"appointments": items})
+
+	return encode(map[string]any{
+		"appointments": items,
+		"instruction": "These are all of this customer's upcoming appointments, soonest first. " +
+			"There are no others. Use a reference exactly as it appears here to cancel or move one.",
+	})
+}
+
+// catalogueNames reads the catalogue once and returns the names of services and
+// specialists, by id.
+//
+// Deliberately best effort. Its only caller wants names to make a list of
+// appointments readable, and a list without them is still true and still
+// usable, so a catalogue that cannot be read is logged and leaves the names
+// out rather than failing the answer.
+func (t *toolset) catalogueNames(ctx context.Context) (services, staff map[string]string) {
+	services, staff = map[string]string{}, map[string]string{}
+
+	catalogue, err := t.scheduling.ListServices(ctx)
+	if err != nil {
+		t.logger.WarnContext(ctx, "could not name the services on a customer's appointments",
+			"error", err)
+	}
+	for _, service := range catalogue {
+		services[service.ID] = service.Name
+	}
+
+	people, err := t.scheduling.ListStaff(ctx)
+	if err != nil {
+		t.logger.WarnContext(ctx, "could not name the specialists on a customer's appointments",
+			"error", err)
+	}
+	for _, member := range people {
+		staff[member.ID] = member.Name
+	}
+
+	return services, staff
 }
 
 // parseAppointmentTime reads a day and a clock time in the business's timezone.

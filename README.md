@@ -28,7 +28,10 @@ required before launch.
 | Durable Firestore storage | done |
 | Cancel and reschedule | done |
 | Delayed reminders | done, local timers or Cloud Tasks |
-| WhatsApp, Instagram, Messenger, Viber | not started |
+| Staff handover and replies from the staff chat | done |
+| Buttons, and fixed phrases in Armenian, Russian and English | done |
+| WhatsApp | done, enabled when credentials are configured |
+| Instagram, Messenger, Viber | not started |
 
 ## Design
 

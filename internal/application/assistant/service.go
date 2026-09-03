@@ -497,12 +497,12 @@ func (s *Service) reply(
 	// Some menu entries are answered here rather than by the model: they say
 	// the same thing every time, and answering them from a table means they
 	// arrive instantly and keep working when nothing else does.
-	if text, ok := s.menuReply(sess, msg); ok {
+	if text, ok := s.menuReply(ctx, sess, msg); ok {
 		return text, nil
 	}
 
 	if s.ai == nil {
-		return s.compose(msg, cust), nil
+		return s.compose(msg, sess.language), nil
 	}
 
 	req := ai.Request{
@@ -560,14 +560,52 @@ func (s *Service) reply(
 // Opening the chat is the first thing anybody does and the one thing that must
 // never be slow, wrong or missing, so its answer is written here and shipped
 // with the code rather than asked for at the moment it is needed.
-func (s *Service) menuReply(sess *session, msg messaging.Envelope) (string, bool) {
+//
+// Asking for a person is here for the opposite reason: not because the answer
+// is always the same, but because the request admits of no interpretation. A
+// customer who taps "Talk to a person" has said the one thing this system never
+// needs a model to understand, and routing it through one only adds a way for
+// it to be missed.
+//
+// The rest of the menu stays with the model. Booking, prices and appointments
+// all need tools and a conversation, and answering them from a table would mean
+// answering them badly.
+func (s *Service) menuReply(ctx context.Context, sess *session, msg messaging.Envelope) (string, bool) {
 	switch commandIn(msg.Content.Text) {
 	case "start", "help":
 		sess.offerFixed(offerMenu)
 		return s.greeting(sess.language), true
+	case "person":
+		return s.handOver(ctx, sess)
 	default:
 		return "", false
 	}
+}
+
+// handOver answers a customer who asked for a person outright.
+//
+// The state change is what actually stops the assistant replying; the sentence
+// is only what the customer reads. If the state will not change, nothing is
+// promised: the request falls through to the model, which still has the handoff
+// tool, rather than the customer being told somebody is coming when the record
+// that would tell them says otherwise.
+func (s *Service) handOver(ctx context.Context, sess *session) (string, bool) {
+	if err := sess.conv.TransitionTo(conversation.StateHumanRequested, s.now()); err != nil {
+		s.logger.ErrorContext(ctx, "could not hand over a conversation on request",
+			"error", err,
+			"conversation_id", sess.conv.ID,
+			"conversation_state", string(sess.conv.State),
+		)
+		return "", false
+	}
+
+	sess.handoffReason = ReasonCustomerAsked
+	sess.handoffDetail = "tapped the menu entry asking for a person"
+
+	// A customer waiting for a person is waiting, not choosing.
+	sess.offer()
+
+	return speak(sess.language).handedOver, true
 }
 
 // apologise is the reply when the assistant itself failed: the model was
@@ -594,23 +632,17 @@ func (s *Service) apologise(ctx context.Context, sess *session) (string, error) 
 //
 // It is deliberately honest about what the assistant can and cannot do, rather
 // than pretending to take a booking it has no way to make.
-func (s *Service) compose(msg messaging.Envelope, cust customer.Customer) string {
+//
+// It says nothing the customer told it and names nothing the provider sent.
+// Threading a name or an attachment type through a sentence is what forces a
+// sentence to be built out of fragments, and a sentence built out of fragments
+// only reads correctly in the language it was written in. Every other fixed
+// reply in this system follows the customer's language; this one now does too,
+// and the price is a greeting that does not use their name.
+func (s *Service) compose(msg messaging.Envelope, lang language) string {
+	p := speak(lang)
 	if msg.Content.Type == messaging.ContentTypeUnsupported {
-		return fmt.Sprintf(
-			"Thanks%s. I can only read text messages at the moment, so I could not open your %s. Could you describe what you need in a message?",
-			greetingName(cust.Name), msg.Content.Description,
-		)
+		return p.noModelUnsupported
 	}
-
-	return fmt.Sprintf(
-		"Thanks%s, I have your message. A colleague will follow up with you shortly.",
-		greetingName(cust.Name),
-	)
-}
-
-func greetingName(name string) string {
-	if name == "" {
-		return ""
-	}
-	return " " + name
+	return p.noModel
 }

@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -320,5 +321,133 @@ func TestAnotherCustomersReferenceCannotBeManaged(t *testing.T) {
 	}
 	if len(scheduling.cancelled) != 0 {
 		t.Error("another customer's appointment reached the cancellation adapter")
+	}
+}
+
+// seedPastAndCancelledBookings adds the two kinds of appointment a customer is
+// not asking about when they ask what they have booked.
+func seedPastAndCancelledBookings(t *testing.T, store *memory.Store) {
+	t.Helper()
+
+	for _, b := range []booking.Booking{
+		{
+			ID: "bk-past", ExternalID: "111111", CustomerID: "cust-1",
+			ServiceIDs: []string{"1001"}, StaffID: "501",
+			StartsAt: appointmentAt(-30), Duration: time.Hour,
+			Status: booking.StatusConfirmed, CreatedAt: testNow,
+		},
+		{
+			ID: "bk-cancelled", ExternalID: "222222", CustomerID: "cust-1",
+			ServiceIDs: []string{"1001"}, StaffID: "501",
+			StartsAt: appointmentAt(5), Duration: time.Hour,
+			Status: booking.StatusCancelled, CreatedAt: testNow,
+		},
+	} {
+		if err := store.SaveBooking(t.Context(), b); err != nil {
+			t.Fatalf("seed booking %s: %v", b.ID, err)
+		}
+	}
+}
+
+// TestListedAppointmentsAreOnlyTheOnesStillToCome. A customer asking what they
+// have booked is asking what is coming. Answering with a visit from last month
+// and one they cancelled makes them read past the answer to find it, and every
+// such entry is also a reference the model can only fail with once it tries to
+// cancel or move it.
+func TestListedAppointmentsAreOnlyTheOnesStillToCome(t *testing.T) {
+	model := &scriptedAI{responses: []ai.Response{
+		toolResponse("call_1", toolListBookings, `{}`),
+		textResponse("You have one appointment coming up."),
+	}}
+	svc, store := newAIService(t, model, defaultScheduling(), &fakeSender{})
+	seedOwnedBooking(t, store)
+	seedPastAndCancelledBookings(t, store)
+
+	if err := svc.Handle(t.Context(), incoming("4131")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+
+	output := resultOf(t, model, 1)
+	if !strings.Contains(output, "998877") {
+		t.Errorf("result = %s, want the upcoming appointment", output)
+	}
+	for _, gone := range []struct{ reference, why string }{
+		{"111111", "an appointment that has already happened"},
+		{"222222", "an appointment that was cancelled"},
+	} {
+		if strings.Contains(output, gone.reference) {
+			t.Errorf("result = %s, want %s left out", output, gone.why)
+		}
+	}
+}
+
+// TestListedAppointmentsSayWhatTheyAreFor. Without the names the assistant can
+// only offer a customer a date and a reference, and cannot tell them what the
+// appointment is even for.
+func TestListedAppointmentsSayWhatTheyAreFor(t *testing.T) {
+	model := &scriptedAI{responses: []ai.Response{
+		toolResponse("call_1", toolListBookings, `{}`),
+		textResponse("Your haircut with Mariam is on Friday."),
+	}}
+	svc, store := newAIService(t, model, defaultScheduling(), &fakeSender{})
+	seedOwnedBooking(t, store)
+
+	if err := svc.Handle(t.Context(), incoming("4132")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+
+	output := resultOf(t, model, 1)
+	for _, want := range []string{"Women's haircut", "Mariam"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("result = %s, want it to name %q", output, want)
+		}
+	}
+}
+
+// TestAppointmentsAreStillListedWhenTheCatalogueFails. The names make the list
+// readable; they are not the list. An appointment nobody can name is still an
+// appointment the customer can be told about and can cancel, so a catalogue
+// that will not answer costs the names rather than the answer.
+func TestAppointmentsAreStillListedWhenTheCatalogueFails(t *testing.T) {
+	scheduling := defaultScheduling()
+	scheduling.err = errors.New("altegio unreachable")
+
+	model := &scriptedAI{responses: []ai.Response{
+		toolResponse("call_1", toolListBookings, `{}`),
+		textResponse("You have an appointment on Friday at 10:00."),
+	}}
+	svc, store := newAIService(t, model, scheduling, &fakeSender{})
+	seedOwnedBooking(t, store)
+
+	if err := svc.Handle(t.Context(), incoming("4133")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+
+	output := resultOf(t, model, 1)
+	if strings.Contains(output, `"error"`) {
+		t.Fatalf("result = %s, want the appointments despite the catalogue failing", output)
+	}
+	if !strings.Contains(output, "998877") {
+		t.Errorf("result = %s, want the appointment listed without its names", output)
+	}
+}
+
+// TestNothingBookedIsSaidPlainly. An empty list is an answer, and the model is
+// told it is the whole answer so it does not go looking for another way to
+// find appointments that do not exist.
+func TestNothingBookedIsSaidPlainly(t *testing.T) {
+	model := &scriptedAI{responses: []ai.Response{
+		toolResponse("call_1", toolListBookings, `{}`),
+		textResponse("You have nothing booked with us at the moment."),
+	}}
+	svc, _ := newAIService(t, model, defaultScheduling(), &fakeSender{})
+
+	if err := svc.Handle(t.Context(), incoming("4134")); err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+
+	output := resultOf(t, model, 1)
+	if !strings.Contains(output, "nothing booked") {
+		t.Errorf("result = %s, want it to say plainly that there is nothing", output)
 	}
 }

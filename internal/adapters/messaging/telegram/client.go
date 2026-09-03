@@ -216,10 +216,13 @@ func (c *Client) ClearKeyboard(ctx context.Context, chatID string, messageID int
 // SetCommands publishes the menu shown beside the text box.
 //
 // scope is a chat id to publish the menu only there, or empty for the default
-// menu every customer sees. Nothing about a command is enforced by publishing
-// it: the menu is a hint to the customer, and the code that receives the
-// command is what decides what it does.
-func (c *Client) SetCommands(ctx context.Context, scope string, commands []Command) error {
+// menu every customer sees. languageTag publishes the menu for customers whose
+// app is set to that language, or empty for the menu everyone else gets;
+// Telegram keeps one menu per language and picks between them itself, so a
+// localised menu is several calls rather than one. Nothing about a command is
+// enforced by publishing it: the menu is a hint to the customer, and the code
+// that receives the command is what decides what it does.
+func (c *Client) SetCommands(ctx context.Context, scope, languageTag string, commands []Command) error {
 	entries := make([]botCommand, 0, len(commands))
 	for _, command := range commands {
 		entries = append(entries, botCommand{
@@ -228,7 +231,7 @@ func (c *Client) SetCommands(ctx context.Context, scope string, commands []Comma
 		})
 	}
 
-	req := setMyCommandsRequest{Commands: entries}
+	req := setMyCommandsRequest{Commands: entries, LanguageCode: languageTag}
 	if scope != "" {
 		req.Scope = &commandScope{Type: "chat", ChatID: scope}
 	}

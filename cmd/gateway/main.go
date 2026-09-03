@@ -287,29 +287,39 @@ func publishTelegramMenu(ctx context.Context, client *telegram.Client, cfg confi
 	ctx, cancel := context.WithTimeout(ctx, webhookRegistrationTimeout)
 	defer cancel()
 
-	commands := make([]telegram.Command, 0, len(assistant.Menu()))
-	for _, entry := range assistant.Menu() {
-		commands = append(commands, telegram.Command{
-			Name:        entry.Name,
-			Description: entry.Description,
-		})
-	}
+	// One call per language. Telegram stores a menu per language and chooses
+	// between them by the customer's app setting, so publishing the Armenian
+	// menu is a separate call from publishing the default one.
+	published := 0
+	for _, menu := range assistant.Menus() {
+		commands := make([]telegram.Command, 0, len(menu.Commands))
+		for _, entry := range menu.Commands {
+			commands = append(commands, telegram.Command{
+				Name:        entry.Name,
+				Description: entry.Description,
+			})
+		}
 
-	if err := client.SetCommands(ctx, "", commands); err != nil {
-		logger.Error("could not publish the telegram command menu", "error", err)
-		return
+		if err := client.SetCommands(ctx, "", menu.LanguageTag, commands); err != nil {
+			// One language failing is not a reason to abandon the rest: a
+			// customer reading any of the others still gets a menu.
+			logger.Error("could not publish the telegram command menu",
+				"error", err, "language", menu.LanguageTag)
+			continue
+		}
+		published++
 	}
 
 	// The staff group gets no menu at all. Everything a colleague does there is
 	// a button on the notification it belongs to, and a customer menu offering
 	// to book them an appointment would only be in the way.
 	if cfg.Telegram.StaffChatID != "" {
-		if err := client.SetCommands(ctx, cfg.Telegram.StaffChatID, nil); err != nil {
+		if err := client.SetCommands(ctx, cfg.Telegram.StaffChatID, "", nil); err != nil {
 			logger.Warn("could not clear the command menu in the staff chat", "error", err)
 		}
 	}
 
-	logger.Info("published the telegram command menu", "commands", len(commands))
+	logger.Info("published the telegram command menu", "menus", published)
 }
 
 // appStore is everything the assistant needs to persist. Both the in-process

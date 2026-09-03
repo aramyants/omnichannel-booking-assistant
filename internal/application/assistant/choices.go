@@ -21,13 +21,21 @@ const (
 	languageEnglish  language = "en"
 )
 
+// languages are every language this system writes, English first.
+//
+// It exists because a map has no order, and one of the things built from the
+// phrasebook is published rather than merely returned: the command menu goes to
+// Telegram once per language, and a menu that arrives in a different order on
+// every deploy is a menu nobody can diff.
+var languages = []language{languageEnglish, languageArmenian, languageRussian}
+
 // phrases are the words this system chooses for itself.
 //
 // Almost nothing belongs here. Service names, specialists and times come from
 // the calendar and are shown as they are stored, and everything conversational
 // is written by the model in whatever language the customer is using. What is
-// left is the handful of fixed labels a button needs and the sentence to fall
-// back on when the model cannot be reached at all.
+// left is the handful of fixed labels a button or a menu entry needs, and the
+// sentences to fall back on when the model cannot be reached at all.
 type phrases struct {
 	confirmBooking string
 	anotherTime    string
@@ -37,8 +45,27 @@ type phrases struct {
 	bookAVisit     string
 	myAppointments string
 	servicesPrices string
-	welcome        string
-	apology        string
+
+	// startAgain and whatICanDo label the two menu entries that have no button
+	// of their own. Every other entry reuses the label its button already has,
+	// because a customer who taps "Book a visit" in the menu and then sees
+	// "Book a visit" on a button should be reading the same words.
+	startAgain string
+	whatICanDo string
+
+	welcome string
+	apology string
+
+	// handedOver is the answer to a customer asking for a person outright.
+	// Written here rather than by the model because the request is unambiguous
+	// and the answer must not depend on anything that can fail.
+	handedOver string
+
+	// noModel and noModelUnsupported are what the assistant says when no model
+	// is configured at all. They promise nothing this system cannot do without
+	// one, which is to pass the message on.
+	noModel            string
+	noModelUnsupported string
 }
 
 var phrasebook = map[language]phrases{
@@ -51,11 +78,18 @@ var phrasebook = map[language]phrases{
 		bookAVisit:     "Book a visit",
 		myAppointments: "My appointments",
 		servicesPrices: "Services and prices",
+		startAgain:     "Start again",
+		whatICanDo:     "What I can do",
 		welcome: "Hello! I am the booking assistant at %s. " +
 			"I can show you the services, find a free time and book it for you. " +
 			"What would you like?",
 		apology: "Sorry, I could not check that just now. Please try again in a moment, " +
 			"or tap the button and a colleague will take over.",
+		handedOver: "Of course. A colleague will reply here shortly.",
+		noModel: "Thanks, I have your message. " +
+			"A colleague will follow up with you shortly.",
+		noModelUnsupported: "Thanks. I can only read text messages at the moment, so I could not " +
+			"open what you sent. Could you describe what you need in a message?",
 	},
 	languageArmenian: {
 		confirmBooking: "Այո, ամրագրեք",
@@ -66,11 +100,19 @@ var phrasebook = map[language]phrases{
 		bookAVisit:     "Ամրագրել այց",
 		myAppointments: "Իմ այցերը",
 		servicesPrices: "Ծառայություններ և գներ",
+		startAgain:     "Սկսել նորից",
+		whatICanDo:     "Ինչ կարող եմ անել",
 		welcome: "Բարև Ձեզ: Ես %s-ի ամրագրման օգնականն եմ: " +
 			"Կարող եմ ցույց տալ ծառայությունները, գտնել ազատ ժամ և ամրագրել Ձեզ համար: " +
 			"Ինչո՞վ կարող եմ օգնել:",
 		apology: "Ներողություն, հիմա չկարողացա ստուգել: Խնդրում եմ փորձեք մի փոքր ուշ, " +
 			"կամ սեղմեք կոճակը՝ աշխատակցի հետ կապվելու համար:",
+		handedOver: "Իհարկե: Աշխատակիցը շուտով կպատասխանի այստեղ:",
+		noModel: "Շնորհակալություն, ստացա Ձեր հաղորդագրությունը: " +
+			"Աշխատակիցը շուտով կկապվի Ձեզ հետ:",
+		noModelUnsupported: "Շնորհակալություն: Այս պահին կարող եմ կարդալ միայն տեքստային " +
+			"հաղորդագրություններ, ուստի չկարողացա բացել ուղարկածը: " +
+			"Կարո՞ղ եք գրել, թե ինչ է Ձեզ պետք:",
 	},
 	languageRussian: {
 		confirmBooking: "Да, запишите",
@@ -81,11 +123,19 @@ var phrasebook = map[language]phrases{
 		bookAVisit:     "Записаться",
 		myAppointments: "Мои записи",
 		servicesPrices: "Услуги и цены",
+		startAgain:     "Начать заново",
+		whatICanDo:     "Что я умею",
 		welcome: "Здравствуйте! Я помощник по записи в %s. " +
 			"Могу показать услуги, найти свободное время и записать вас. " +
 			"Чем могу помочь?",
 		apology: "Извините, сейчас не получилось проверить. Попробуйте, пожалуйста, чуть позже " +
 			"или нажмите кнопку, и с вами свяжется сотрудник.",
+		handedOver: "Конечно. Сотрудник ответит здесь в ближайшее время.",
+		noModel: "Спасибо, я получил ваше сообщение. " +
+			"Сотрудник свяжется с вами в ближайшее время.",
+		noModelUnsupported: "Спасибо. Сейчас я могу читать только текстовые сообщения, " +
+			"поэтому не смог открыть то, что вы прислали. " +
+			"Опишите, пожалуйста, что вам нужно.",
 	},
 }
 
@@ -117,6 +167,23 @@ func scriptLanguage(text string) language {
 	return ""
 }
 
+// languageOfTag reads an IETF language tag as one of the languages this system
+// writes, falling back to English.
+//
+// Tags arrive as "ru", "en-GB", "hy-AM"; only the primary subtag names the
+// language.
+func languageOfTag(tag string) language {
+	base, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(tag)), "-")
+	switch language(base) {
+	case languageArmenian:
+		return languageArmenian
+	case languageRussian:
+		return languageRussian
+	default:
+		return languageEnglish
+	}
+}
+
 // conversationLanguage picks the language to write fixed phrases in.
 //
 // The transcript is read newest first, because a customer who switched language
@@ -134,16 +201,7 @@ func conversationLanguage(history []conversation.Message, appLanguageTag string)
 			return lang
 		}
 	}
-
-	base, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(appLanguageTag)), "-")
-	switch language(base) {
-	case languageArmenian:
-		return languageArmenian
-	case languageRussian:
-		return languageRussian
-	default:
-		return languageEnglish
-	}
+	return languageOfTag(appLanguageTag)
 }
 
 // choicesOf turns labels into offered options.
