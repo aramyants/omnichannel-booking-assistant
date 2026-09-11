@@ -147,6 +147,11 @@ func (s *Service) Plan(
 	b booking.Booking,
 	conv conversation.Conversation,
 ) error {
+	// Meta channels need channel-specific templates/consent or messaging-window
+	// checks. Until those exist, schedule reminders only on Telegram.
+	if conv.Provider != messaging.ProviderTelegram {
+		return nil
+	}
 	dueAt := b.StartsAt.Add(-s.leadTime)
 	if !dueAt.After(s.now()) {
 		// An appointment made inside the lead window should not receive a
@@ -211,6 +216,10 @@ func (s *Service) Deliver(ctx context.Context, reminderID string) error {
 			}
 		}
 	}()
+	if claimed.Provider != messaging.ProviderTelegram {
+		release = false
+		return s.finish(ctx, claimed, claimID, reminder.StatusSkipped, now)
+	}
 
 	b, current, err := s.currentBooking(ctx, claimed)
 	if err != nil {

@@ -175,7 +175,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		if err := h.messages.Handle(ctx, envelope); err != nil {
+		stopTyping := h.beginTyping(ctx, envelope.ExternalThreadID)
+		err := h.messages.Handle(ctx, envelope)
+		stopTyping()
+		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				// The caller hung up or the process is shutting down. Telegram
 				// will redeliver, which is the correct outcome.
@@ -312,10 +315,12 @@ func (h *Handler) handleCallback(ctx context.Context, callback Callback) bool {
 	}
 
 	h.acknowledge(ctx, callback.QueryID, "")
+	stopTyping := h.beginTyping(ctx, callback.ChatID)
+	defer stopTyping()
 
-	// The question has been answered, so it stops being answerable. Without
-	// this a customer can scroll back and tap a time that was free last week.
-	h.clearKeyboard(ctx, callback.ChatID, callback.MessageID)
+	// Keep the selected answer in the chat and remove the answered buttons.
+	// Inline taps do not create a visible customer message of their own.
+	h.showSelection(ctx, callback)
 
 	if err := h.messages.Handle(ctx, callback.Envelope); err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -368,7 +373,9 @@ func (h *Handler) acknowledge(ctx context.Context, queryID, text string) {
 	if h.buttons == nil || queryID == "" {
 		return
 	}
-	if err := h.buttons.AnswerCallback(ctx, queryID, text); err != nil {
+	feedbackCtx, cancel := context.WithTimeout(ctx, interactionTimeout)
+	defer cancel()
+	if err := h.buttons.AnswerCallback(feedbackCtx, queryID, text); err != nil {
 		h.logger.WarnContext(ctx, "could not acknowledge a telegram button press", "error", err)
 	}
 }
@@ -378,7 +385,9 @@ func (h *Handler) clearKeyboard(ctx context.Context, chatID string, messageID in
 	if h.buttons == nil || chatID == "" || messageID == 0 {
 		return
 	}
-	if err := h.buttons.ClearKeyboard(ctx, chatID, messageID); err != nil {
+	feedbackCtx, cancel := context.WithTimeout(ctx, interactionTimeout)
+	defer cancel()
+	if err := h.buttons.ClearKeyboard(feedbackCtx, chatID, messageID); err != nil {
 		// Telegram refuses this once a message is old, which is normal and not
 		// worth an error: the press it belonged to was already handled.
 		h.logger.DebugContext(ctx, "could not remove an answered keyboard", "error", err)

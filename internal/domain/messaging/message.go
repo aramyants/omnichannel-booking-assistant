@@ -28,18 +28,32 @@ type ContentType string
 
 const (
 	ContentTypeText        ContentType = "text"
+	ContentTypeAudio       ContentType = "audio"
 	ContentTypeUnsupported ContentType = "unsupported"
 )
 
 // Content is the body of an incoming message.
 type Content struct {
-	Type ContentType
-	Text string
+	Type  ContentType
+	Text  string
+	Audio *Audio
 
 	// Description names the kind of unsupported content, such as "photo" or
 	// "voice", so a reply can be specific about what was ignored.
 	Description string
 }
+
+// Audio identifies provider-hosted input. Bytes and URLs are never sent to the
+// conversation model or stored in the transcript.
+type Audio struct {
+	Reference       string
+	MIMEType        string
+	Filename        string
+	SizeBytes       int64
+	DurationSeconds int
+}
+
+const MaxAudioBytes = 20 << 20
 
 // Sender carries the profile information a provider volunteers about the
 // person who sent a message. All of it is optional and none of it is trusted
@@ -65,6 +79,10 @@ type Envelope struct {
 	// is the basis of deduplication: providers retry deliveries, so the same
 	// message can and will arrive more than once.
 	ExternalMessageID string
+
+	// ChoiceMessageID identifies the bot message a button answered, when the
+	// channel supplies it. Old keyboards cannot confirm a newer booking draft.
+	ChoiceMessageID string
 
 	// ExternalUserID identifies the sender within the provider. It is not a
 	// customer identity; one person may hold several of these across channels.
@@ -111,6 +129,11 @@ func (e Envelope) Validate() error {
 // the same provider message produce the same key, which is what lets a repeat
 // delivery be dropped rather than answered twice.
 func (e Envelope) DedupeKey() string {
+	// Telegram message_id is unique only inside its chat. Different customers
+	// routinely send messages with the same number.
+	if e.Provider == ProviderTelegram {
+		return string(e.Provider) + ":" + e.ExternalThreadID + ":" + e.ExternalMessageID
+	}
 	return string(e.Provider) + ":" + e.ExternalMessageID
 }
 

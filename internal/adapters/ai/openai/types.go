@@ -20,11 +20,23 @@ type responsesRequest struct {
 	Input []inputItem `json:"input"`
 	Tools []toolDef   `json:"tools,omitempty"`
 
-	MaxOutputTokens int `json:"max_output_tokens,omitempty"`
+	MaxOutputTokens int         `json:"max_output_tokens,omitempty"`
+	Text            *textConfig `json:"text,omitempty"`
 
 	// Store is false so OpenAI does not retain the conversation. This system
 	// keeps its own transcript and is the only place customer messages belong.
 	Store bool `json:"store"`
+}
+
+type textConfig struct {
+	Format textFormat `json:"format"`
+}
+
+type textFormat struct {
+	Type   string          `json:"type"`
+	Name   string          `json:"name"`
+	Strict bool            `json:"strict"`
+	Schema json.RawMessage `json:"schema"`
 }
 
 // toolDef declares a function the model may call.

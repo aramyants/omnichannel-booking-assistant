@@ -85,7 +85,11 @@ type photoSize struct {
 }
 
 type fileRef struct {
-	FileID string `json:"file_id"`
+	FileID   string `json:"file_id"`
+	MIMEType string `json:"mime_type"`
+	Filename string `json:"file_name"`
+	FileSize int64  `json:"file_size"`
+	Duration int    `json:"duration"`
 }
 
 type location struct {
@@ -131,6 +135,18 @@ type inlineKeyboardButton struct {
 type answerCallbackQueryRequest struct {
 	CallbackQueryID string `json:"callback_query_id"`
 	Text            string `json:"text,omitempty"`
+}
+
+type sendChatActionRequest struct {
+	ChatID string `json:"chat_id"`
+	Action string `json:"action"`
+}
+
+type editMessageTextRequest struct {
+	ChatID      string                `json:"chat_id"`
+	MessageID   int64                 `json:"message_id"`
+	Text        string                `json:"text"`
+	ReplyMarkup *inlineKeyboardMarkup `json:"reply_markup"`
 }
 
 // editMessageReplyMarkupRequest replaces the keyboard under a message. Sent

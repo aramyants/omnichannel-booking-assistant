@@ -83,7 +83,8 @@ type inboundMessage struct {
 }
 
 type media struct {
-	ID string `json:"id"`
+	ID       string `json:"id"`
+	MIMEType string `json:"mime_type"`
 }
 
 type mediaWithCaption struct {
@@ -100,13 +101,19 @@ type messagingEvent struct {
 	Timestamp int64 `json:"timestamp"`
 
 	Message *struct {
-		MID         string  `json:"mid"`
-		Text        string  `json:"text"`
-		Attachments []json0 `json:"attachments"`
+		MID         string `json:"mid"`
+		Text        string `json:"text"`
+		Attachments []struct {
+			Type    string `json:"type"`
+			Payload struct {
+				URL string `json:"url"`
+			} `json:"payload"`
+		} `json:"attachments"`
 
 		// IsEcho marks a message this system sent, echoed back. Treating one
 		// as a customer message would have the assistant answer itself.
-		IsEcho bool `json:"is_echo"`
+		IsEcho    bool `json:"is_echo"`
+		IsDeleted bool `json:"is_deleted"`
 	} `json:"message"`
 }
 

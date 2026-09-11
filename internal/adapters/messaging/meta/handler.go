@@ -29,13 +29,19 @@ type Handler struct {
 }
 
 // NewWhatsAppHandler returns the handler for the WhatsApp webhook endpoint.
-func NewWhatsAppHandler(webhook *Webhook, messages MessageHandler, logger *slog.Logger) *Handler {
+func NewWhatsAppHandler(webhook *Webhook, messages MessageHandler, logger *slog.Logger, phoneNumberIDs ...string) *Handler {
+	phoneNumberID := ""
+	if len(phoneNumberIDs) > 0 {
+		phoneNumberID = phoneNumberIDs[0]
+	}
 	return &Handler{
 		webhook:  webhook,
 		messages: messages,
 		logger:   logger,
-		parse:    ParseWhatsApp,
-		now:      time.Now,
+		parse: func(body []byte, receivedAt time.Time) ([]messaging.Envelope, error) {
+			return parseWhatsAppForNumber(body, receivedAt, phoneNumberID)
+		},
+		now: time.Now,
 	}
 }
 

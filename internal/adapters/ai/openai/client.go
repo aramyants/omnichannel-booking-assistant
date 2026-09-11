@@ -40,10 +40,11 @@ const (
 
 // Client talks to the OpenAI Responses API.
 type Client struct {
-	httpClient *http.Client
-	baseURL    string
-	apiKey     string
-	model      string
+	httpClient         *http.Client
+	baseURL            string
+	apiKey             string
+	model              string
+	transcriptionModel string
 }
 
 // Option customises a Client.
@@ -69,6 +70,14 @@ func WithModel(model string) Option {
 	}
 }
 
+func WithTranscriptionModel(model string) Option {
+	return func(c *Client) {
+		if model != "" {
+			c.transcriptionModel = model
+		}
+	}
+}
+
 // NewClient returns a client authenticated with an API key.
 func NewClient(apiKey string, opts ...Option) (*Client, error) {
 	if apiKey == "" {
@@ -76,10 +85,11 @@ func NewClient(apiKey string, opts ...Option) (*Client, error) {
 	}
 
 	c := &Client{
-		httpClient: &http.Client{Timeout: defaultTimeout},
-		baseURL:    defaultBaseURL,
-		apiKey:     apiKey,
-		model:      DefaultModel,
+		httpClient:         &http.Client{Timeout: defaultTimeout},
+		baseURL:            defaultBaseURL,
+		apiKey:             apiKey,
+		model:              DefaultModel,
+		transcriptionModel: "gpt-4o-mini-transcribe",
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -109,6 +119,12 @@ func (c *Client) Complete(ctx context.Context, req ai.Request) (ai.Response, err
 		MaxOutputTokens: maxTokens,
 		Store:           false,
 	}
+	if req.StructuredReply {
+		payload.Text = &textConfig{Format: textFormat{
+			Type: "json_schema", Name: "customer_reply", Strict: true,
+			Schema: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"choices":{"type":"array","items":{"type":"string"}}},"required":["text","choices"],"additionalProperties":false}`),
+		}}
+	}
 
 	var parsed responsesResponse
 	if err := c.post(ctx, "/responses", payload, &parsed); err != nil {
@@ -119,7 +135,25 @@ func (c *Client) Complete(ctx context.Context, req ai.Request) (ai.Response, err
 		return ai.Response{}, fmt.Errorf("openai: %w: %s", ai.ErrRejected, parsed.Error.Message)
 	}
 
-	return toResponse(parsed), nil
+	if parsed.Status != "" && parsed.Status != "completed" {
+		return ai.Response{}, fmt.Errorf("openai: incomplete response (%s)", parsed.Status)
+	}
+	response := toResponse(parsed)
+	if req.StructuredReply && !response.WantsTools() {
+		var reply struct {
+			Text    string   `json:"text"`
+			Choices []string `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(response.Text), &reply); err != nil {
+			return ai.Response{}, errors.New("openai: invalid structured customer reply")
+		}
+		if strings.TrimSpace(reply.Text) == "" {
+			return ai.Response{}, errors.New("openai: empty structured customer reply")
+		}
+		response.Text = strings.TrimSpace(reply.Text)
+		response.Choices = reply.Choices
+	}
+	return response, nil
 }
 
 // buildInput flattens the conversation into the shape the Responses API takes.

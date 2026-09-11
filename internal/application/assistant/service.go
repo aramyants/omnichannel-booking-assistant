@@ -106,7 +106,8 @@ type Deps struct {
 	// AI interprets the conversation. When it is absent the assistant falls
 	// back to a fixed reply rather than failing, so the channels keep working
 	// without a provider configured.
-	AI ai.Provider
+	AI     ai.Provider
+	Speech ai.Transcriber
 
 	// Scheduling is the calendar. Without it the assistant can talk but cannot
 	// answer anything about services or availability.
@@ -139,6 +140,7 @@ type Service struct {
 	logger        *slog.Logger
 	now           func() time.Time
 	ai            ai.Provider
+	speech        ai.Transcriber
 	tools         *toolset
 	business      Business
 	staff         StaffNotifier
@@ -183,6 +185,7 @@ func NewService(deps Deps) (*Service, error) {
 		logger:        deps.Logger,
 		now:           now,
 		ai:            deps.AI,
+		speech:        deps.Speech,
 		business:      business,
 		staff:         deps.Staff,
 		tools: &toolset{
@@ -227,6 +230,8 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 	if err := msg.Validate(); err != nil {
 		return err
 	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 
 	now := s.now()
 	claimID := id.New()
@@ -250,6 +255,14 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 		}
 	}()
 
+	unlock, err := s.lockConversation(ctx, msg, claimID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	// Record the actual processing time after waiting for the preceding turn.
+	now = s.now()
+
 	cust, err := s.identify(ctx, msg, now)
 	if err != nil {
 		return err
@@ -258,6 +271,40 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 	conv, err := s.openConversation(ctx, msg, cust, now)
 	if err != nil {
 		return err
+	}
+
+	// A callback must answer the current prompt. In particular an old "yes"
+	// cannot confirm a booking prepared after that button was sent.
+	retryingChoice := msg.ChoiceMessageID == conv.PendingChoiceMessageID && msg.ExternalMessageID == conv.PendingChoiceEventID
+	if conv.AssistantMayReply() && msg.ChoiceMessageID != "" && msg.ChoiceMessageID != conv.LastChoiceMessageID && !retryingChoice {
+		sender, ok := s.senders[msg.Provider]
+		if !ok {
+			return fmt.Errorf("no sender configured for %s", msg.Provider)
+		}
+		history, err := s.messages.Recent(ctx, conv.ID, recentMessageLimit)
+		if err != nil {
+			return err
+		}
+		if err := sender.Send(ctx, msg.Reply(expiredChoice(conversationLanguage(history, msg.Sender.Language)))); err != nil {
+			return err
+		}
+		releaseClaim = false
+		s.completeDelivery(ctx, msg.DedupeKey(), claimID, now)
+		return nil
+	}
+
+	audioFailed := false
+	if msg.Content.Type == messaging.ContentTypeAudio && (conv.AssistantMayReply() || conv.WaitingForHumanLongerThan(handoffTimeout, now)) {
+		transcribed, err := s.transcribeInput(ctx, msg)
+		if err != nil {
+			audioFailed = true
+			s.logger.WarnContext(ctx, "could not transcribe customer audio", "error", err, "conversation_id", conv.ID)
+			// Only the audio was lost. A caption is something the customer
+			// typed, and it belongs in the transcript like any other text.
+			msg.Content = messaging.Content{Type: messaging.ContentTypeUnsupported, Text: msg.Content.Text, Description: "voice message"}
+		} else {
+			msg = transcribed
+		}
 	}
 
 	if err := s.messages.Append(ctx, conversation.Message{
@@ -327,8 +374,22 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 		// phrases this system writes itself rather than asking the model for.
 		language: conversationLanguage(history, msg.Sender.Language),
 	}
+	conv.PendingChoiceMessageID, conv.PendingChoiceEventID = "", ""
+	if msg.ChoiceMessageID != "" {
+		conv.PendingChoiceMessageID, conv.PendingChoiceEventID = msg.ChoiceMessageID, msg.ExternalMessageID
+	}
+	s.retireChoices(ctx, sender, &conv)
 
-	text, err := s.reply(ctx, sess, msg, history)
+	// Bound the whole model/tool loop, leaving time to deliver a useful retry
+	// response even when a provider is slow. Typing feedback runs independently.
+	replyCtx, cancelReply := context.WithTimeout(ctx, 45*time.Second)
+	var text string
+	if audioFailed {
+		text = audioRetry(sess.language)
+	} else {
+		text, err = s.reply(replyCtx, sess, msg, history)
+	}
+	cancelReply()
 	if err != nil {
 		return err
 	}
@@ -363,8 +424,24 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 	// with buttons draws them; one without ignores them, and the reply names
 	// the same options in words either way.
 	reply := msg.Reply(text).WithChoices(sess.buttons(text))
-	if err := sender.Send(ctx, reply); err != nil {
+	var sentID string
+	if tracked, ok := sender.(choiceSender); ok {
+		sentID, err = tracked.SendTracked(ctx, reply)
+	} else {
+		err = sender.Send(ctx, reply)
+	}
+	if err != nil {
 		return fmt.Errorf("send the reply: %w", err)
+	}
+	if _, ok := sender.(choiceSender); ok {
+		conv.LastChoiceMessageID = ""
+		conv.PendingChoiceMessageID, conv.PendingChoiceEventID = "", ""
+		if len(reply.Choices) > 0 {
+			conv.LastChoiceMessageID = sentID
+		}
+		if err := s.conversations.Save(ctx, conv); err != nil {
+			s.logger.ErrorContext(ctx, "sent choices but could not store their message id", "error", err, "conversation_id", conv.ID)
+		}
 	}
 
 	// The customer already has the reply, so a failure to record it must not
@@ -506,9 +583,10 @@ func (s *Service) reply(
 	}
 
 	req := ai.Request{
-		Instructions: s.instructions(cust, msg.Sender.Language),
-		Messages:     toAIMessages(history),
-		Tools:        s.tools.definitions(),
+		Instructions:    s.instructions(cust, msg.Sender.Language),
+		Messages:        toAIMessages(history),
+		Tools:           s.tools.definitions(),
+		StructuredReply: true,
 	}
 
 	for round := 1; round <= maxToolRounds; round++ {
@@ -536,6 +614,7 @@ func (s *Service) reply(
 					"conversation_id", conv.ID)
 				return s.apologise(ctx, sess)
 			}
+			sess.selectChoices(resp.Choices)
 			return resp.Text, nil
 		}
 

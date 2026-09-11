@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
@@ -47,15 +48,21 @@ func (s *Service) RelayStaffReply(ctx context.Context, reply StaffReply) error {
 		return err
 	}
 
-	conv, err := s.conversations.FindByID(ctx, reply.ConversationID)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	conv, unlock, err := s.lockStoredConversation(ctx, reply.ConversationID)
 	if err != nil {
 		return fmt.Errorf("find the conversation a colleague replied to: %w", err)
 	}
+	defer unlock()
 
 	sender, ok := s.senders[conv.Provider]
 	if !ok {
 		return fmt.Errorf("no sender configured for %s", conv.Provider)
 	}
+	s.retireChoices(ctx, sender, &conv)
+	conv.LastChoiceMessageID = ""
+	conv.PendingChoiceMessageID, conv.PendingChoiceEventID = "", ""
 
 	text := reply.Text
 	if name := strings.TrimSpace(reply.AuthorName); name != "" {
@@ -127,10 +134,13 @@ func (s *Service) RunStaffCommand(
 	command StaffCommand,
 	conversationID string,
 ) (string, error) {
-	conv, err := s.conversations.FindByID(ctx, conversationID)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	conv, unlock, err := s.lockStoredConversation(ctx, conversationID)
 	if err != nil {
 		return "", fmt.Errorf("find the conversation: %w", err)
 	}
+	defer unlock()
 
 	var next conversation.State
 	switch command {

@@ -122,6 +122,22 @@ func run() error {
 		whatsappClient = client
 		senders[messaging.ProviderWhatsApp] = client
 	}
+	if cfg.Messenger.Enabled() {
+		client, err := meta.NewMessengerClient(cfg.Messenger.AccessToken, cfg.Messenger.AccountID,
+			meta.WithGraphVersion(cfg.Messenger.GraphVersion))
+		if err != nil {
+			return err
+		}
+		senders[messaging.ProviderMessenger] = client
+	}
+	if cfg.Instagram.Enabled() {
+		client, err := meta.NewInstagramClient(cfg.Instagram.AccessToken, cfg.Instagram.AccountID,
+			meta.WithGraphVersion(cfg.Instagram.GraphVersion))
+		if err != nil {
+			return err
+		}
+		senders[messaging.ProviderInstagram] = client
+	}
 
 	// Without a staff channel a customer asking for a person changes a stored
 	// state and nobody is told, so the absence is worth saying out loud.
@@ -152,8 +168,9 @@ func run() error {
 	}
 
 	var model ai.Provider
+	var speech ai.Transcriber
 	if cfg.AI.Enabled() {
-		opts := []openai.Option{openai.WithModel(cfg.AI.Model)}
+		opts := []openai.Option{openai.WithModel(cfg.AI.Model), openai.WithTranscriptionModel(cfg.AI.TranscriptionModel)}
 		if cfg.AI.BaseURL != "" {
 			opts = append(opts, openai.WithBaseURL(cfg.AI.BaseURL))
 			logger.Warn("using a non-default openai host", "host", cfg.AI.BaseURL)
@@ -164,6 +181,7 @@ func run() error {
 			return err
 		}
 		model = client
+		speech = client
 		logger.Info("language model configured", "model", client.Model())
 	} else {
 		logger.Warn("no language model configured: the assistant will acknowledge " +
@@ -206,6 +224,7 @@ func run() error {
 		Processed:     store,
 		Logger:        logger,
 		AI:            model,
+		Speech:        speech,
 		Scheduling:    scheduling,
 		Bookings:      store,
 		Staff:         staff,
@@ -240,7 +259,21 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		gw.whatsapp = meta.NewWhatsAppHandler(webhook, assistantService, logger)
+		gw.whatsapp = meta.NewWhatsAppHandler(webhook, assistantService, logger, cfg.WhatsApp.PhoneNumberID)
+	}
+	if cfg.Messenger.Enabled() {
+		webhook, err := meta.NewWebhook(cfg.Messenger.AppSecret, cfg.Messenger.VerifyToken)
+		if err != nil {
+			return err
+		}
+		gw.messenger = meta.NewMessengerHandler(webhook, assistantService, logger, cfg.Messenger.AccountID)
+	}
+	if cfg.Instagram.Enabled() {
+		webhook, err := meta.NewWebhook(cfg.Instagram.AppSecret, cfg.Instagram.VerifyToken)
+		if err != nil {
+			return err
+		}
+		gw.instagram = meta.NewInstagramHandler(webhook, assistantService, logger, cfg.Instagram.AccountID)
 	}
 
 	srv, err := httpserver.New(ctx, cfg.Addr(), gw.routes(), logger, cfg.ShutdownTimeout)
@@ -507,6 +540,12 @@ func enabledChannels(cfg config.Config) []string {
 	}
 	if cfg.WhatsApp.Enabled() {
 		channels = append(channels, string(messaging.ProviderWhatsApp))
+	}
+	if cfg.Messenger.Enabled() {
+		channels = append(channels, string(messaging.ProviderMessenger))
+	}
+	if cfg.Instagram.Enabled() {
+		channels = append(channels, string(messaging.ProviderInstagram))
 	}
 	return channels
 }

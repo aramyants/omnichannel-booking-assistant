@@ -71,6 +71,15 @@ type Conversation struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	LastMessageAt time.Time
+
+	// LastChoiceMessageID identifies the current provider message with buttons.
+	// Persisting it allows any service instance to retire an answered keyboard.
+	LastChoiceMessageID string
+
+	// A failed reply may retry the same consumed callback, but a different tap
+	// on that old keyboard must not act on a newly prepared draft.
+	PendingChoiceMessageID string
+	PendingChoiceEventID   string
 }
 
 // Key is the unique address of a conversation across all channels.

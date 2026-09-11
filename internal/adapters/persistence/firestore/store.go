@@ -202,28 +202,36 @@ type changeDraftDoc struct {
 }
 
 type conversationDoc struct {
-	ID               string          `firestore:"id"`
-	CustomerID       string          `firestore:"customer_id"`
-	Provider         string          `firestore:"provider"`
-	ExternalThreadID string          `firestore:"external_thread_id"`
-	State            string          `firestore:"state"`
-	Draft            *draftDoc       `firestore:"draft"`
-	BookingChange    *changeDraftDoc `firestore:"booking_change"`
-	CreatedAt        time.Time       `firestore:"created_at"`
-	UpdatedAt        time.Time       `firestore:"updated_at"`
-	LastMessageAt    time.Time       `firestore:"last_message_at"`
+	ID                     string          `firestore:"id"`
+	CustomerID             string          `firestore:"customer_id"`
+	Provider               string          `firestore:"provider"`
+	ExternalThreadID       string          `firestore:"external_thread_id"`
+	State                  string          `firestore:"state"`
+	Draft                  *draftDoc       `firestore:"draft"`
+	BookingChange          *changeDraftDoc `firestore:"booking_change"`
+	CreatedAt              time.Time       `firestore:"created_at"`
+	UpdatedAt              time.Time       `firestore:"updated_at"`
+	LastMessageAt          time.Time       `firestore:"last_message_at"`
+	LastChoiceMessageID    string          `firestore:"last_choice_message_id"`
+	PendingChoiceMessageID string          `firestore:"pending_choice_message_id"`
+	PendingChoiceEventID   string          `firestore:"pending_choice_event_id"`
+	HandoffAt              time.Time       `firestore:"handoff_at"`
 }
 
 func toConversationDoc(conv conversation.Conversation) conversationDoc {
 	doc := conversationDoc{
-		ID:               conv.ID,
-		CustomerID:       conv.CustomerID,
-		Provider:         string(conv.Provider),
-		ExternalThreadID: conv.ExternalThreadID,
-		State:            string(conv.State),
-		CreatedAt:        conv.CreatedAt,
-		UpdatedAt:        conv.UpdatedAt,
-		LastMessageAt:    conv.LastMessageAt,
+		ID:                     conv.ID,
+		CustomerID:             conv.CustomerID,
+		Provider:               string(conv.Provider),
+		ExternalThreadID:       conv.ExternalThreadID,
+		State:                  string(conv.State),
+		CreatedAt:              conv.CreatedAt,
+		UpdatedAt:              conv.UpdatedAt,
+		LastMessageAt:          conv.LastMessageAt,
+		LastChoiceMessageID:    conv.LastChoiceMessageID,
+		PendingChoiceMessageID: conv.PendingChoiceMessageID,
+		PendingChoiceEventID:   conv.PendingChoiceEventID,
+		HandoffAt:              conv.HandoffAt,
 	}
 
 	if conv.Draft != nil {
@@ -255,14 +263,18 @@ func toConversationDoc(conv conversation.Conversation) conversationDoc {
 
 func fromConversationDoc(doc conversationDoc) conversation.Conversation {
 	conv := conversation.Conversation{
-		ID:               doc.ID,
-		CustomerID:       doc.CustomerID,
-		Provider:         messaging.Provider(doc.Provider),
-		ExternalThreadID: doc.ExternalThreadID,
-		State:            conversation.State(doc.State),
-		CreatedAt:        doc.CreatedAt,
-		UpdatedAt:        doc.UpdatedAt,
-		LastMessageAt:    doc.LastMessageAt,
+		ID:                     doc.ID,
+		CustomerID:             doc.CustomerID,
+		Provider:               messaging.Provider(doc.Provider),
+		ExternalThreadID:       doc.ExternalThreadID,
+		State:                  conversation.State(doc.State),
+		CreatedAt:              doc.CreatedAt,
+		UpdatedAt:              doc.UpdatedAt,
+		LastMessageAt:          doc.LastMessageAt,
+		LastChoiceMessageID:    doc.LastChoiceMessageID,
+		PendingChoiceMessageID: doc.PendingChoiceMessageID,
+		PendingChoiceEventID:   doc.PendingChoiceEventID,
+		HandoffAt:              doc.HandoffAt,
 	}
 
 	if doc.Draft != nil {
@@ -476,6 +488,8 @@ func (s *Store) Claim(ctx context.Context, key, claimID string, at time.Time) (b
 	claimed := false
 
 	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		// Firestore may retry the callback after another request wins the lease.
+		claimed = false
 		snapshot, err := tx.Get(ref)
 		if err == nil {
 			var doc processedDoc

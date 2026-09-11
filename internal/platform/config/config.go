@@ -58,6 +58,8 @@ type Config struct {
 
 	Telegram  Telegram
 	WhatsApp  WhatsApp
+	Messenger DirectMessaging
+	Instagram DirectMessaging
 	Altegio   Altegio
 	AI        AI
 	Storage   Storage
@@ -118,7 +120,8 @@ type AI struct {
 	// Model is the model identifier. It is configurable because model names
 	// change faster than deployments do, so correcting one is a configuration
 	// change rather than a release. Empty uses the adapter's default.
-	Model string
+	Model              string
+	TranscriptionModel string
 
 	// BaseURL overrides the API host, for exercising the assistant locally
 	// against a stub and for routing through a proxy. Empty means the real API.
@@ -215,7 +218,7 @@ func (w WhatsApp) Enabled() bool { return w.AccessToken != "" }
 // than defaulted.
 func (w WhatsApp) validate() []error {
 	if !w.Enabled() {
-		if w.PhoneNumberID != "" || w.AppSecret != "" || w.VerifyToken != "" {
+		if w.PhoneNumberID != "" {
 			return []error{errors.New(
 				"WHATSAPP_* settings are present but WHATSAPP_ACCESS_TOKEN is not")}
 		}
@@ -233,6 +236,46 @@ func (w WhatsApp) validate() []error {
 		errs = append(errs, errors.New("META_VERIFY_TOKEN is required when WHATSAPP_ACCESS_TOKEN is set"))
 	}
 	return errs
+}
+
+// DirectMessaging configures Messenger (Page token and Page ID) or Instagram
+// Login (Instagram User token and professional account ID). META_* settings
+// are shared with WhatsApp because these products belong to the same app.
+type DirectMessaging struct {
+	AccessToken  string
+	AccountID    string
+	AppSecret    string
+	VerifyToken  string
+	GraphVersion string
+}
+
+func (d DirectMessaging) Enabled() bool { return d.AccessToken != "" }
+
+func loadDirectMessaging(prefix, idName string) (DirectMessaging, []error) {
+	d := DirectMessaging{
+		AccessToken: getenv(prefix+"_ACCESS_TOKEN", ""), AccountID: getenv(idName, ""),
+		AppSecret: getenv(prefix+"_APP_SECRET", getenv("META_APP_SECRET", "")), VerifyToken: getenv("META_VERIFY_TOKEN", ""),
+		GraphVersion: getenv("META_GRAPH_VERSION", ""),
+	}
+	var errs []error
+	if !d.Enabled() {
+		if d.AccountID != "" {
+			errs = append(errs, fmt.Errorf("%s requires %s_ACCESS_TOKEN", idName, prefix))
+		}
+		return d, errs
+	}
+	// A slice, not a map: the startup error lists these in a fixed order so
+	// two runs of the same misconfiguration produce the same log line.
+	for _, setting := range []struct{ name, value string }{
+		{idName, d.AccountID},
+		{"META_APP_SECRET", d.AppSecret},
+		{"META_VERIFY_TOKEN", d.VerifyToken},
+	} {
+		if setting.value == "" {
+			errs = append(errs, fmt.Errorf("%s is required when %s_ACCESS_TOKEN is set", setting.name, prefix))
+		}
+	}
+	return d, errs
 }
 
 // Enabled reports whether the Telegram channel is configured.
@@ -307,6 +350,15 @@ func Load() (Config, error) {
 		GraphVersion:  getenv("META_GRAPH_VERSION", ""),
 	}
 	errs = append(errs, cfg.WhatsApp.validate()...)
+	var directErrs []error
+	cfg.Messenger, directErrs = loadDirectMessaging("MESSENGER", "MESSENGER_PAGE_ID")
+	errs = append(errs, directErrs...)
+	cfg.Instagram, directErrs = loadDirectMessaging("INSTAGRAM", "INSTAGRAM_ACCOUNT_ID")
+	errs = append(errs, directErrs...)
+	if !cfg.WhatsApp.Enabled() && !cfg.Messenger.Enabled() && !cfg.Instagram.Enabled() &&
+		(cfg.WhatsApp.AppSecret != "" || cfg.WhatsApp.VerifyToken != "") {
+		errs = append(errs, errors.New("META_* secrets are set but no Meta channel access token is configured"))
+	}
 
 	altegio, altegioErrs := loadAltegio()
 	cfg.Altegio = altegio
@@ -315,9 +367,10 @@ func Load() (Config, error) {
 	cfg.BusinessName = getenv("BUSINESS_NAME", "")
 	cfg.BusinessDescription = getenv("BUSINESS_DESCRIPTION", "")
 	cfg.AI = AI{
-		APIKey:  getenv("OPENAI_API_KEY", ""),
-		Model:   getenv("OPENAI_MODEL", ""),
-		BaseURL: strings.TrimSuffix(getenv("OPENAI_BASE_URL", ""), "/"),
+		APIKey:             getenv("OPENAI_API_KEY", ""),
+		Model:              getenv("OPENAI_MODEL", ""),
+		TranscriptionModel: getenv("OPENAI_TRANSCRIPTION_MODEL", ""),
+		BaseURL:            strings.TrimSuffix(getenv("OPENAI_BASE_URL", ""), "/"),
 	}
 	if !cfg.AI.Enabled() && cfg.AI.Model != "" {
 		errs = append(errs, errors.New("OPENAI_MODEL is set but OPENAI_API_KEY is not"))
@@ -375,16 +428,16 @@ func loadReminders(env Environment, projectID string) (Reminders, []error) {
 				"REMINDER_BACKEND=memory is refused in production: timers would be lost on restart"))
 		}
 	case RemindersCloudTasks:
-		for name, value := range map[string]string{
-			"GCP_PROJECT_ID":              cfg.ProjectID,
-			"CLOUD_TASKS_LOCATION":        cfg.Location,
-			"CLOUD_TASKS_QUEUE":           cfg.Queue,
-			"CLOUD_TASKS_TARGET_URL":      cfg.TargetURL,
-			"CLOUD_TASKS_AUDIENCE":        cfg.Audience,
-			"CLOUD_TASKS_SERVICE_ACCOUNT": cfg.ServiceAccountEmail,
+		for _, setting := range []struct{ name, value string }{
+			{"GCP_PROJECT_ID", cfg.ProjectID},
+			{"CLOUD_TASKS_LOCATION", cfg.Location},
+			{"CLOUD_TASKS_QUEUE", cfg.Queue},
+			{"CLOUD_TASKS_TARGET_URL", cfg.TargetURL},
+			{"CLOUD_TASKS_AUDIENCE", cfg.Audience},
+			{"CLOUD_TASKS_SERVICE_ACCOUNT", cfg.ServiceAccountEmail},
 		} {
-			if value == "" {
-				errs = append(errs, fmt.Errorf("%s is required when REMINDER_BACKEND=cloudtasks", name))
+			if setting.value == "" {
+				errs = append(errs, fmt.Errorf("%s is required when REMINDER_BACKEND=cloudtasks", setting.name))
 			}
 		}
 		if cfg.TargetURL != "" {

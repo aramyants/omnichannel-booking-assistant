@@ -31,7 +31,7 @@ func TestFreeTimesAreOfferedAsButtons(t *testing.T) {
 	model := &scriptedAI{responses: []ai.Response{
 		toolResponse("call_1", toolAvailableSlots,
 			`{"staff_id":"501","date":"`+bookingDay()+`"}`),
-		textResponse("Ten or half past ten suit?"),
+		{Text: "Would 10:00 or 10:30 suit?", Choices: []string{"10:00", "10:30"}},
 	}}
 	svc, _ := newAIService(t, model, defaultScheduling(), sender)
 

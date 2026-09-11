@@ -3,6 +3,7 @@ package altegio
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -15,9 +16,20 @@ import (
 // assistant must not be able to offer something the business has withdrawn,
 // and filtering at the boundary means no later stage has to remember to.
 func (c *Client) ListServices(ctx context.Context) ([]booking.Service, error) {
+	return c.ListServicesForStaff(ctx, "")
+}
+
+// ListServicesForStaff reads the services this specialist can actually perform,
+// including their duration and price. The unfiltered catalogue can contain a
+// service another specialist offers and returns null durations on real accounts.
+func (c *Client) ListServicesForStaff(ctx context.Context, staffID string) ([]booking.Service, error) {
+	query := url.Values{}
+	if staffID != "" {
+		query.Set("staff_id", staffID)
+	}
 	catalogue, err := call[serviceCatalogue](ctx, c, request{
 		method:     http.MethodGet,
-		path:       "/book_services/" + c.companyID,
+		path:       withQuery("/book_services/"+c.companyID, query),
 		repeatable: true,
 	})
 	if err != nil {
@@ -54,9 +66,19 @@ func (c *Client) ListServices(ctx context.Context) ([]booking.Service, error) {
 // because the assistant may still need to explain that a named person is
 // unavailable rather than pretend they do not exist.
 func (c *Client) ListStaff(ctx context.Context) ([]booking.Staff, error) {
+	return c.ListStaffForServices(ctx, nil)
+}
+
+// ListStaffForServices limits the choice to specialists qualified for every
+// selected service. A person being bookable in general does not establish that.
+func (c *Client) ListStaffForServices(ctx context.Context, serviceIDs []string) ([]booking.Staff, error) {
+	query, err := serviceQuery(serviceIDs)
+	if err != nil {
+		return nil, err
+	}
 	dtos, err := call[[]staffDTO](ctx, c, request{
 		method:     http.MethodGet,
-		path:       "/book_staff/" + c.companyID,
+		path:       withQuery("/book_staff/"+c.companyID, query),
 		repeatable: true,
 	})
 	if err != nil {

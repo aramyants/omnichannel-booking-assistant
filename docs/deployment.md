@@ -14,7 +14,7 @@ care of.
 | Google Cloud project with billing enabled | console.cloud.google.com | Everything |
 | Telegram bot token | BotFather, in Telegram | The Telegram channel |
 | Altegio partner and user tokens, and the company id | Altegio marketplace and account settings | Reading availability and creating bookings |
-| Meta app with WhatsApp, Instagram or Messenger access | developers.facebook.com, with business verification | The Meta channels |
+| Meta app and channel-specific account tokens/access | developers.facebook.com; see [Meta setup](meta-setup.md) | WhatsApp, Instagram and Messenger |
 
 Nothing else needs a console. Once those values exist, deployment is one
 command.
@@ -132,10 +132,23 @@ URL when managing the business.
 
 ## Meta channels
 
-Not yet implemented. WhatsApp, Instagram and Messenger all run through one Meta
-app at [developers.facebook.com](https://developers.facebook.com), and all three
-require business verification, which takes days and needs company documents.
-Start that process early if those channels matter.
+WhatsApp Cloud API, Messenger and Instagram Login have incoming text and outgoing
+reply adapters. Each channel needs its own account ID/token and webhook
+subscription; business verification alone does not connect the channel.
+Follow the [Meta setup checklist](meta-setup.md) for credentials, callback URLs,
+account subscriptions and the separate access/review requirements.
+
+The deployment stores `WHATSAPP_ACCESS_TOKEN`, `MESSENGER_ACCESS_TOKEN`,
+`INSTAGRAM_ACCESS_TOKEN`, `META_APP_SECRET` and `META_VERIFY_TOKEN` in Secret
+Manager. Their account IDs and `META_GRAPH_VERSION` are ordinary environment
+settings. Leave a channel's access token and account ID empty to disable it.
+
+Meta channels receive text/audio and reply with text; Telegram-specific inline
+buttons are not sent on Meta. Incoming audio uses `OPENAI_API_KEY` with
+`OPENAI_TRANSCRIPTION_MODEL` (default `gpt-4o-mini-transcribe`). Automated reminders
+are currently Telegram only; Meta reminders are skipped until channel-specific
+templates and messaging-window handling are implemented. Staff follow-ups remain
+subject to each channel's messaging window.
 
 ## Operating the service
 

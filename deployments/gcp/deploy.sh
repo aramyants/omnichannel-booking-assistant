@@ -156,6 +156,10 @@ store ALTEGIO_PARTNER_TOKEN    altegio-partner-token    "${ALTEGIO_PARTNER_TOKEN
 store ALTEGIO_USER_TOKEN       altegio-user-token       "${ALTEGIO_USER_TOKEN:-}"
 store OPENAI_API_KEY           openai-api-key           "${OPENAI_API_KEY:-}"
 store WHATSAPP_ACCESS_TOKEN    whatsapp-access-token    "${WHATSAPP_ACCESS_TOKEN:-}"
+store MESSENGER_ACCESS_TOKEN   messenger-access-token   "${MESSENGER_ACCESS_TOKEN:-}"
+store INSTAGRAM_ACCESS_TOKEN   instagram-access-token   "${INSTAGRAM_ACCESS_TOKEN:-}"
+store INSTAGRAM_APP_SECRET     instagram-app-secret     "${INSTAGRAM_APP_SECRET:-}"
+store MESSENGER_APP_SECRET     messenger-app-secret     "${MESSENGER_APP_SECRET:-}"
 store META_APP_SECRET          meta-app-secret          "${META_APP_SECRET:-}"
 store META_VERIFY_TOKEN        meta-verify-token        "${META_VERIFY_TOKEN:-}"
 
@@ -201,7 +205,10 @@ fi
 [[ -n "${ALTEGIO_TIMEZONE:-}" ]]  && ENV_VARS+=",ALTEGIO_TIMEZONE=${ALTEGIO_TIMEZONE}"
 [[ -n "${ALTEGIO_CURRENCY:-}" ]]  && ENV_VARS+=",ALTEGIO_CURRENCY=${ALTEGIO_CURRENCY}"
 [[ -n "${OPENAI_MODEL:-}" ]]      && ENV_VARS+=",OPENAI_MODEL=${OPENAI_MODEL}"
+[[ -n "${OPENAI_TRANSCRIPTION_MODEL:-}" ]] && ENV_VARS+=",OPENAI_TRANSCRIPTION_MODEL=${OPENAI_TRANSCRIPTION_MODEL}"
 [[ -n "${WHATSAPP_PHONE_NUMBER_ID:-}" ]] && ENV_VARS+=",WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}"
+[[ -n "${MESSENGER_PAGE_ID:-}" ]]       && ENV_VARS+=",MESSENGER_PAGE_ID=${MESSENGER_PAGE_ID}"
+[[ -n "${INSTAGRAM_ACCOUNT_ID:-}" ]]   && ENV_VARS+=",INSTAGRAM_ACCOUNT_ID=${INSTAGRAM_ACCOUNT_ID}"
 [[ -n "${META_GRAPH_VERSION:-}" ]]       && ENV_VARS+=",META_GRAPH_VERSION=${META_GRAPH_VERSION}"
 [[ -n "${TELEGRAM_STAFF_CHAT_ID:-}" ]] && ENV_VARS+=",TELEGRAM_STAFF_CHAT_ID=${TELEGRAM_STAFF_CHAT_ID}"
 

@@ -81,6 +81,22 @@ func reminderConversation() conversation.Conversation {
 	}
 }
 
+func TestMetaRemindersAreNotScheduledWithoutWindowAwareDelivery(t *testing.T) {
+	now := testNow
+	scheduler := &fakeScheduler{}
+	svc, _ := newTestService(t, &now, scheduler, &fakeSender{})
+	for _, provider := range []messaging.Provider{messaging.ProviderWhatsApp, messaging.ProviderInstagram, messaging.ProviderMessenger} {
+		conv := reminderConversation()
+		conv.Provider = provider
+		if err := svc.Plan(t.Context(), appointment(now.Add(72*time.Hour)), conv); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(scheduler.snapshot()) != 0 {
+		t.Fatal("Meta reminder was scheduled without templates or window handling")
+	}
+}
+
 func newTestService(
 	t *testing.T,
 	now *time.Time,

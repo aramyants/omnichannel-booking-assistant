@@ -272,3 +272,81 @@ func TestUnreadableResponsesBecomeErrors(t *testing.T) {
 		t.Error("a 502 was classified as permanent")
 	}
 }
+
+func TestSendTypingUsesNativeChatAction(t *testing.T) {
+	var got sendChatActionRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/bot"+testToken+"/sendChatAction" {
+			t.Errorf("method path = %q", r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+	}))
+	defer srv.Close()
+	client := NewClient(testToken, WithBaseURL(srv.URL))
+	if err := client.SendTyping(t.Context(), "219847362"); err != nil {
+		t.Fatal(err)
+	}
+	if got.ChatID != "219847362" || got.Action != "typing" {
+		t.Errorf("typing request = %+v", got)
+	}
+}
+
+func TestSelectionEditRemovesKeyboardAndKeepsPlainText(t *testing.T) {
+	var got map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/bot"+testToken+"/editMessageText" {
+			t.Errorf("method path = %q", r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":4128}}`))
+	}))
+	defer srv.Close()
+	client := NewClient(testToken, WithBaseURL(srv.URL))
+	text := "Which specialist?\n\n✓ <Garik>"
+	if err := client.ShowSelection(t.Context(), "219847362", 4128, text); err != nil {
+		t.Fatal(err)
+	}
+	var parsed editMessageTextRequest
+	raw, _ := json.Marshal(got)
+	_ = json.Unmarshal(raw, &parsed)
+	if parsed.ChatID != "219847362" || parsed.MessageID != 4128 || parsed.Text != text {
+		t.Errorf("selection request = %+v", parsed)
+	}
+	if parsed.ReplyMarkup == nil || parsed.ReplyMarkup.Keyboard == nil || len(parsed.ReplyMarkup.Keyboard) != 0 {
+		t.Errorf("selection must explicitly clear the inline keyboard: %s", raw)
+	}
+	if _, exists := got["parse_mode"]; exists {
+		t.Error("a label containing markup would be interpreted")
+	}
+}
+
+func TestTrackedReplyCanRetireItsPersistedKeyboard(t *testing.T) {
+	var retired editMessageReplyMarkupRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/bot" + testToken + "/sendMessage":
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":4128}}`))
+		case "/bot" + testToken + "/editMessageReplyMarkup":
+			_ = json.NewDecoder(r.Body).Decode(&retired)
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":4128}}`))
+		default:
+			t.Errorf("unexpected method %q", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	client := NewClient(testToken, WithBaseURL(srv.URL))
+	id, err := client.SendTracked(t.Context(), testMessage().WithChoices([]messaging.Choice{{Label: "16:00"}}))
+	if err != nil || id != "4128" {
+		t.Fatalf("tracked send = %q, %v", id, err)
+	}
+	// A new adapter instance still retires the stored ID; no process-local
+	// keyboard map is needed when a different Cloud Run instance gets the reply.
+	nextClient := NewClient(testToken, WithBaseURL(srv.URL))
+	if err := nextClient.RetireChoices(t.Context(), "219847362", id); err != nil {
+		t.Fatal(err)
+	}
+	if retired.ChatID != "219847362" || retired.MessageID != 4128 || retired.ReplyMarkup != nil {
+		t.Errorf("retired wrong keyboard: %+v", retired)
+	}
+}

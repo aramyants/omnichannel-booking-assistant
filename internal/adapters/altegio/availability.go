@@ -19,19 +19,23 @@ const dateLayout = "2006-01-02"
 // The dates are calendar days in the business's own timezone, not instants, so
 // they are returned as midnight in that location rather than converted to UTC.
 func (c *Client) AvailableDates(ctx context.Context, staffID string) ([]time.Time, error) {
-	query := url.Values{}
+	return c.AvailableDatesForServices(ctx, staffID, nil)
+}
+
+// AvailableDatesForServices accounts for the duration and specialist eligibility
+// of the selected services, rather than showing any gap in the staff calendar.
+func (c *Client) AvailableDatesForServices(ctx context.Context, staffID string, serviceIDs []string) ([]time.Time, error) {
+	query, err := serviceQuery(serviceIDs)
+	if err != nil {
+		return nil, err
+	}
 	if staffID != "" {
 		query.Set("staff_id", staffID)
 	}
 
-	path := "/book_dates/" + c.companyID
-	if encoded := query.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
-
 	dates, err := call[bookingDates](ctx, c, request{
 		method:     http.MethodGet,
-		path:       path,
+		path:       withQuery("/book_dates/"+c.companyID, query),
 		repeatable: true,
 	})
 	if err != nil {
@@ -57,13 +61,23 @@ func (c *Client) AvailableDates(ctx context.Context, staffID string) ([]time.Tim
 // so a booking against any of these slots can still be refused, and the
 // conversation has to be able to say so.
 func (c *Client) AvailableSlots(ctx context.Context, staffID string, day time.Time) ([]booking.Slot, error) {
+	return c.AvailableSlotsForServices(ctx, staffID, day, nil)
+}
+
+// AvailableSlotsForServices returns starts and durations for the requested
+// services. Unfiltered times can fit a shorter treatment but not this one.
+func (c *Client) AvailableSlotsForServices(ctx context.Context, staffID string, day time.Time, serviceIDs []string) ([]booking.Slot, error) {
 	if staffID == "" {
 		return nil, fmt.Errorf("%w: staff id is required to read availability", booking.ErrRejected)
+	}
+	query, err := serviceQuery(serviceIDs)
+	if err != nil {
+		return nil, err
 	}
 
 	dtos, err := call[[]slotDTO](ctx, c, request{
 		method:     http.MethodGet,
-		path:       "/book_times/" + c.companyID + "/" + staffID + "/" + day.Format(dateLayout),
+		path:       withQuery("/book_times/"+c.companyID+"/"+staffID+"/"+day.Format(dateLayout), query),
 		repeatable: true,
 	})
 	if err != nil {
@@ -120,4 +134,25 @@ func parseServiceIDs(ids []string) ([]int64, error) {
 		parsed = append(parsed, value)
 	}
 	return parsed, nil
+}
+
+// Altegio expects a repeated service_ids[] parameter, not a comma-separated
+// string. Keep this encoding shared by staff, date and time lookups.
+func serviceQuery(serviceIDs []string) (url.Values, error) {
+	parsed, err := parseServiceIDs(serviceIDs)
+	if err != nil {
+		return nil, err
+	}
+	query := url.Values{}
+	for _, serviceID := range parsed {
+		query.Add("service_ids[]", strconv.FormatInt(serviceID, 10))
+	}
+	return query, nil
+}
+
+func withQuery(path string, query url.Values) string {
+	if encoded := query.Encode(); encoded != "" {
+		return path + "?" + encoded
+	}
+	return path
 }

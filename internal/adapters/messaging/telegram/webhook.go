@@ -85,6 +85,10 @@ type Callback struct {
 	ChatID    string
 	MessageID int64
 
+	// MessageText is the original question, preserved when a button selection
+	// is recorded visibly and the answered keyboard is removed.
+	MessageText string
+
 	// Data is what the button carried: a position in the keyboard for a
 	// customer's answer, or an action and a conversation for a colleague's.
 	Data string
@@ -118,10 +122,11 @@ func (w *Webhook) ParseCallback(body []byte) (*Callback, error) {
 
 	now := w.now().UTC()
 	callback := &Callback{
-		QueryID:   query.ID,
-		ChatID:    strconv.FormatInt(query.Message.Chat.ID, 10),
-		MessageID: query.Message.MessageID,
-		Data:      query.Data,
+		QueryID:     query.ID,
+		ChatID:      strconv.FormatInt(query.Message.Chat.ID, 10),
+		MessageID:   query.Message.MessageID,
+		MessageText: query.Message.Text,
+		Data:        query.Data,
 	}
 
 	label, ok := labelForCallback(query.Message.ReplyMarkup, query.Data)
@@ -134,6 +139,7 @@ func (w *Webhook) ParseCallback(body []byte) (*Callback, error) {
 		// The query id, not the message id: the message is the assistant's own
 		// and would collide with itself on every press of the same keyboard.
 		ExternalMessageID: "callback:" + query.ID,
+		ChoiceMessageID:   strconv.FormatInt(query.Message.MessageID, 10),
 		ExternalUserID:    strconv.FormatInt(query.From.ID, 10),
 		ExternalThreadID:  callback.ChatID,
 		SentAt:            now,
@@ -200,6 +206,13 @@ func displayName(u *user) string {
 func content(m *message) messaging.Content {
 	if m.Text != "" {
 		return messaging.Content{Type: messaging.ContentTypeText, Text: m.Text}
+	}
+	for _, audio := range []*fileRef{m.Voice, m.Audio} {
+		if audio != nil {
+			return messaging.Content{Type: messaging.ContentTypeAudio, Text: m.Caption, Description: "voice message", Audio: &messaging.Audio{
+				Reference: audio.FileID, MIMEType: audio.MIMEType, Filename: audio.Filename, SizeBytes: audio.FileSize, DurationSeconds: audio.Duration,
+			}}
+		}
 	}
 	if m.Caption != "" {
 		return messaging.Content{Type: messaging.ContentTypeText, Text: m.Caption}

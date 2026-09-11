@@ -101,6 +101,22 @@ func (c *Client) Send(ctx context.Context, msg messaging.Outgoing) error {
 	return err
 }
 
+// SendTracked delivers a reply and returns the provider message ID so the
+// conversation can retire its choices when the customer moves to another step.
+func (c *Client) SendTracked(ctx context.Context, msg messaging.Outgoing) (string, error) {
+	return c.SendReturningID(ctx, msg)
+}
+
+// RetireChoices removes a previous reply's choices, including when the customer
+// answered by typing. The application stores this ID across process restarts.
+func (c *Client) RetireChoices(ctx context.Context, threadID, messageID string) error {
+	id, err := strconv.ParseInt(messageID, 10, 64)
+	if err != nil || id <= 0 {
+		return fmt.Errorf("telegram: invalid choice message id %q", messageID)
+	}
+	return c.ClearKeyboard(ctx, threadID, id)
+}
+
 // SendReturningID delivers a message and reports the id Telegram gave it.
 //
 // The id is what makes a conversation out of a notification: a colleague
@@ -196,6 +212,29 @@ func (c *Client) AnswerCallback(ctx context.Context, callbackQueryID, text strin
 	_, err := c.call(ctx, "answerCallbackQuery", answerCallbackQueryRequest{
 		CallbackQueryID: callbackQueryID,
 		Text:            text,
+	})
+	return err
+}
+
+// SendTyping shows Telegram's native typing status above the conversation.
+// Telegram clears it on delivery of a message, or after at most five seconds.
+func (c *Client) SendTyping(ctx context.Context, chatID string) error {
+	_, err := c.call(ctx, "sendChatAction", sendChatActionRequest{
+		ChatID: chatID,
+		Action: "typing",
+	})
+	return err
+}
+
+// ShowSelection preserves a button answer in the chat itself. Inline button
+// presses otherwise leave no visible customer message, making the assistant's
+// next question appear unsolicited. Editing also removes the answered keyboard.
+func (c *Client) ShowSelection(ctx context.Context, chatID string, messageID int64, text string) error {
+	_, err := c.call(ctx, "editMessageText", editMessageTextRequest{
+		ChatID:      chatID,
+		MessageID:   messageID,
+		Text:        text,
+		ReplyMarkup: &inlineKeyboardMarkup{Keyboard: [][]inlineKeyboardButton{}},
 	})
 	return err
 }

@@ -114,6 +114,25 @@ func TestTelegramRouteIsServedWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestMetaRoutesOnlyExistForConfiguredChannels(t *testing.T) {
+	for _, path := range []string{WhatsAppWebhookPath, InstagramWebhookPath, MessengerWebhookPath} {
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			rec := httptest.NewRecorder()
+			testRoutes().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, path, nil))
+			if rec.Code != http.StatusNotFound {
+				t.Errorf("disabled route %s returned %d", path, rec.Code)
+			}
+			h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+			gw := &gateway{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), whatsapp: h, instagram: h, messenger: h}
+			rec = httptest.NewRecorder()
+			gw.routes().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, path, nil))
+			if rec.Code != http.StatusOK {
+				t.Errorf("configured route %s returned %d", path, rec.Code)
+			}
+		}
+	}
+}
+
 // TestBuildVersionPrefersTheEnvironment. A source deploy builds through Cloud
 // Build, which cannot pass a Docker build argument, so the link-time stamp is
 // always "dev" there and every log line would misreport the running build.

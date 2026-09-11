@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -106,9 +107,9 @@ func TestParseAttachments(t *testing.T) {
 			fixture: "photo_message.json",
 			want:    messaging.Content{Type: messaging.ContentTypeUnsupported, Description: "photo"},
 		},
-		"a voice message cannot be read": {
+		"a voice message is available for transcription": {
 			fixture: "voice_message.json",
-			want:    messaging.Content{Type: messaging.ContentTypeUnsupported, Description: "voice message"},
+			want:    messaging.Content{Type: messaging.ContentTypeAudio, Description: "voice message", Audio: &messaging.Audio{Reference: "AwACAgIAAxkBAAIC_2f", MIMEType: "audio/ogg", SizeBytes: 14203, DurationSeconds: 6}},
 		},
 		"a caption carries the request": {
 			fixture: "photo_with_caption.json",
@@ -128,7 +129,7 @@ func TestParseAttachments(t *testing.T) {
 			if len(envelopes) != 1 {
 				t.Fatalf("parsed %d messages, want 1", len(envelopes))
 			}
-			if envelopes[0].Content != tt.want {
+			if !reflect.DeepEqual(envelopes[0].Content, tt.want) {
 				t.Errorf("content = %+v, want %+v", envelopes[0].Content, tt.want)
 			}
 		})
