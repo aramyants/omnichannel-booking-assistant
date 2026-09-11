@@ -36,10 +36,18 @@ type changeValue struct {
 	Metadata         metadata         `json:"metadata"`
 	Contacts         []contact        `json:"contacts"`
 	Messages         []inboundMessage `json:"messages"`
+	MessageEchoes    []outboundEcho   `json:"message_echoes"`
 
 	// Statuses are delivery and read receipts for messages this system sent.
 	// They arrive on the same webhook as real messages and are not ones.
 	Statuses []json0 `json:"statuses"`
+}
+
+// outboundEcho is a message sent by staff from the WhatsApp Business app.
+// Its recipient, rather than its sender, identifies the customer conversation.
+type outboundEcho struct {
+	inboundMessage
+	To string `json:"to"`
 }
 
 // json0 is a payload this system deliberately ignores. Naming it keeps the

@@ -17,6 +17,10 @@ var ErrNotFound = errors.New("conversation not found")
 // ErrInvalidTransition reports a state change the rules do not allow.
 var ErrInvalidTransition = errors.New("invalid conversation state transition")
 
+// ErrExternalReplyConflict means a staff message arrived after this copy was
+// loaded. An older assistant turn must not overwrite the takeover or send.
+var ErrExternalReplyConflict = errors.New("conversation changed by external staff reply")
+
 // State records who is answering a conversation.
 //
 // This is application state, not a prompt instruction. Whether the assistant
@@ -52,6 +56,16 @@ type Conversation struct {
 	ExternalThreadID string
 
 	State State
+
+	// ExternalReplyRevision counts staff messages sent outside the bot, such
+	// as from the WhatsApp Business app. A copy loaded before it moved cannot
+	// be saved, which stops an assistant turn already in flight from replying
+	// over a colleague or undoing their takeover.
+	ExternalReplyRevision int64
+
+	// AssistantResumedAt is when the assistant was last put back in charge. A
+	// staff message sent before it is transcript history, not a new takeover.
+	AssistantResumedAt time.Time
 
 	// Draft is the booking the customer has been shown and not yet confirmed.
 	// It lives on the conversation because that is its whole lifetime: it is
@@ -145,6 +159,9 @@ func (c *Conversation) TransitionTo(next State, at time.Time) error {
 		if allowed == next {
 			c.State = next
 			c.UpdatedAt = at
+			if next == StateAssistantActive {
+				c.AssistantResumedAt = at
+			}
 
 			if next == StateHumanRequested {
 				c.HandoffAt = at

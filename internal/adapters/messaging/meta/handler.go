@@ -16,16 +16,21 @@ type MessageHandler interface {
 	Handle(ctx context.Context, msg messaging.Envelope) error
 }
 
+type externalReplyHandler interface {
+	RecordExternalReply(context.Context, messaging.ExternalReply) error
+}
+
 // Handler serves the webhook endpoint for one Meta channel.
 //
 // It answers both halves of the contract: the GET that completes subscription,
 // and the signed POSTs that carry messages.
 type Handler struct {
-	webhook  *Webhook
-	messages MessageHandler
-	logger   *slog.Logger
-	parse    func(body []byte, receivedAt time.Time) ([]messaging.Envelope, error)
-	now      func() time.Time
+	webhook              *Webhook
+	messages             MessageHandler
+	logger               *slog.Logger
+	parse                func(body []byte, receivedAt time.Time) ([]messaging.Envelope, error)
+	parseExternalReplies func([]byte, time.Time) ([]messaging.ExternalReply, error)
+	now                  func() time.Time
 }
 
 // NewWhatsAppHandler returns the handler for the WhatsApp webhook endpoint.
@@ -40,6 +45,9 @@ func NewWhatsAppHandler(webhook *Webhook, messages MessageHandler, logger *slog.
 		logger:   logger,
 		parse: func(body []byte, receivedAt time.Time) ([]messaging.Envelope, error) {
 			return parseWhatsAppForNumber(body, receivedAt, phoneNumberID)
+		},
+		parseExternalReplies: func(body []byte, receivedAt time.Time) ([]messaging.ExternalReply, error) {
+			return parseWhatsAppExternalReplies(body, receivedAt, phoneNumberID)
 		},
 		now: time.Now,
 	}
@@ -94,7 +102,31 @@ func (h *Handler) serveDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	envelopes, err := h.parse(body, h.now().UTC())
+	receivedAt := h.now().UTC()
+	// Apply staff activity before customer messages even when Meta batches them
+	// in the opposite order. Both paths share the verified signature above.
+	if h.parseExternalReplies != nil {
+		replies, err := h.parseExternalReplies(body, receivedAt)
+		if err != nil {
+			h.logger.ErrorContext(ctx, "discarded malformed business app echoes", "error", err)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		for _, reply := range replies {
+			recorder, ok := h.messages.(externalReplyHandler)
+			if !ok {
+				h.logger.ErrorContext(ctx, "business app echo recorder is not configured")
+				http.Error(w, "processing failed", http.StatusInternalServerError)
+				return
+			}
+			if err := recorder.RecordExternalReply(ctx, reply); err != nil {
+				h.logger.ErrorContext(ctx, "could not record a business app echo", "error", err)
+				http.Error(w, "processing failed", http.StatusInternalServerError)
+				return
+			}
+		}
+	}
+	envelopes, err := h.parse(body, receivedAt)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "discarded an unparseable meta delivery",
 			"error", err, "bytes", len(body))

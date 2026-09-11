@@ -31,6 +31,7 @@ required before launch.
 | Staff handover and replies from the staff chat | done |
 | Buttons, and fixed phrases in Armenian, Russian and English | done |
 | WhatsApp | done, enabled when credentials are configured |
+| WhatsApp coexistence: a reply sent from the Business app takes the conversation over | done |
 | Instagram, Messenger | text and incoming audio implemented; credentials and deployment required |
 | Viber | not started |
 

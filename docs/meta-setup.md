@@ -39,10 +39,21 @@ After successful coexistence signup, capture the **Phone Number ID** and **WABA
 ID**; skip the ordinary phone-number registration call because the number is
 already registered. Complete account subscription and the documented contact /
 history synchronization process within 24 hours, respecting the business's
-history-sharing choice. Handle `history`, `smb_app_state_sync`, and
-`smb_message_echoes` separately from incoming customer messages. Coexistence
-history/contact synchronization and manual-app message mirroring still need
-implementation before that mode is ready for production.
+history-sharing choice.
+
+Subscribe the webhook to `smb_message_echoes` as well as `messages`. Each echo
+is a message a colleague sent from the WhatsApp Business app on the phone. The
+service stores it in the transcript as an outbound message and hands the
+conversation to that colleague, so the assistant stops answering until `/resume`
+is sent from the staff chat. An assistant turn that was already running when the
+echo arrived is dropped rather than sent. Echoes are deduplicated by message id,
+so Meta redelivering one changes nothing, and an echo that arrives late for a
+message sent before a `/resume` is kept as history without undoing the resume.
+Media echoes are recorded as a note about the attachment; the file itself is not
+fetched. Only `smb_message_echoes` has this effect: Cloud API `message_echoes`
+and delivery `statuses` are ignored. The `history` and `smb_app_state_sync`
+fields are not handled yet, so contact and chat history from the phone are not
+imported.
 [Meta's coexistence documentation](https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-business-app-users).
 
 For a separate number that is not kept in the Business app, use standard Cloud API

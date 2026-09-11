@@ -226,7 +226,7 @@ const deliveryStateTimeout = 5 * time.Second
 // complete. A failed attempt releases that lease; a successful one turns it
 // into a longer completed record. If the process crashes, the lease expires and
 // a later provider retry can recover the message.
-func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
+func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr error) {
 	if err := msg.Validate(); err != nil {
 		return err
 	}
@@ -250,6 +250,14 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 	// even if recording completion fails, avoiding an immediate second reply.
 	releaseClaim := true
 	defer func() {
+		if errors.Is(resultErr, conversation.ErrExternalReplyConflict) {
+			// The customer has already heard from staff. A stale model answer
+			// is obsolete, and retrying this turn must not produce another one.
+			s.logger.InfoContext(ctx, "suppressed a reply after staff answered", "dedupe_key", msg.DedupeKey())
+			releaseClaim = false
+			s.completeDelivery(ctx, msg.DedupeKey(), claimID, s.now())
+			resultErr = nil
+		}
 		if releaseClaim {
 			s.releaseDelivery(ctx, msg.DedupeKey(), claimID)
 		}
@@ -424,6 +432,9 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 	// with buttons draws them; one without ignores them, and the reply names
 	// the same options in words either way.
 	reply := msg.Reply(text).WithChoices(sess.buttons(text))
+	if err := s.checkExternalReply(ctx, conv); err != nil {
+		return err
+	}
 	var sentID string
 	if tracked, ok := sender.(choiceSender); ok {
 		sentID, err = tracked.SendTracked(ctx, reply)
@@ -620,6 +631,9 @@ func (s *Service) reply(
 
 		turn := ai.Turn{Calls: resp.ToolCalls}
 		for _, tc := range resp.ToolCalls {
+			if err := s.checkExternalReply(ctx, *sess.conv); err != nil {
+				return "", err
+			}
 			s.logger.InfoContext(ctx, "running a tool for the assistant",
 				"conversation_id", conv.ID, "tool", tc.Name)
 			turn.Results = append(turn.Results, s.tools.execute(ctx, sess, tc))

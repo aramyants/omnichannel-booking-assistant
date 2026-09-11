@@ -32,6 +32,9 @@ func parseWhatsAppForNumber(body []byte, receivedAt time.Time, phoneNumberID str
 
 	for _, e := range u.Entry {
 		for _, c := range e.Changes {
+			if c.Field != "messages" {
+				continue
+			}
 			if phoneNumberID != "" && c.Value.Metadata.PhoneNumberID != phoneNumberID {
 				continue
 			}

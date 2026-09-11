@@ -273,6 +273,9 @@ func (s *Store) FindOrOpen(
 func (s *Store) Save(_ context.Context, conv conversation.Conversation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if current, ok := s.conversations[conv.Key()]; ok && current.ExternalReplyRevision != conv.ExternalReplyRevision {
+		return conversation.ErrExternalReplyConflict
+	}
 
 	s.conversations[conv.Key()] = conv
 	s.conversationKeyByID[conv.ID] = conv.Key()
