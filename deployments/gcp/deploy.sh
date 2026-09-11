@@ -175,7 +175,10 @@ if [[ ${#SECRET_MAPPINGS[@]} -gt 0 ]]; then
   done
   echo "  granted ${RUNTIME_SA} read access to ${#SECRET_NAMES[@]} secret(s)"
 
-  SECRET_FLAGS+=(--set-secrets "$(IFS=,; echo "${SECRET_MAPPINGS[*]}")")
+  # --update-secrets rather than --set-secrets: the latter removes every mapping
+  # not named in this run, so redeploying with one credential in the environment
+  # would silently detach the others from the service.
+  SECRET_FLAGS+=(--update-secrets "$(IFS=,; echo "${SECRET_MAPPINGS[*]}")")
 fi
 
 # Settings that are not credentials travel as plain environment variables.
