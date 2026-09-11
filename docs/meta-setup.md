@@ -1,12 +1,8 @@
 # Connect WhatsApp, Instagram and Messenger
 
-Updated 9 September 2026. The integrations below are implemented in this working
-copy; they need deployment and channel credentials before they become live.
-Business verification, permission approval and webhook subscriptions are separate
-steps. The Meta dashboard was inspected on 9 September; see
-[the account-specific setup status](meta-onboarding-status.md) for confirmed
-approvals and the existing-number onboarding error.
-The local `.env` currently has no Meta channel credentials configured.
+Updated 11 September 2026. The integrations below are implemented; they need
+deployment and channel credentials before they become live. Business
+verification, permission approval and webhook subscriptions are separate steps.
 
 ## Callback URLs for this deployment
 
@@ -15,7 +11,7 @@ routes become available after deploying with the matching channel credentials.
 
 | Channel | Callback URL | Webhook object / field |
 | --- | --- | --- |
-| WhatsApp | `https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app/webhooks/whatsapp` | `whatsapp_business_account` / `messages` |
+| WhatsApp | `https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app/webhooks/whatsapp` | `whatsapp_business_account` / `messages`, `smb_message_echoes` |
 | Instagram | `https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app/webhooks/instagram` | `instagram` / `messages` |
 | Messenger | `https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app/webhooks/messenger` | `page` / `messages` |
 
