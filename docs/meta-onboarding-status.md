@@ -3,7 +3,8 @@
 This records dashboard observations and the current test-channel activation.
 The bot improvements and Meta transports were merged to `main` in PR #19. Cloud
 Run is healthy and runs version `ecd7520`, including WhatsApp Business app
-reply/takeover handling. WhatsApp is configured against Meta's free test number;
+reply/takeover handling. The WhatsApp test configuration is stored but the
+runtime channel is paused during the studio phone account's WhatsApp review.
 Messenger and Instagram still lack channel credentials and account IDs.
 
 ## Confirmed assets
@@ -192,6 +193,18 @@ attempts. This verifies transport and signature handling; a real inbound message
 and bot reply from the designated recipient are still required for the review
 screencast.
 
+At 18:40 on 12 September, after the studio phone sent a single test message to
+Meta's test number, the WhatsApp Business app placed the studio account into an
+account review and stated that activity and device information would typically
+be checked within 24 hours. The user submitted the in-app review. Cloud Run logs
+show no real inbound WhatsApp webhook from that message; only Meta's two earlier
+synthetic test events reached the bot. To prevent further automated WhatsApp
+activity during the review, revision `00007-8m7` removed the WhatsApp phone ID,
+access-token reference and shared Meta secret references from the runtime. The
+service remained healthy and `/webhooks/whatsapp` returned HTTP 404 afterward.
+The Secret Manager values remain stored for deliberate reactivation after the
+account review. Failed pause revision `00006-frh` received no traffic.
+
 Meta's official documentation requires a Solution Partner or Tech Provider for
 coexistence. The app's own access-verification and review gates remain incomplete.
 An approved provider may be necessary; do not promise that removing an old link
@@ -202,8 +215,9 @@ or passing business verification alone resolves this number's eligibility.
 - App icon has been uploaded by the user and saved in Meta.
 - Privacy, terms and data-deletion URLs are now live and saved (see above).
 - Access-verification requirements remain on the publish page.
-- WhatsApp test credentials, webhook verification and required subscriptions are
-  deployed. A permanent system-user token requires advanced-permission approval.
+- WhatsApp test credentials and verified webhook configuration are stored, but
+  the runtime channel is deliberately paused during the phone account review. A
+  permanent system-user token requires advanced-permission approval.
 - Messenger and Instagram credentials, webhook subscriptions and end-to-end
   tests remain necessary before those channels are operational.
 

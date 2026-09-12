@@ -1,7 +1,8 @@
 # Meta review evidence checklist
 
-Updated 12 September 2026. The WhatsApp test transport and signed sample webhook
-are live; real-conversation evidence is still required. See
+Updated 12 September 2026. The WhatsApp test transport accepted signed sample
+webhooks and is now paused during the studio phone account's WhatsApp review;
+real-conversation evidence is still required. See
 [account setup status](meta-onboarding-status.md) for completed steps and
 [channel setup](meta-setup.md) for the implemented transports.
 
@@ -55,6 +56,12 @@ Coexistence contact/history sync and manual-phone message mirroring are
 implemented, and `smb_message_echoes` is subscribed. Claiming and configuring a
 Meta test number does not resolve the existing number's advanced-permission
 approval gate.
+
+Do not run another real-number test while the studio WhatsApp Business app shows
+**Account in review**. The user submitted WhatsApp's in-app review on 12 September.
+The attempted message did not reach the bot according to Cloud Run logs. Runtime
+WhatsApp credentials were removed in revision `00007-8m7`; stored Secret Manager
+values and Meta subscriptions were preserved for later reactivation.
 
 ## Draft accuracy before submission
 
