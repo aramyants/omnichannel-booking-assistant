@@ -1,8 +1,9 @@
 # Meta review evidence checklist
 
-Updated 12 September 2026. This is a preparation checklist, not proof of a live
-integration. See [account setup status](meta-onboarding-status.md) for completed
-steps and [channel setup](meta-setup.md) for the implemented transports.
+Updated 12 September 2026. The WhatsApp test transport and signed sample webhook
+are live; real-conversation evidence is still required. See
+[account setup status](meta-onboarding-status.md) for completed steps and
+[channel setup](meta-setup.md) for the implemented transports.
 
 ## Public app identity
 
@@ -28,9 +29,11 @@ steps and [channel setup](meta-setup.md) for the implemented transports.
    the matching test phone ID and `CLOUD_API` on 11 September. Both permissions
    showed 0 of 1 required calls before this call. On 12 September Meta showed
    **Completed** for the API-call check in both WhatsApp permission cards.
-5. Deploy and configure the implemented WhatsApp webhook/transport, then verify
-   a real incoming message and a text reply using designated test accounts.
-   A dashboard template message alone does not demonstrate the booking assistant.
+5. Completed: deployed the WhatsApp transport, verified the callback, subscribed
+   `messages` and `smb_message_echoes`, and received Meta's signed `messages`
+   sample with HTTP 200. Still required: verify a real incoming message and text
+   reply using the designated test recipient. A dashboard sample or template
+   message alone does not demonstrate the booking assistant.
 6. Record an actual end-to-end screencast of the integration. Hide credentials,
    unrelated conversations and customer data. Demonstrate the implemented flow
    rather than using mock screens or Telegram footage as WhatsApp evidence.
@@ -47,10 +50,11 @@ steps and [channel setup](meta-setup.md) for the implemented transports.
   environment or obtain explicit authorization for the actual appointment and
   its cleanup. Do not silently create a real studio appointment for a recording.
 
-The current bot changes remain local. Coexistence contact/history sync and
-manual-phone message mirroring still need implementation before production use
-with the existing WhatsApp Business app number. Claiming a Meta test number does
-not resolve the existing number's advanced-permission approval gate.
+The bot changes are merged to `main` and deployed as runtime version `ecd7520`.
+Coexistence contact/history sync and manual-phone message mirroring are
+implemented, and `smb_message_echoes` is subscribed. Claiming and configuring a
+Meta test number does not resolve the existing number's advanced-permission
+approval gate.
 
 ## Draft accuracy before submission
 

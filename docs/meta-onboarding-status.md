@@ -1,11 +1,10 @@
 # Meta setup status — 12 September 2026
 
-This records dashboard observations, not a completed Meta activation. The bot
-improvements and Meta transports were merged to `main` in PR #19. The existing
-Cloud Run service was verified healthy on 12 September and reports runtime version
-`ecd7520`, which includes the WhatsApp Business app reply/takeover handling. The
-three Meta webhook routes still return 404 because their production channel
-credentials and account IDs have not yet been attached to the service.
+This records dashboard observations and the current test-channel activation.
+The bot improvements and Meta transports were merged to `main` in PR #19. Cloud
+Run is healthy and runs version `ecd7520`, including WhatsApp Business app
+reply/takeover handling. WhatsApp is configured against Meta's free test number;
+Messenger and Instagram still lack channel credentials and account IDs.
 
 ## Confirmed assets
 
@@ -18,10 +17,13 @@ credentials and account IDs have not yet been attached to the service.
 | Embedded Signup login configuration | `38131942366454357` |
 | Free WhatsApp Cloud API test account | `1720864419030467` |
 | Free test number | `+1 555-195-8338`; phone ID `1350823718109876` |
+| Meta system user | `Motionconcept`; ID `61594196615857`; Employee access |
 
-The WhatsApp production callback URL and verify-token fields are empty. The
-Embedded Signup Builder states that App Review and Access Verification are not
-completed and this app cannot yet be used in production for Embedded Signup.
+The WhatsApp callback is verified at the Cloud Run `/webhooks/whatsapp` route.
+The `messages` and `smb_message_echoes` fields are subscribed at Graph version
+v26.0. The Embedded Signup Builder still states that App Review and Access
+Verification are incomplete, so the existing studio number cannot yet use the
+production coexistence flow.
 
 ## Work performed
 
@@ -166,6 +168,30 @@ the required API-call check in both `whatsapp_business_management` and
 `whatsapp_business_messaging`. Neither permission has a screencast or allowed-usage
 certification attached. Review cannot be submitted yet.
 
+Created the Employee system user `Motionconcept` and assigned the app plus all
+three WhatsApp accounts. App access is full; WhatsApp access is limited to
+messages and phone-number/template management. The system-user token dialog does
+not yet offer `whatsapp_business_messaging` or
+`whatsapp_business_management`, consistent with those advanced permissions still
+awaiting approval. No incomplete system-user token was created.
+
+Generated a temporary WhatsApp test token through Meta's own test flow and stored
+it in Google Secret Manager; the value is not in source control or this document.
+Also stored the Meta app secret and a generated webhook verification token. The
+Cloud Run runtime service account has Secret Manager accessor rights on only
+those three new secrets. Revision `00004-f7x` activated the test-number channel;
+revision `00005-gfk` loaded the rotated verification secret. Both deployments
+became healthy.
+
+Verified and saved the callback URL in Meta, subscribed `messages` and
+`smb_message_echoes` at v26.0, and sent Meta's signed `messages` field sample.
+Cloud Run recorded `POST /webhooks/whatsapp` with HTTP 200 on 12 September at
+18:24 Asia/Yerevan. A deliberately invalid verification-token request returned
+HTTP 403, confirming that the route is live and rejects invalid subscription
+attempts. This verifies transport and signature handling; a real inbound message
+and bot reply from the designated recipient are still required for the review
+screencast.
+
 Meta's official documentation requires a Solution Partner or Tech Provider for
 coexistence. The app's own access-verification and review gates remain incomplete.
 An approved provider may be necessary; do not promise that removing an old link
@@ -176,8 +202,10 @@ or passing business verification alone resolves this number's eligibility.
 - App icon has been uploaded by the user and saved in Meta.
 - Privacy, terms and data-deletion URLs are now live and saved (see above).
 - Access-verification requirements remain on the publish page.
-- Channel credentials, webhook verification/subscriptions, and a deployment
-  remain necessary before any Meta channel is operational.
+- WhatsApp test credentials, webhook verification and required subscriptions are
+  deployed. A permanent system-user token requires advanced-permission approval.
+- Messenger and Instagram credentials, webhook subscriptions and end-to-end
+  tests remain necessary before those channels are operational.
 
 Studio website: <https://www.motionconcept.rest/>.
 
