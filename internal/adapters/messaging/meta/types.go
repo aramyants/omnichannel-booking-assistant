@@ -36,10 +36,18 @@ type changeValue struct {
 	Metadata         metadata         `json:"metadata"`
 	Contacts         []contact        `json:"contacts"`
 	Messages         []inboundMessage `json:"messages"`
+	MessageEchoes    []outboundEcho   `json:"message_echoes"`
 
 	// Statuses are delivery and read receipts for messages this system sent.
 	// They arrive on the same webhook as real messages and are not ones.
 	Statuses []json0 `json:"statuses"`
+}
+
+// outboundEcho is a message sent by staff from the WhatsApp Business app.
+// Its recipient, rather than its sender, identifies the customer conversation.
+type outboundEcho struct {
+	inboundMessage
+	To string `json:"to"`
 }
 
 // json0 is a payload this system deliberately ignores. Naming it keeps the
@@ -83,7 +91,8 @@ type inboundMessage struct {
 }
 
 type media struct {
-	ID string `json:"id"`
+	ID       string `json:"id"`
+	MIMEType string `json:"mime_type"`
 }
 
 type mediaWithCaption struct {
@@ -100,13 +109,19 @@ type messagingEvent struct {
 	Timestamp int64 `json:"timestamp"`
 
 	Message *struct {
-		MID         string  `json:"mid"`
-		Text        string  `json:"text"`
-		Attachments []json0 `json:"attachments"`
+		MID         string `json:"mid"`
+		Text        string `json:"text"`
+		Attachments []struct {
+			Type    string `json:"type"`
+			Payload struct {
+				URL string `json:"url"`
+			} `json:"payload"`
+		} `json:"attachments"`
 
 		// IsEcho marks a message this system sent, echoed back. Treating one
 		// as a customer message would have the assistant answer itself.
-		IsEcho bool `json:"is_echo"`
+		IsEcho    bool `json:"is_echo"`
+		IsDeleted bool `json:"is_deleted"`
 	} `json:"message"`
 }
 

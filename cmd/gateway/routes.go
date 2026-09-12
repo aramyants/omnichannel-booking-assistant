@@ -24,7 +24,9 @@ const (
 
 	// WhatsAppWebhookPath serves both halves of Meta's contract: the GET that
 	// completes subscription and the signed POSTs that carry messages.
-	WhatsAppWebhookPath = "/webhooks/whatsapp"
+	WhatsAppWebhookPath  = "/webhooks/whatsapp"
+	MessengerWebhookPath = "/webhooks/messenger"
+	InstagramWebhookPath = "/webhooks/instagram"
 
 	// ReminderTaskPath receives authenticated Cloud Tasks wake-ups.
 	ReminderTaskPath = "/tasks/reminders"
@@ -34,11 +36,13 @@ const (
 // nil when that channel is not configured, and their routes are then not
 // served at all rather than served and failing.
 type gateway struct {
-	logger   *slog.Logger
-	version  string
-	telegram http.Handler
-	whatsapp http.Handler
-	reminder http.Handler
+	logger    *slog.Logger
+	version   string
+	telegram  http.Handler
+	whatsapp  http.Handler
+	messenger http.Handler
+	instagram http.Handler
+	reminder  http.Handler
 }
 
 func (g *gateway) routes() http.Handler {
@@ -54,6 +58,14 @@ func (g *gateway) routes() http.Handler {
 	if g.whatsapp != nil {
 		mux.Handle("GET "+WhatsAppWebhookPath, g.whatsapp)
 		mux.Handle("POST "+WhatsAppWebhookPath, g.whatsapp)
+	}
+	if g.messenger != nil {
+		mux.Handle("GET "+MessengerWebhookPath, g.messenger)
+		mux.Handle("POST "+MessengerWebhookPath, g.messenger)
+	}
+	if g.instagram != nil {
+		mux.Handle("GET "+InstagramWebhookPath, g.instagram)
+		mux.Handle("POST "+InstagramWebhookPath, g.instagram)
 	}
 	if g.reminder != nil {
 		mux.Handle("POST "+ReminderTaskPath, g.reminder)

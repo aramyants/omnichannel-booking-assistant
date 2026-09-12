@@ -106,7 +106,8 @@ type Deps struct {
 	// AI interprets the conversation. When it is absent the assistant falls
 	// back to a fixed reply rather than failing, so the channels keep working
 	// without a provider configured.
-	AI ai.Provider
+	AI     ai.Provider
+	Speech ai.Transcriber
 
 	// Scheduling is the calendar. Without it the assistant can talk but cannot
 	// answer anything about services or availability.
@@ -139,6 +140,7 @@ type Service struct {
 	logger        *slog.Logger
 	now           func() time.Time
 	ai            ai.Provider
+	speech        ai.Transcriber
 	tools         *toolset
 	business      Business
 	staff         StaffNotifier
@@ -183,6 +185,7 @@ func NewService(deps Deps) (*Service, error) {
 		logger:        deps.Logger,
 		now:           now,
 		ai:            deps.AI,
+		speech:        deps.Speech,
 		business:      business,
 		staff:         deps.Staff,
 		tools: &toolset{
@@ -223,10 +226,12 @@ const deliveryStateTimeout = 5 * time.Second
 // complete. A failed attempt releases that lease; a successful one turns it
 // into a longer completed record. If the process crashes, the lease expires and
 // a later provider retry can recover the message.
-func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
+func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr error) {
 	if err := msg.Validate(); err != nil {
 		return err
 	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 
 	now := s.now()
 	claimID := id.New()
@@ -245,10 +250,26 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 	// even if recording completion fails, avoiding an immediate second reply.
 	releaseClaim := true
 	defer func() {
+		if errors.Is(resultErr, conversation.ErrExternalReplyConflict) {
+			// The customer has already heard from staff. A stale model answer
+			// is obsolete, and retrying this turn must not produce another one.
+			s.logger.InfoContext(ctx, "suppressed a reply after staff answered", "dedupe_key", msg.DedupeKey())
+			releaseClaim = false
+			s.completeDelivery(ctx, msg.DedupeKey(), claimID, s.now())
+			resultErr = nil
+		}
 		if releaseClaim {
 			s.releaseDelivery(ctx, msg.DedupeKey(), claimID)
 		}
 	}()
+
+	unlock, err := s.lockConversation(ctx, msg, claimID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	// Record the actual processing time after waiting for the preceding turn.
+	now = s.now()
 
 	cust, err := s.identify(ctx, msg, now)
 	if err != nil {
@@ -258,6 +279,40 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 	conv, err := s.openConversation(ctx, msg, cust, now)
 	if err != nil {
 		return err
+	}
+
+	// A callback must answer the current prompt. In particular an old "yes"
+	// cannot confirm a booking prepared after that button was sent.
+	retryingChoice := msg.ChoiceMessageID == conv.PendingChoiceMessageID && msg.ExternalMessageID == conv.PendingChoiceEventID
+	if conv.AssistantMayReply() && msg.ChoiceMessageID != "" && msg.ChoiceMessageID != conv.LastChoiceMessageID && !retryingChoice {
+		sender, ok := s.senders[msg.Provider]
+		if !ok {
+			return fmt.Errorf("no sender configured for %s", msg.Provider)
+		}
+		history, err := s.messages.Recent(ctx, conv.ID, recentMessageLimit)
+		if err != nil {
+			return err
+		}
+		if err := sender.Send(ctx, msg.Reply(expiredChoice(conversationLanguage(history, msg.Sender.Language)))); err != nil {
+			return err
+		}
+		releaseClaim = false
+		s.completeDelivery(ctx, msg.DedupeKey(), claimID, now)
+		return nil
+	}
+
+	audioFailed := false
+	if msg.Content.Type == messaging.ContentTypeAudio && (conv.AssistantMayReply() || conv.WaitingForHumanLongerThan(handoffTimeout, now)) {
+		transcribed, err := s.transcribeInput(ctx, msg)
+		if err != nil {
+			audioFailed = true
+			s.logger.WarnContext(ctx, "could not transcribe customer audio", "error", err, "conversation_id", conv.ID)
+			// Only the audio was lost. A caption is something the customer
+			// typed, and it belongs in the transcript like any other text.
+			msg.Content = messaging.Content{Type: messaging.ContentTypeUnsupported, Text: msg.Content.Text, Description: "voice message"}
+		} else {
+			msg = transcribed
+		}
 	}
 
 	if err := s.messages.Append(ctx, conversation.Message{
@@ -327,8 +382,22 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 		// phrases this system writes itself rather than asking the model for.
 		language: conversationLanguage(history, msg.Sender.Language),
 	}
+	conv.PendingChoiceMessageID, conv.PendingChoiceEventID = "", ""
+	if msg.ChoiceMessageID != "" {
+		conv.PendingChoiceMessageID, conv.PendingChoiceEventID = msg.ChoiceMessageID, msg.ExternalMessageID
+	}
+	s.retireChoices(ctx, sender, &conv)
 
-	text, err := s.reply(ctx, sess, msg, history)
+	// Bound the whole model/tool loop, leaving time to deliver a useful retry
+	// response even when a provider is slow. Typing feedback runs independently.
+	replyCtx, cancelReply := context.WithTimeout(ctx, 45*time.Second)
+	var text string
+	if audioFailed {
+		text = audioRetry(sess.language)
+	} else {
+		text, err = s.reply(replyCtx, sess, msg, history)
+	}
+	cancelReply()
 	if err != nil {
 		return err
 	}
@@ -363,8 +432,27 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) error {
 	// with buttons draws them; one without ignores them, and the reply names
 	// the same options in words either way.
 	reply := msg.Reply(text).WithChoices(sess.buttons(text))
-	if err := sender.Send(ctx, reply); err != nil {
+	if err := s.checkExternalReply(ctx, conv); err != nil {
+		return err
+	}
+	var sentID string
+	if tracked, ok := sender.(choiceSender); ok {
+		sentID, err = tracked.SendTracked(ctx, reply)
+	} else {
+		err = sender.Send(ctx, reply)
+	}
+	if err != nil {
 		return fmt.Errorf("send the reply: %w", err)
+	}
+	if _, ok := sender.(choiceSender); ok {
+		conv.LastChoiceMessageID = ""
+		conv.PendingChoiceMessageID, conv.PendingChoiceEventID = "", ""
+		if len(reply.Choices) > 0 {
+			conv.LastChoiceMessageID = sentID
+		}
+		if err := s.conversations.Save(ctx, conv); err != nil {
+			s.logger.ErrorContext(ctx, "sent choices but could not store their message id", "error", err, "conversation_id", conv.ID)
+		}
 	}
 
 	// The customer already has the reply, so a failure to record it must not
@@ -497,18 +585,19 @@ func (s *Service) reply(
 	// Some menu entries are answered here rather than by the model: they say
 	// the same thing every time, and answering them from a table means they
 	// arrive instantly and keep working when nothing else does.
-	if text, ok := s.menuReply(sess, msg); ok {
+	if text, ok := s.menuReply(ctx, sess, msg); ok {
 		return text, nil
 	}
 
 	if s.ai == nil {
-		return s.compose(msg, cust), nil
+		return s.compose(msg, sess.language), nil
 	}
 
 	req := ai.Request{
-		Instructions: s.instructions(cust, msg.Sender.Language),
-		Messages:     toAIMessages(history),
-		Tools:        s.tools.definitions(),
+		Instructions:    s.instructions(cust, msg.Sender.Language),
+		Messages:        toAIMessages(history),
+		Tools:           s.tools.definitions(),
+		StructuredReply: true,
 	}
 
 	for round := 1; round <= maxToolRounds; round++ {
@@ -536,11 +625,15 @@ func (s *Service) reply(
 					"conversation_id", conv.ID)
 				return s.apologise(ctx, sess)
 			}
+			sess.selectChoices(resp.Choices)
 			return resp.Text, nil
 		}
 
 		turn := ai.Turn{Calls: resp.ToolCalls}
 		for _, tc := range resp.ToolCalls {
+			if err := s.checkExternalReply(ctx, *sess.conv); err != nil {
+				return "", err
+			}
 			s.logger.InfoContext(ctx, "running a tool for the assistant",
 				"conversation_id", conv.ID, "tool", tc.Name)
 			turn.Results = append(turn.Results, s.tools.execute(ctx, sess, tc))
@@ -560,14 +653,52 @@ func (s *Service) reply(
 // Opening the chat is the first thing anybody does and the one thing that must
 // never be slow, wrong or missing, so its answer is written here and shipped
 // with the code rather than asked for at the moment it is needed.
-func (s *Service) menuReply(sess *session, msg messaging.Envelope) (string, bool) {
+//
+// Asking for a person is here for the opposite reason: not because the answer
+// is always the same, but because the request admits of no interpretation. A
+// customer who taps "Talk to a person" has said the one thing this system never
+// needs a model to understand, and routing it through one only adds a way for
+// it to be missed.
+//
+// The rest of the menu stays with the model. Booking, prices and appointments
+// all need tools and a conversation, and answering them from a table would mean
+// answering them badly.
+func (s *Service) menuReply(ctx context.Context, sess *session, msg messaging.Envelope) (string, bool) {
 	switch commandIn(msg.Content.Text) {
 	case "start", "help":
 		sess.offerFixed(offerMenu)
 		return s.greeting(sess.language), true
+	case "person":
+		return s.handOver(ctx, sess)
 	default:
 		return "", false
 	}
+}
+
+// handOver answers a customer who asked for a person outright.
+//
+// The state change is what actually stops the assistant replying; the sentence
+// is only what the customer reads. If the state will not change, nothing is
+// promised: the request falls through to the model, which still has the handoff
+// tool, rather than the customer being told somebody is coming when the record
+// that would tell them says otherwise.
+func (s *Service) handOver(ctx context.Context, sess *session) (string, bool) {
+	if err := sess.conv.TransitionTo(conversation.StateHumanRequested, s.now()); err != nil {
+		s.logger.ErrorContext(ctx, "could not hand over a conversation on request",
+			"error", err,
+			"conversation_id", sess.conv.ID,
+			"conversation_state", string(sess.conv.State),
+		)
+		return "", false
+	}
+
+	sess.handoffReason = ReasonCustomerAsked
+	sess.handoffDetail = "tapped the menu entry asking for a person"
+
+	// A customer waiting for a person is waiting, not choosing.
+	sess.offer()
+
+	return speak(sess.language).handedOver, true
 }
 
 // apologise is the reply when the assistant itself failed: the model was
@@ -594,23 +725,17 @@ func (s *Service) apologise(ctx context.Context, sess *session) (string, error) 
 //
 // It is deliberately honest about what the assistant can and cannot do, rather
 // than pretending to take a booking it has no way to make.
-func (s *Service) compose(msg messaging.Envelope, cust customer.Customer) string {
+//
+// It says nothing the customer told it and names nothing the provider sent.
+// Threading a name or an attachment type through a sentence is what forces a
+// sentence to be built out of fragments, and a sentence built out of fragments
+// only reads correctly in the language it was written in. Every other fixed
+// reply in this system follows the customer's language; this one now does too,
+// and the price is a greeting that does not use their name.
+func (s *Service) compose(msg messaging.Envelope, lang language) string {
+	p := speak(lang)
 	if msg.Content.Type == messaging.ContentTypeUnsupported {
-		return fmt.Sprintf(
-			"Thanks%s. I can only read text messages at the moment, so I could not open your %s. Could you describe what you need in a message?",
-			greetingName(cust.Name), msg.Content.Description,
-		)
+		return p.noModelUnsupported
 	}
-
-	return fmt.Sprintf(
-		"Thanks%s, I have your message. A colleague will follow up with you shortly.",
-		greetingName(cust.Name),
-	)
-}
-
-func greetingName(name string) string {
-	if name == "" {
-		return ""
-	}
-	return " " + name
+	return p.noModel
 }

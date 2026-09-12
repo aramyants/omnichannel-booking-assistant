@@ -77,6 +77,10 @@ type session struct {
 	// system's language to begin with.
 	choices []messaging.Choice
 
+	// candidates collects live lookup labels during this turn. A lookup alone
+	// never decides which question the final reply is asking.
+	candidates []messaging.Choice
+
 	// offering names a set of labels this system does choose the words for.
 	// It is kept as an intent rather than as text because the language to
 	// write them in is not settled until the reply itself has been written.
@@ -100,12 +104,35 @@ const (
 // choosing does: the previous question has been answered, and its buttons must
 // not follow the answer down the screen.
 func (s *session) offer(labels ...string) {
-	s.offering = offerWhatToolsSaid
 	if len(labels) == 0 {
+		s.offering = offerWhatToolsSaid
 		s.choices = nil
+		s.candidates = nil
 		return
 	}
-	s.choices = choicesOf(labels...)
+	s.candidates = append(s.candidates, choicesOf(labels...)...)
+}
+
+// selectChoices admits only labels returned by tools, in the order the reply
+// offers them. Phone/name questions use an empty list. Three options keep the
+// next action visible on a phone instead of filling it with a stale time grid.
+func (s *session) selectChoices(labels []string) {
+	s.choices = nil
+	allowed := make(map[string]bool, len(s.candidates))
+	for _, candidate := range s.candidates {
+		allowed[candidate.Label] = true
+	}
+	for _, label := range labels {
+		label = strings.TrimSpace(label)
+		if !allowed[label] {
+			continue
+		}
+		s.choices = append(s.choices, messaging.Choice{Label: label})
+		delete(allowed, label)
+		if len(s.choices) == 3 {
+			break
+		}
+	}
 }
 
 // offerFixed records a set of buttons whose words this system chooses.
@@ -144,6 +171,7 @@ func (s *session) buttons(replyText string) []messaging.Choice {
 // agree: the schema shown to the model, the dispatch below, and the logs.
 const (
 	toolListServices   = "list_services"
+	toolListCategories = "list_service_categories"
 	toolListStaff      = "list_staff"
 	toolAvailableDates = "find_available_dates"
 	toolAvailableSlots = "find_available_slots"
@@ -201,42 +229,55 @@ func (t *toolset) definitions() []ai.Tool {
 
 	tools := []ai.Tool{
 		{
-			Name: toolListServices,
-			Description: "List every service the business offers, with its duration and price. " +
-				"Call this before naming any service or quoting any price. Never invent either.",
-			Parameters: json.RawMessage(noArguments),
+			Name:        toolListCategories,
+			Description: "List the actual service categories and counts. Use this to match a customer's category request in any language to the calendar's exact category name before calling list_services with that category. This returns no unrelated services or prices.",
+			Parameters:  json.RawMessage(noArguments),
+		},
+		{
+			Name:        toolListServices,
+			Description: "List services and prices ONLY in the requested category. Call list_service_categories if its exact stored name is unknown. Use an empty category only when the customer asks for all services or has not specified a category. Never show the full catalogue for a category-specific question.",
+			Parameters:  json.RawMessage(`{"type":"object","properties":{"category":{"type":"string","description":"Exact category name from list_service_categories, for example Face Motion. Empty only for a request without a category."}},"required":["category"],"additionalProperties":false}`),
 		},
 		{
 			Name: toolListStaff,
-			Description: "List the specialists who work here and whether each is currently taking " +
-				"appointments. Call this before naming a specialist.",
-			Parameters: json.RawMessage(noArguments),
-		},
-		{
-			Name: toolAvailableDates,
-			Description: "List the upcoming dates on which a specialist has any free time. " +
-				"Use this when the customer has not named a specific day.",
+			Description: "List specialists who can perform the selected service. Call this before " +
+				"offering any specialist for a service; being on the general staff list is not enough.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"staff_id":{"type":"string","description":"The id of the specialist, from list_staff."}
+					"service_id":{"type":"string","description":"The selected service id from list_services. Empty only when browsing the team before choosing a service."}
 				},
-				"required":["staff_id"],
+				"required":["service_id"],
+				"additionalProperties":false
+			}`),
+		},
+		{
+			Name: toolAvailableDates,
+			Description: "List dates when the selected service can be booked with a specialist. " +
+				"Choose a service first. Use this when the customer has not named a specific day.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"staff_id":{"type":"string","description":"The id of a specialist returned by list_staff for this service."},
+					"service_id":{"type":"string","description":"The selected service id from list_services. Required to find dates that fit this treatment."}
+				},
+				"required":["staff_id","service_id"],
 				"additionalProperties":false
 			}`),
 		},
 		{
 			Name: toolAvailableSlots,
-			Description: "List the free appointment times for a specialist on one date. " +
+			Description: "List free times for the selected service with a specialist on one date. " +
 				"These are the only times that may be offered to the customer. " +
 				"They are not held: a time can be taken by someone else at any moment.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
 					"staff_id":{"type":"string","description":"The id of the specialist, from list_staff."},
+					"service_id":{"type":"string","description":"The selected service id from list_services. Required to find times long enough for this treatment."},
 					"date":{"type":"string","description":"The calendar day as YYYY-MM-DD, in the business's own timezone."}
 				},
-				"required":["staff_id","date"],
+				"required":["staff_id","service_id","date"],
 				"additionalProperties":false
 			}`),
 		},
@@ -269,9 +310,11 @@ func (t *toolset) definitions() []ai.Tool {
 			Parameters: json.RawMessage(noArguments),
 		},
 		{
-			Name:        toolListBookings,
-			Description: "List the appointments this customer has booked through this conversation.",
-			Parameters:  json.RawMessage(noArguments),
+			Name: toolListBookings,
+			Description: "List this customer's upcoming appointments, soonest first, with the service " +
+				"and specialist for each. Cancelled and past appointments are not returned, so what " +
+				"this gives back is everything they still have booked.",
+			Parameters: json.RawMessage(noArguments),
 		},
 	}
 
@@ -361,9 +404,11 @@ func (t *toolset) run(ctx context.Context, s *session, call ai.ToolCall) (string
 	// A name that is not here is refused rather than resolved.
 	switch call.Name {
 	case toolListServices:
-		return t.listServices(ctx, s)
+		return t.listServices(ctx, s, call)
+	case toolListCategories:
+		return t.listCategories(ctx, s)
 	case toolListStaff:
-		return t.listStaff(ctx, s)
+		return t.listStaff(ctx, s, call)
 	case toolAvailableDates:
 		return t.availableDates(ctx, s, call)
 	case toolAvailableSlots:
@@ -389,10 +434,33 @@ func (t *toolset) run(ctx context.Context, s *session, call ai.ToolCall) (string
 	}
 }
 
-func (t *toolset) listServices(ctx context.Context, s *session) (string, error) {
+func (t *toolset) listServices(ctx context.Context, s *session, call ai.ToolCall) (string, error) {
+	var args struct {
+		Category string `json:"category"`
+	}
+	if err := call.ArgumentsInto(&args); err != nil {
+		return "", err
+	}
 	services, err := t.scheduling.ListServices(ctx)
 	if err != nil {
 		return "", err
+	}
+	category := strings.TrimSpace(args.Category)
+	if category != "" {
+		filtered := make([]booking.Service, 0, len(services))
+		for _, service := range services {
+			if strings.EqualFold(strings.TrimSpace(service.Category), category) {
+				filtered = append(filtered, service)
+			}
+		}
+		if len(filtered) == 0 {
+			s.offer()
+			return encode(map[string]any{
+				"services": []any{}, "category": category, "categories": categoriesOf(services),
+				"instruction": "No exact category matched. Match the customer's meaning to one of these actual categories, or ask a short clarification. Do not list unrelated services or fall back to the full catalogue.",
+			})
+		}
+		services = filtered
 	}
 
 	type item struct {
@@ -423,13 +491,21 @@ func (t *toolset) listServices(ctx context.Context, s *session) (string, error) 
 	// Offered as buttons carrying the names exactly as the calendar stores
 	// them, so tapping one is the same as typing it and the model is handed a
 	// name it can look up rather than a paraphrase of one.
+	s.offer()
 	s.offer(names...)
 
-	return encode(map[string]any{"services": items})
+	return encode(map[string]any{"services": items, "category": category,
+		"instruction": "List only these matching services and their prices. Do not add services from other categories or silently start a booking. If there are more than three matching services, list them all concisely in text; buttons may show up to three and the customer may type any other service."})
 }
 
-func (t *toolset) listStaff(ctx context.Context, s *session) (string, error) {
-	staff, err := t.scheduling.ListStaff(ctx)
+func (t *toolset) listStaff(ctx context.Context, s *session, call ai.ToolCall) (string, error) {
+	var args struct {
+		ServiceID string `json:"service_id"`
+	}
+	if err := call.ArgumentsInto(&args); err != nil {
+		return "", err
+	}
+	staff, err := t.staffForService(ctx, args.ServiceID)
 	if err != nil {
 		return "", err
 	}
@@ -465,12 +541,17 @@ func (t *toolset) listStaff(ctx context.Context, s *session) (string, error) {
 		s.offer()
 	}
 
-	return encode(map[string]any{"specialists": items})
+	instruction := "Only these specialists can be offered for the selected service. Ask for a choice if there is more than one."
+	if args.ServiceID == "" {
+		instruction = "This is the general team list. Before offering a specialist for a treatment, call list_staff again with the chosen service_id."
+	}
+	return encode(map[string]any{"specialists": items, "service_id": args.ServiceID, "instruction": instruction})
 }
 
 func (t *toolset) availableDates(ctx context.Context, s *session, call ai.ToolCall) (string, error) {
 	var args struct {
-		StaffID string `json:"staff_id"`
+		StaffID   string `json:"staff_id"`
+		ServiceID string `json:"service_id"`
 	}
 	if err := call.ArgumentsInto(&args); err != nil {
 		return "", err
@@ -479,7 +560,7 @@ func (t *toolset) availableDates(ctx context.Context, s *session, call ai.ToolCa
 		return "", errors.New("staff_id is required; call list_staff first")
 	}
 
-	dates, err := t.scheduling.AvailableDates(ctx, args.StaffID)
+	dates, err := t.datesForService(ctx, args.StaffID, args.ServiceID)
 	if err != nil {
 		return "", err
 	}
@@ -497,13 +578,15 @@ func (t *toolset) availableDates(ctx context.Context, s *session, call ai.ToolCa
 
 	s.offer(labels...)
 
-	return encode(map[string]any{"dates": formatted})
+	return encode(map[string]any{"dates": formatted, "service_id": args.ServiceID,
+		"instruction": "These dates fit the selected service. If none are available, call list_staff for this service to check other qualified specialists; do not offer unfiltered dates."})
 }
 
 func (t *toolset) availableSlots(ctx context.Context, s *session, call ai.ToolCall) (string, error) {
 	var args struct {
-		StaffID string `json:"staff_id"`
-		Date    string `json:"date"`
+		StaffID   string `json:"staff_id"`
+		ServiceID string `json:"service_id"`
+		Date      string `json:"date"`
 	}
 	if err := call.ArgumentsInto(&args); err != nil {
 		return "", err
@@ -527,7 +610,7 @@ func (t *toolset) availableSlots(ctx context.Context, s *session, call ai.ToolCa
 			args.Date, t.startOfToday().Format(dateLayout))
 	}
 
-	slots, err := t.scheduling.AvailableSlots(ctx, args.StaffID, day)
+	slots, err := t.slotsForService(ctx, args.StaffID, day, args.ServiceID)
 	if err != nil {
 		return "", err
 	}
@@ -551,9 +634,10 @@ func (t *toolset) availableSlots(ctx context.Context, s *session, call ai.ToolCa
 	s.offer(times...)
 
 	return encode(map[string]any{
-		"date":  args.Date,
-		"times": times,
-		"note":  "These times are not reserved. Another customer can take one at any moment.",
+		"date":       args.Date,
+		"service_id": args.ServiceID,
+		"times":      times,
+		"note":       "These times fit the selected service but are not reserved. If none are available, try another date or call list_staff for this service; do not offer unfiltered times.",
 	})
 }
 
@@ -586,6 +670,12 @@ func (t *toolset) prepareBooking(ctx context.Context, s *session, call ai.ToolCa
 		return "", err
 	}
 
+	// A newly requested selection replaces the old proposal even if it turns
+	// out not to fit. An old confirmation must never book the previous service.
+	s.conv.Draft = nil
+	s.conv.BookingChange = nil
+	t.rememberContact(ctx, s, strings.TrimSpace(args.FullName), phone)
+
 	// The service and specialist are looked up rather than taken on trust, so
 	// an id the model invented or misremembered is caught here and the summary
 	// read back to the customer carries real names.
@@ -600,20 +690,21 @@ func (t *toolset) prepareBooking(ctx context.Context, s *session, call ai.ToolCa
 	if !staff.Bookable {
 		return "", fmt.Errorf("%s is not taking appointments at the moment", staff.Name)
 	}
-
-	// How long the appointment runs for comes from the offered slot, not the
-	// service. A business that has never filled in a duration on the service
-	// still has one on every time it offers, and a draft with no duration
-	// cannot be confirmed. Looking it up here also proves the chosen time is
-	// genuinely on offer rather than one the model invented.
-	duration, err := t.appointmentLength(ctx, staff.ID, startsAt, service.Duration)
+	service, qualified, err := t.serviceForStaff(ctx, staff.ID, service)
 	if err != nil {
 		return "", err
 	}
+	if !qualified {
+		return t.offerQualifiedStaff(ctx, s, service, staff)
+	}
 
-	// Recorded as soon as the customer gives it, before anything that can fail.
-	// If the booking then falls over, the business can still reach them.
-	t.rememberContact(ctx, s, strings.TrimSpace(args.FullName), phone)
+	// Use the specialist's service duration when provided, with the filtered
+	// slot duration as fallback. The lookup also proves this exact service fits
+	// at the requested time rather than trusting a general opening.
+	duration, err := t.appointmentLength(ctx, staff.ID, startsAt, service.ID, service.Duration)
+	if err != nil {
+		return "", err
+	}
 
 	draft := booking.Draft{
 		// Generated once, here. Reusing it on every confirmation attempt is
@@ -769,7 +860,21 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 	}
 }
 
-// listBookings returns what this customer has booked here.
+// listBookings returns what this customer still has booked here.
+//
+// Only appointments that are still to come and have not been cancelled. A
+// customer asking what they have booked is asking what is coming: answering
+// with a visit from March and one they cancelled last week makes them read past
+// the answer to find it. It matters more than tidiness, because this list is
+// also what the model cancels and moves from, and every past or cancelled entry
+// on it is a reference that can only fail once it is used.
+//
+// The names are what turn "an appointment on Friday at 14:00" into something a
+// customer recognises, and without them the assistant cannot say what the
+// appointment is even for. They cost one catalogue read between them and are
+// best effort: an appointment nobody can name is still an appointment that can
+// be cancelled, so a catalogue that will not answer costs the names rather than
+// the list.
 func (t *toolset) listBookings(ctx context.Context, s *session) (string, error) {
 	if t.bookings == nil {
 		return "", errors.New("appointment history is not available")
@@ -780,23 +885,84 @@ func (t *toolset) listBookings(ctx context.Context, s *session) (string, error) 
 		return "", err
 	}
 
-	type item struct {
-		Reference string `json:"reference"`
-		Date      string `json:"date"`
-		Time      string `json:"time"`
-		Status    string `json:"status"`
+	now := t.now()
+	upcoming := make([]booking.Booking, 0, len(booked))
+	for _, b := range booked {
+		if b.Status == booking.StatusConfirmed && b.StartsAt.After(now) {
+			upcoming = append(upcoming, b)
+		}
 	}
 
-	items := make([]item, 0, len(booked))
-	for _, b := range booked {
-		items = append(items, item{
+	if len(upcoming) == 0 {
+		return encode(map[string]any{
+			"appointments": []any{},
+			"instruction": "This customer has nothing booked with us. Tell them so plainly " +
+				"and offer to book something.",
+		})
+	}
+
+	serviceNames, staffNames := t.catalogueNames(ctx)
+
+	type item struct {
+		Reference string   `json:"reference"`
+		Date      string   `json:"date"`
+		Time      string   `json:"time"`
+		Services  []string `json:"services,omitempty"`
+		Staff     string   `json:"staff,omitempty"`
+	}
+
+	items := make([]item, 0, len(upcoming))
+	for _, b := range upcoming {
+		entry := item{
 			Reference: b.ExternalID,
 			Date:      b.StartsAt.In(t.location).Format(dateLayout),
 			Time:      b.StartsAt.In(t.location).Format(timeLayout),
-			Status:    string(b.Status),
-		})
+			Staff:     staffNames[b.StaffID],
+		}
+		for _, serviceID := range b.ServiceIDs {
+			if name := serviceNames[serviceID]; name != "" {
+				entry.Services = append(entry.Services, name)
+			}
+		}
+		items = append(items, entry)
 	}
-	return encode(map[string]any{"appointments": items})
+
+	return encode(map[string]any{
+		"appointments": items,
+		"instruction": "These are all of this customer's upcoming appointments, soonest first. " +
+			"There are no others. Use a reference exactly as it appears here to cancel or move one.",
+	})
+}
+
+// catalogueNames reads the catalogue once and returns the names of services and
+// specialists, by id.
+//
+// Deliberately best effort. Its only caller wants names to make a list of
+// appointments readable, and a list without them is still true and still
+// usable, so a catalogue that cannot be read is logged and leaves the names
+// out rather than failing the answer.
+func (t *toolset) catalogueNames(ctx context.Context) (services, staff map[string]string) {
+	services, staff = map[string]string{}, map[string]string{}
+
+	catalogue, err := t.scheduling.ListServices(ctx)
+	if err != nil {
+		t.logger.WarnContext(ctx, "could not name the services on a customer's appointments",
+			"error", err)
+	}
+	for _, service := range catalogue {
+		services[service.ID] = service.Name
+	}
+
+	people, err := t.scheduling.ListStaff(ctx)
+	if err != nil {
+		t.logger.WarnContext(ctx, "could not name the specialists on a customer's appointments",
+			"error", err)
+	}
+	for _, member := range people {
+		staff[member.ID] = member.Name
+	}
+
+	return services, staff
 }
 
 // parseAppointmentTime reads a day and a clock time in the business's timezone.
@@ -910,12 +1076,13 @@ func (t *toolset) appointmentLength(
 	ctx context.Context,
 	staffID string,
 	startsAt time.Time,
+	serviceID string,
 	serviceDuration time.Duration,
 ) (time.Duration, error) {
 	local := startsAt.In(t.location)
 	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, t.location)
 
-	slots, err := t.scheduling.AvailableSlots(ctx, staffID, day)
+	slots, err := t.slotsForService(ctx, staffID, day, serviceID)
 	if err != nil {
 		return 0, err
 	}

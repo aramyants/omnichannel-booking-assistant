@@ -65,6 +65,11 @@ func TestDedupeKeyIsStablePerProviderMessage(t *testing.T) {
 	if first.DedupeKey() == other.DedupeKey() {
 		t.Errorf("two channels collided on key %q", first.DedupeKey())
 	}
+	other = first
+	other.ExternalThreadID = "another-chat"
+	if first.DedupeKey() == other.DedupeKey() {
+		t.Fatal("Telegram messages from different chats collided")
+	}
 }
 
 func TestReplyAddressesTheSameConversation(t *testing.T) {

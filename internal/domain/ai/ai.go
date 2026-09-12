@@ -101,6 +101,10 @@ type Request struct {
 
 	Tools     []Tool
 	MaxTokens int
+
+	// StructuredReply asks for customer text and the choices answering its
+	// current question together, without another model round trip.
+	StructuredReply bool
 }
 
 // Response is what the model produced.
@@ -108,6 +112,10 @@ type Response struct {
 	// Text is the reply to show the customer. It is empty when the model asked
 	// for tools instead of answering.
 	Text string
+
+	// Choices are proposed labels, validated against actual tool results by
+	// the application before they become buttons.
+	Choices []string
 
 	// ToolCalls is what the model wants run before it can answer.
 	ToolCalls []ToolCall
@@ -137,6 +145,16 @@ type Provider interface {
 
 	// Model names the model in use, for logging and cost attribution.
 	Model() string
+}
+
+type Audio struct {
+	Data     []byte
+	Filename string
+}
+
+// Transcriber converts speech to customer text; it never generates voice replies.
+type Transcriber interface {
+	Transcribe(context.Context, Audio) (string, error)
 }
 
 // ArgumentsInto decodes a tool call's arguments into dst.

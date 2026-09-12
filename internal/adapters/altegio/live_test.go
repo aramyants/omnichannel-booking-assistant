@@ -150,3 +150,63 @@ func TestLiveAvailability(t *testing.T) {
 		t.Logf("  slot %s (%s)", slot.Start.Format(time.RFC3339), slot.Duration)
 	}
 }
+
+// Set ALTEGIO_LIVE_SERVICE_ID to check a specific treatment during an incident.
+// Every endpoint here is a read: no customer data or appointment is sent.
+func TestLiveServiceAvailability(t *testing.T) {
+	client := liveClient(t)
+	services, err := client.ListServices(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(services) == 0 {
+		t.Skip("the account currently offers no services")
+	}
+	serviceID := os.Getenv("ALTEGIO_LIVE_SERVICE_ID")
+	if serviceID == "" {
+		serviceID = services[0].ID
+	}
+	selected := []string{serviceID}
+	staff, err := client.ListStaffForServices(t.Context(), selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range staff {
+		t.Logf("service %s qualified specialist: %s (%s)", serviceID, member.Name, member.ID)
+	}
+	if len(staff) == 0 {
+		t.Skip("no specialists currently offer the selected service")
+	}
+	member := staff[0]
+	staffServices, err := client.ListServicesForStaff(t.Context(), member.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, service := range staffServices {
+		if service.ID == serviceID {
+			found = true
+			t.Logf("%s with %s: duration=%s, price=%s", service.Name, member.Name, service.Duration, service.PriceLabel())
+		}
+	}
+	if !found {
+		t.Fatalf("service %s is missing from its qualified specialist's catalogue", serviceID)
+	}
+	dates, err := client.AvailableDatesForServices(t.Context(), member.ID, selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dates) == 0 {
+		t.Skip("this service has no bookable dates")
+	}
+	slots, err := client.AvailableSlotsForServices(t.Context(), member.ID, dates[0], selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%s has %d service-specific times on %s", member.Name, len(slots), dates[0].Format("2006-01-02"))
+	for _, slot := range slots {
+		if slot.Start.IsZero() || slot.Duration <= 0 {
+			t.Errorf("invalid service-specific slot: %+v", slot)
+		}
+	}
+}

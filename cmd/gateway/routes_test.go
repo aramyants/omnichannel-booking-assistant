@@ -113,3 +113,46 @@ func TestTelegramRouteIsServedWhenConfigured(t *testing.T) {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }
+
+func TestMetaRoutesOnlyExistForConfiguredChannels(t *testing.T) {
+	for _, path := range []string{WhatsAppWebhookPath, InstagramWebhookPath, MessengerWebhookPath} {
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			rec := httptest.NewRecorder()
+			testRoutes().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, path, nil))
+			if rec.Code != http.StatusNotFound {
+				t.Errorf("disabled route %s returned %d", path, rec.Code)
+			}
+			h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+			gw := &gateway{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), whatsapp: h, instagram: h, messenger: h}
+			rec = httptest.NewRecorder()
+			gw.routes().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, path, nil))
+			if rec.Code != http.StatusOK {
+				t.Errorf("configured route %s returned %d", path, rec.Code)
+			}
+		}
+	}
+}
+
+// TestBuildVersionPrefersTheEnvironment. A source deploy builds through Cloud
+// Build, which cannot pass a Docker build argument, so the link-time stamp is
+// always "dev" there and every log line would misreport the running build.
+func TestBuildVersionPrefersTheEnvironment(t *testing.T) {
+	t.Setenv("BUILD_VERSION", "b32abc3")
+	if got := buildVersion(); got != "b32abc3" {
+		t.Errorf("buildVersion() = %q, want the deployed revision", got)
+	}
+
+	// Whitespace is what an environment variable picks up when it is written by
+	// a shell rather than typed, and a version padded with it reads as a
+	// different build in every log query.
+	t.Setenv("BUILD_VERSION", "  b32abc3\n")
+	if got := buildVersion(); got != "b32abc3" {
+		t.Errorf("buildVersion() = %q, want it trimmed", got)
+	}
+
+	// A build that stamps the binary sets nothing, and must keep its stamp.
+	t.Setenv("BUILD_VERSION", "")
+	if got := buildVersion(); got != version {
+		t.Errorf("buildVersion() = %q, want the link-time stamp %q", got, version)
+	}
+}

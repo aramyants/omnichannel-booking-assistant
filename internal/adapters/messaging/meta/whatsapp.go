@@ -16,15 +16,28 @@ import (
 // customer message at all: delivery receipts and read receipts arrive on the
 // same webhook. Those yield nothing and are not failures.
 func ParseWhatsApp(body []byte, receivedAt time.Time) ([]messaging.Envelope, error) {
+	return parseWhatsAppForNumber(body, receivedAt, "")
+}
+
+func parseWhatsAppForNumber(body []byte, receivedAt time.Time, phoneNumberID string) ([]messaging.Envelope, error) {
 	var u update
 	if err := json.Unmarshal(body, &u); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMalformedUpdate, err)
+	}
+	if u.Object != "whatsapp_business_account" {
+		return nil, nil
 	}
 
 	var envelopes []messaging.Envelope
 
 	for _, e := range u.Entry {
 		for _, c := range e.Changes {
+			if c.Field != "messages" {
+				continue
+			}
+			if phoneNumberID != "" && c.Value.Metadata.PhoneNumberID != phoneNumberID {
+				continue
+			}
 			// Names of the sender, keyed by their WhatsApp id. WhatsApp sends
 			// the profile name separately from the message.
 			names := make(map[string]string, len(c.Value.Contacts))
@@ -88,6 +101,11 @@ func whatsAppEnvelope(
 func whatsAppContent(m inboundMessage) messaging.Content {
 	if m.Text.Body != "" {
 		return messaging.Content{Type: messaging.ContentTypeText, Text: m.Text.Body}
+	}
+	for _, audio := range []*media{m.Voice, m.Audio} {
+		if audio != nil {
+			return messaging.Content{Type: messaging.ContentTypeAudio, Description: "voice message", Audio: &messaging.Audio{Reference: audio.ID, MIMEType: audio.MIMEType}}
+		}
 	}
 
 	for _, withCaption := range []*mediaWithCaption{m.Image, m.Video, m.Document} {

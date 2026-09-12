@@ -156,6 +156,10 @@ store ALTEGIO_PARTNER_TOKEN    altegio-partner-token    "${ALTEGIO_PARTNER_TOKEN
 store ALTEGIO_USER_TOKEN       altegio-user-token       "${ALTEGIO_USER_TOKEN:-}"
 store OPENAI_API_KEY           openai-api-key           "${OPENAI_API_KEY:-}"
 store WHATSAPP_ACCESS_TOKEN    whatsapp-access-token    "${WHATSAPP_ACCESS_TOKEN:-}"
+store MESSENGER_ACCESS_TOKEN   messenger-access-token   "${MESSENGER_ACCESS_TOKEN:-}"
+store INSTAGRAM_ACCESS_TOKEN   instagram-access-token   "${INSTAGRAM_ACCESS_TOKEN:-}"
+store INSTAGRAM_APP_SECRET     instagram-app-secret     "${INSTAGRAM_APP_SECRET:-}"
+store MESSENGER_APP_SECRET     messenger-app-secret     "${MESSENGER_APP_SECRET:-}"
 store META_APP_SECRET          meta-app-secret          "${META_APP_SECRET:-}"
 store META_VERIFY_TOKEN        meta-verify-token        "${META_VERIFY_TOKEN:-}"
 
@@ -171,7 +175,10 @@ if [[ ${#SECRET_MAPPINGS[@]} -gt 0 ]]; then
   done
   echo "  granted ${RUNTIME_SA} read access to ${#SECRET_NAMES[@]} secret(s)"
 
-  SECRET_FLAGS+=(--set-secrets "$(IFS=,; echo "${SECRET_MAPPINGS[*]}")")
+  # --update-secrets rather than --set-secrets: the latter removes every mapping
+  # not named in this run, so redeploying with one credential in the environment
+  # would silently detach the others from the service.
+  SECRET_FLAGS+=(--update-secrets "$(IFS=,; echo "${SECRET_MAPPINGS[*]}")")
 fi
 
 # Settings that are not credentials travel as plain environment variables.
@@ -201,11 +208,20 @@ fi
 [[ -n "${ALTEGIO_TIMEZONE:-}" ]]  && ENV_VARS+=",ALTEGIO_TIMEZONE=${ALTEGIO_TIMEZONE}"
 [[ -n "${ALTEGIO_CURRENCY:-}" ]]  && ENV_VARS+=",ALTEGIO_CURRENCY=${ALTEGIO_CURRENCY}"
 [[ -n "${OPENAI_MODEL:-}" ]]      && ENV_VARS+=",OPENAI_MODEL=${OPENAI_MODEL}"
+[[ -n "${OPENAI_TRANSCRIPTION_MODEL:-}" ]] && ENV_VARS+=",OPENAI_TRANSCRIPTION_MODEL=${OPENAI_TRANSCRIPTION_MODEL}"
 [[ -n "${WHATSAPP_PHONE_NUMBER_ID:-}" ]] && ENV_VARS+=",WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}"
+[[ -n "${MESSENGER_PAGE_ID:-}" ]]       && ENV_VARS+=",MESSENGER_PAGE_ID=${MESSENGER_PAGE_ID}"
+[[ -n "${INSTAGRAM_ACCOUNT_ID:-}" ]]   && ENV_VARS+=",INSTAGRAM_ACCOUNT_ID=${INSTAGRAM_ACCOUNT_ID}"
 [[ -n "${META_GRAPH_VERSION:-}" ]]       && ENV_VARS+=",META_GRAPH_VERSION=${META_GRAPH_VERSION}"
 [[ -n "${TELEGRAM_STAFF_CHAT_ID:-}" ]] && ENV_VARS+=",TELEGRAM_STAFF_CHAT_ID=${TELEGRAM_STAFF_CHAT_ID}"
 
 VERSION="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
+
+# The revision travels as an environment variable rather than a build argument.
+# A source deploy builds through Cloud Build, which offers no way to pass one to
+# the Dockerfile, so the binary's link-time stamp stays "dev" however this is
+# invoked and every log line would claim to be an unreleased build.
+ENV_VARS+=",BUILD_VERSION=${VERSION}"
 
 say "Building and deploying revision ${VERSION}"
 # --allow-unauthenticated is required: messaging providers call the webhook

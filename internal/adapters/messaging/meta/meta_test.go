@@ -229,8 +229,8 @@ func TestWhatsAppVoiceMessageIsDescribed(t *testing.T) {
 	}
 
 	content := messages.got[0].Content
-	if content.Type != messaging.ContentTypeUnsupported {
-		t.Errorf("type = %q, want unsupported", content.Type)
+	if content.Type != messaging.ContentTypeAudio || content.Audio == nil || content.Audio.Reference != "media-id-1" {
+		t.Errorf("content = %+v, want downloadable audio", content)
 	}
 	if content.Description != "voice message" {
 		t.Errorf("description = %q, want it to name what arrived", content.Description)

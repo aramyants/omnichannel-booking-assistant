@@ -28,7 +28,12 @@ required before launch.
 | Durable Firestore storage | done |
 | Cancel and reschedule | done |
 | Delayed reminders | done, local timers or Cloud Tasks |
-| WhatsApp, Instagram, Messenger, Viber | not started |
+| Staff handover and replies from the staff chat | done |
+| Buttons, and fixed phrases in Armenian, Russian and English | done |
+| WhatsApp | done, enabled when credentials are configured |
+| WhatsApp coexistence: a reply sent from the Business app takes the conversation over | done |
+| Instagram, Messenger | text and incoming audio implemented; credentials and deployment required |
+| Viber | not started |
 
 ## Design
 
@@ -152,6 +157,7 @@ found, rather than failing later inside a request.
 | `BUSINESS_NAME` | no | | What the assistant calls the business |
 | `OPENAI_API_KEY` | no | | Enables the language model when set |
 | `OPENAI_MODEL` | no | adapter default | Model identifier |
+| `OPENAI_TRANSCRIPTION_MODEL` | no | `gpt-4o-mini-transcribe` | Incoming audio transcription model; uses `OPENAI_API_KEY` |
 | `OPENAI_BASE_URL` | no | | Overrides the OpenAI host, for local stubs or proxies |
 | `STORAGE_BACKEND` | no | `memory` locally, `firestore` in production | Durable state backend |
 | `GCP_PROJECT_ID` | with Firestore | | Project containing the Firestore database |
@@ -190,9 +196,25 @@ parse, so it is logged and acknowledged. A message that parsed but could not be
 handled may succeed on a second attempt, so it is answered with an error and
 Telegram sends it again.
 
-Messages the assistant cannot read, such as voice notes, are answered by saying
-so rather than ignored. A caption on a photo is treated as the request, because
-that is usually where it is.
+Voice notes and audio files are transcribed with OpenAI and used as customer
+text in the existing booking flow. Replies always remain text. Raw audio is
+downloaded in memory and not persisted. Files over 20 MiB, recordings reported
+longer than five minutes, unsupported formats and failed transcriptions get a
+short request to resend or type. A caption on a photo is treated as the request.
+
+Telegram shows typing feedback during processing, records button selections in
+the answered prompt and retires old keyboards. Distinct messages in the same
+conversation use a shared processing lease, and old callbacks cannot act on a
+newer booking draft. Replies carry up to three relevant tool-validated choices;
+contact questions have no calendar buttons.
+
+Category requests use `list_service_categories` and `list_services(category)` to
+return only that category's services and prices. Availability uses the selected
+service to filter eligible specialists, dates and times.
+
+For WhatsApp, Instagram and Messenger activation after verification, follow the
+[Meta connection checklist](docs/meta-setup.md). Meta replies are currently text,
+including replies to audio. Delayed reminders are currently Telegram only.
 
 ## Scheduling
 
