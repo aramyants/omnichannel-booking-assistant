@@ -1,9 +1,11 @@
 # Meta setup status — 12 September 2026
 
-This records dashboard observations, not a completed activation. The earlier bot
-changes are now committed as `042ffef` on `fix/localised-menu-and-live-appointments`
-(the local branch is in sync with its remote). A production deployment has not
-been verified during this Meta setup session.
+This records dashboard observations, not a completed Meta activation. The bot
+improvements and Meta transports were merged to `main` in PR #19. The existing
+Cloud Run service was verified healthy on 12 September and reports runtime version
+`ecd7520`, which includes the WhatsApp Business app reply/takeover handling. The
+three Meta webhook routes still return 404 because their production channel
+credentials and account IDs have not yet been attached to the service.
 
 ## Confirmed assets
 
@@ -159,9 +161,9 @@ as **Completed**. The message ID, template and delivery receipt were not observe
 in that resumed session; do not invent them or send a duplicate just for evidence.
 
 Saved a partial management-permission rationale for own-WABA/phone identification
-and webhook account subscription. Both WhatsApp permission forms last showed
-0 of 1 required API test calls before the successful management call; counters
-can take up to 24 hours to update. Neither has a screencast or allowed-usage
+and webhook account subscription. On 12 September Meta showed **Completed** for
+the required API-call check in both `whatsapp_business_management` and
+`whatsapp_business_messaging`. Neither permission has a screencast or allowed-usage
 certification attached. Review cannot be submitted yet.
 
 Meta's official documentation requires a Solution Partner or Tech Provider for

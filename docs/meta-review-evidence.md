@@ -26,8 +26,8 @@ steps and [channel setup](meta-setup.md) for the implemented transports.
    bot reply. Do not record token values or unrelated customer information.
 4. Completed: read-only `GET /v26.0/1720864419030467/phone_numbers` returned
    the matching test phone ID and `CLOUD_API` on 11 September. Both permissions
-   showed 0 of 1 required calls before this call; Meta says counters can take
-   24 hours to update. Do not repeatedly send messages to refresh a counter.
+   showed 0 of 1 required calls before this call. On 12 September Meta showed
+   **Completed** for the API-call check in both WhatsApp permission cards.
 5. Deploy and configure the implemented WhatsApp webhook/transport, then verify
    a real incoming message and a text reply using designated test accounts.
    A dashboard template message alone does not demonstrate the booking assistant.
