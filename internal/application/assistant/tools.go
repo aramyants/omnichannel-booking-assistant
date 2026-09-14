@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
@@ -163,8 +165,81 @@ func (s *session) buttons(replyText string) []messaging.Choice {
 	case offerMenu:
 		return menuChoices(lang)
 	default:
-		return s.choices
+		if asksForContactDetails(replyText) {
+			return nil
+		}
+		// Tool results from several rounds can all be candidates. A model may
+		// accidentally return a valid time from an earlier lookup while asking
+		// for the customer's name. Only show buttons whose labels the customer
+		// can actually see offered in this reply.
+		visible := make([]messaging.Choice, 0, len(s.choices))
+		for _, choice := range s.choices {
+			if choiceNamedInReply(replyText, choice.Label, s.candidates) {
+				visible = append(visible, choice)
+			}
+		}
+		return visible
 	}
+}
+
+// choiceNamedInReply matches a whole service, person, date or time label.
+// A substring match would mistake "Face Motion" for an offer of that service
+// when the reply only names "Face Motion Guasha".
+func choiceNamedInReply(reply, label string, candidates []messaging.Choice) bool {
+	text := []rune(strings.ToLower(reply))
+	needle := []rune(strings.ToLower(strings.TrimSpace(label)))
+	if len(needle) == 0 || len(needle) > len(text) {
+		return false
+	}
+	for start := 0; start+len(needle) <= len(text); start++ {
+		if start > 0 && choiceWordRune(text[start-1]) && choiceWordRune(needle[0]) {
+			continue
+		}
+		if end := start + len(needle); end < len(text) && choiceWordRune(text[end]) && choiceWordRune(needle[len(needle)-1]) {
+			continue
+		}
+		if slices.Equal(text[start:start+len(needle)], needle) {
+			// Several catalogue entries can share a prefix. An occurrence of
+			// "Face Motion Guasha" does not offer "Face Motion" unless the
+			// shorter name appears separately somewhere else in the reply.
+			shadowed := false
+			for _, candidate := range candidates {
+				longer := []rune(strings.ToLower(candidate.Label))
+				if len(longer) > len(needle) && start+len(longer) <= len(text) &&
+					slices.Equal(longer[:len(needle)], needle) &&
+					slices.Equal(text[start:start+len(longer)], longer) {
+					shadowed = true
+					break
+				}
+			}
+			if shadowed {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func choiceWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+
+// Contact details are typed, not chosen from a calendar. This guard covers a
+// model that includes a previously looked-up time in both its text and choices
+// while its actual question asks for a name or phone number.
+func asksForContactDetails(reply string) bool {
+	text := strings.ToLower(reply)
+	for _, phrase := range []string{
+		"your name", "name should", "name to book", "book under", "full name",
+		"first name", "last name", "phone number", "your phone", "contact number",
+		"ваше имя", "имя и фамил", "какое имя", "как вас зовут",
+		"номер телефона", "телефон", "вашу фамил", "ваше фамил",
+		"ձեր անուն", "անունը", "ազգանուն", "հեռախոսահամար", "հեռախոս",
+	} {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 // Tool names. They are constants because they appear in three places that must
