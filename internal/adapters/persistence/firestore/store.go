@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/firestore"
+	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -754,6 +755,28 @@ func (s *Store) FindReminder(ctx context.Context, reminderID string) (reminder.R
 		return reminder.Reminder{}, fmt.Errorf("firestore: read reminder: %w", err)
 	}
 	return fromReminderDoc(doc), nil
+}
+
+// ListScheduledReminders finds reminders whose task may need reenqueuing.
+func (s *Store) ListScheduledReminders(ctx context.Context) ([]reminder.Reminder, error) {
+	documents := s.client.Collection(collectionReminders).
+		Where("status", "==", string(reminder.StatusScheduled)).Documents(ctx)
+	defer documents.Stop()
+	var pending []reminder.Reminder
+	for {
+		snapshot, err := documents.Next()
+		if err == iterator.Done {
+			return pending, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("firestore: list scheduled reminders: %w", err)
+		}
+		var doc reminderDoc
+		if err := snapshot.DataTo(&doc); err != nil {
+			return nil, fmt.Errorf("firestore: read scheduled reminder: %w", err)
+		}
+		pending = append(pending, fromReminderDoc(doc))
+	}
 }
 
 // ClaimReminder atomically acquires or recovers a delivery lease.

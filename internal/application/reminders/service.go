@@ -34,6 +34,7 @@ const (
 type Repository interface {
 	EnsureReminder(ctx context.Context, candidate reminder.Reminder) error
 	FindReminder(ctx context.Context, reminderID string) (reminder.Reminder, error)
+	ListScheduledReminders(ctx context.Context) ([]reminder.Reminder, error)
 	ClaimReminder(
 		ctx context.Context,
 		reminderID, claimID string,
@@ -41,6 +42,31 @@ type Repository interface {
 	) (reminder.Reminder, bool, error)
 	FinishReminder(ctx context.Context, reminderID, claimID string, status reminder.Status, at time.Time) error
 	ReleaseReminder(ctx context.Context, reminderID, claimID string) error
+}
+
+// Reconcile restores tasks for reminders persisted before a scheduling failure
+// or lost with a queue. Named tasks make repeated runs safe. Past appointments
+// and past-due reminders are left for a separate cleanup rather than sending
+// a stale reminder.
+func (s *Service) Reconcile(ctx context.Context) (int, error) {
+	pending, err := s.repository.ListScheduledReminders(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("reconcile reminders: list: %w", err)
+	}
+	now := s.now()
+	var scheduled int
+	var schedulingErrors []error
+	for _, r := range pending {
+		if r.Provider != messaging.ProviderTelegram || !r.ExpectedStartsAt.After(now) || !r.DueAt.After(now) {
+			continue
+		}
+		if err := s.scheduleWake(ctx, r, now); err != nil {
+			schedulingErrors = append(schedulingErrors, fmt.Errorf("%s: %w", r.ID, err))
+			continue
+		}
+		scheduled++
+	}
+	return scheduled, errors.Join(schedulingErrors...)
 }
 
 // BookingRepository reads the assistant's local view of appointments.
@@ -177,7 +203,16 @@ func (s *Service) Plan(
 	if err := s.repository.EnsureReminder(ctx, r); err != nil {
 		return fmt.Errorf("plan reminder: %w", err)
 	}
-	return s.scheduleWake(ctx, r, s.now())
+	// EnsureReminder keeps the first stored version. Its creation time anchors
+	// long-horizon task names, so use that version on repeated Plan calls.
+	stored, err := s.repository.FindReminder(ctx, r.ID)
+	if err != nil {
+		return fmt.Errorf("plan reminder: read persisted reminder: %w", err)
+	}
+	if stored.Terminal() {
+		return nil
+	}
+	return s.scheduleWake(ctx, stored, s.now())
 }
 
 // Deliver handles an at-least-once task invocation.
@@ -302,8 +337,16 @@ func (s *Service) finish(
 
 func (s *Service) scheduleWake(ctx context.Context, r reminder.Reminder, now time.Time) error {
 	runAt := r.DueAt
-	if horizon := now.Add(maxTaskDelay); runAt.After(horizon) {
-		runAt = horizon
+	if runAt.After(now.Add(maxTaskDelay)) {
+		// Anchor long-horizon checkpoints to creation time so retries and
+		// reconciliation always use the same task name.
+		runAt = r.CreatedAt.Add(maxTaskDelay)
+		for !runAt.After(now) && runAt.Before(r.DueAt) {
+			runAt = runAt.Add(maxTaskDelay)
+		}
+		if runAt.After(r.DueAt) {
+			runAt = r.DueAt
+		}
 	}
 	task := Task{
 		ID:         taskID(r.ID, runAt),

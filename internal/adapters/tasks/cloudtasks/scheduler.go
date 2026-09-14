@@ -19,7 +19,12 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/reminders"
 )
 
-const maximumScheduleDelay = 30 * 24 * time.Hour
+const (
+	maximumScheduleDelay = 30 * 24 * time.Hour
+	// Cloud Tasks rejects CreateTask RPC deadlines more than 30 seconds away.
+	// Booking requests may allow longer than that, so cap just this RPC.
+	createTaskTimeout = 20 * time.Second
+)
 
 type taskCreator interface {
 	CreateTask(
@@ -113,7 +118,9 @@ func (s *Scheduler) Schedule(ctx context.Context, task reminders.Task) error {
 		return fmt.Errorf("cloud tasks: invalid run time: %w", err)
 	}
 
-	_, err = s.client.CreateTask(ctx, &cloudtaskspb.CreateTaskRequest{
+	createCtx, cancel := context.WithTimeout(ctx, createTaskTimeout)
+	defer cancel()
+	_, err = s.client.CreateTask(createCtx, &cloudtaskspb.CreateTaskRequest{
 		Parent: s.parent,
 		Task: &cloudtaskspb.Task{
 			Name: s.parent + "/tasks/" + task.ID,

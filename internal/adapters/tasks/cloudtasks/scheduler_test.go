@@ -19,16 +19,18 @@ import (
 var taskNow = time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 
 type fakeCreator struct {
-	request *cloudtaskspb.CreateTaskRequest
-	err     error
+	request  *cloudtaskspb.CreateTaskRequest
+	deadline time.Time
+	err      error
 }
 
 func (f *fakeCreator) CreateTask(
-	_ context.Context,
+	ctx context.Context,
 	req *cloudtaskspb.CreateTaskRequest,
 	_ ...gax.CallOption,
 ) (*cloudtaskspb.Task, error) {
 	f.request = req
+	f.deadline, _ = ctx.Deadline()
 	return req.Task, f.err
 }
 
@@ -100,6 +102,33 @@ func TestScheduleRefusesCloudTasksThirtyDayLimit(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("Schedule() accepted a task beyond Cloud Tasks' maximum horizon")
+	}
+}
+
+func TestScheduleCapsCreateTaskDeadline(t *testing.T) {
+	creator := &fakeCreator{}
+	scheduler := newScheduler(creator, nil, taskConfig())
+	scheduler.now = func() time.Time { return taskNow }
+	longCtx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	if err := scheduler.Schedule(longCtx, reminders.Task{
+		ID: "long-request", ReminderID: "reminder", RunAt: taskNow.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if remaining := time.Until(creator.deadline); remaining <= 0 || remaining > createTaskTimeout {
+		t.Errorf("CreateTask deadline in %s, want within %s", remaining, createTaskTimeout)
+	}
+
+	shortCtx, cancelShort := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancelShort()
+	if err := scheduler.Schedule(shortCtx, reminders.Task{
+		ID: "short-request", ReminderID: "reminder", RunAt: taskNow.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if remaining := time.Until(creator.deadline); remaining <= 0 || remaining > 2*time.Second {
+		t.Errorf("CreateTask deadline in %s, want the shorter caller deadline", remaining)
 	}
 }
 

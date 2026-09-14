@@ -167,6 +167,79 @@ func TestPlanSchedulesAtTheLeadTimeAndIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestReconcileRestoresTaskAfterPersistedScheduleFailure(t *testing.T) {
+	now := testNow
+	scheduler := &fakeScheduler{err: errors.New("queue unavailable")}
+	svc, store := newTestService(t, &now, scheduler, &fakeSender{})
+	b := appointment(now.Add(72 * time.Hour))
+	if err := store.SaveBooking(t.Context(), b); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Plan(t.Context(), b, reminderConversation()); err == nil {
+		t.Fatal("Plan() succeeded despite the task creation failure")
+	}
+	if pending, err := store.ListScheduledReminders(t.Context()); err != nil || len(pending) != 1 {
+		t.Fatalf("persisted reminders = %+v, %v; want one", pending, err)
+	}
+	failed := scheduler.snapshot()[0]
+	scheduler.err = nil
+	count, err := svc.Reconcile(t.Context())
+	if err != nil || count != 1 {
+		t.Fatalf("Reconcile() = %d, %v; want one restored task", count, err)
+	}
+	restored := scheduler.snapshot()[1]
+	if restored != failed {
+		t.Errorf("restored task = %+v, want original %+v", restored, failed)
+	}
+	if count, err := svc.Reconcile(t.Context()); err != nil || count != 1 || scheduler.snapshot()[2] != failed {
+		t.Errorf("second reconciliation changed deterministic task: count=%d err=%v", count, err)
+	}
+}
+
+func TestReconcileSkipsExpiredAppointments(t *testing.T) {
+	now := testNow
+	scheduler := &fakeScheduler{}
+	svc, store := newTestService(t, &now, scheduler, &fakeSender{})
+	plan(t, svc, store, now.Add(72*time.Hour))
+	now = now.Add(73 * time.Hour)
+	count, err := svc.Reconcile(t.Context())
+	if err != nil || count != 0 || len(scheduler.snapshot()) != 1 {
+		t.Errorf("expired appointment reconciliation = %d, %v, tasks=%+v", count, err, scheduler.snapshot())
+	}
+}
+
+func TestReconcileDoesNotSendLateReminderBeforeAppointment(t *testing.T) {
+	now := testNow
+	scheduler := &fakeScheduler{}
+	svc, store := newTestService(t, &now, scheduler, &fakeSender{})
+	plan(t, svc, store, now.Add(72*time.Hour))
+	now = now.Add(60 * time.Hour) // Appointment is ahead; its reminder was due 12h ago.
+	count, err := svc.Reconcile(t.Context())
+	if err != nil || count != 0 || len(scheduler.snapshot()) != 1 {
+		t.Errorf("late reminder reconciliation = %d, %v, tasks=%+v", count, err, scheduler.snapshot())
+	}
+}
+
+func TestLongHorizonReconcileKeepsOriginalCheckpoint(t *testing.T) {
+	now := testNow
+	scheduler := &fakeScheduler{}
+	svc, store := newTestService(t, &now, scheduler, &fakeSender{})
+	first := plan(t, svc, store, now.Add(90*24*time.Hour))
+	now = now.Add(3 * 24 * time.Hour)
+	if _, err := svc.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if again := scheduler.snapshot()[1]; again != first {
+		t.Errorf("long-horizon checkpoint drifted: %+v, want %+v", again, first)
+	}
+	if err := svc.Plan(t.Context(), appointment(testNow.Add(90*24*time.Hour)), reminderConversation()); err != nil {
+		t.Fatal(err)
+	}
+	if again := scheduler.snapshot()[2]; again != first {
+		t.Errorf("repeated plan checkpoint drifted: %+v, want %+v", again, first)
+	}
+}
+
 func TestAppointmentInsideLeadWindowGetsNoImmediateReminder(t *testing.T) {
 	now := testNow
 	scheduler := &fakeScheduler{}

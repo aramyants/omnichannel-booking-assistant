@@ -524,6 +524,19 @@ func TestReminderRoundTripAndClaim(t *testing.T) {
 	if err := store.EnsureReminder(t.Context(), r); err != nil {
 		t.Fatalf("EnsureReminder() returned error: %v", err)
 	}
+	if pending, err := store.ListScheduledReminders(t.Context()); err != nil {
+		t.Fatalf("ListScheduledReminders() returned error: %v", err)
+	} else {
+		found := false
+		for _, item := range pending {
+			if item.ID == r.ID {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("ListScheduledReminders() omitted %s", r.ID)
+		}
+	}
 	loaded, err := store.FindReminder(t.Context(), r.ID)
 	if err != nil || !loaded.DueAt.Equal(r.DueAt) {
 		t.Fatalf("FindReminder() = %+v, %v", loaded, err)
@@ -553,6 +566,15 @@ func TestReminderRoundTripAndClaim(t *testing.T) {
 	finished, _ := store.FindReminder(t.Context(), r.ID)
 	if finished.Status != reminder.StatusSent {
 		t.Errorf("status = %q, want sent to survive repeated planning", finished.Status)
+	}
+	if pending, err := store.ListScheduledReminders(t.Context()); err != nil {
+		t.Fatalf("ListScheduledReminders() after finish returned error: %v", err)
+	} else {
+		for _, item := range pending {
+			if item.ID == r.ID {
+				t.Errorf("finished reminder %s is still scheduled", r.ID)
+			}
+		}
 	}
 }
 

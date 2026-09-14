@@ -136,6 +136,19 @@ func (s *Store) FindReminder(_ context.Context, reminderID string) (reminder.Rem
 	return r, nil
 }
 
+// ListScheduledReminders returns reminders that still need a task or delivery.
+func (s *Store) ListScheduledReminders(_ context.Context) ([]reminder.Reminder, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var pending []reminder.Reminder
+	for _, r := range s.reminders {
+		if r.Status == reminder.StatusScheduled {
+			pending = append(pending, r)
+		}
+	}
+	return pending, nil
+}
+
 // ClaimReminder acquires or recovers a delivery lease.
 func (s *Store) ClaimReminder(
 	_ context.Context,
