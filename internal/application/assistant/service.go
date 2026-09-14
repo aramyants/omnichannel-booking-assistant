@@ -599,7 +599,7 @@ func (s *Service) reply(
 	}
 
 	req := ai.Request{
-		Instructions:    s.instructions(cust, msg.Sender.Language),
+		Instructions:    s.instructions(cust, sess.language, msg.Sender.Language),
 		Messages:        toAIMessages(history),
 		Tools:           s.tools.definitions(),
 		StructuredReply: true,
@@ -633,6 +633,11 @@ func (s *Service) reply(
 			sess.selectChoices(resp.Choices)
 			return resp.Text, nil
 		}
+		if repeatedLookupWithoutProgress(resp.ToolCalls, req.Turns) {
+			s.logger.WarnContext(ctx, "stopped repeated lookups that made no progress",
+				"conversation_id", conv.ID, "round", round)
+			return s.apologise(ctx, sess)
+		}
 
 		turn := ai.Turn{Calls: resp.ToolCalls}
 		for _, tc := range resp.ToolCalls {
@@ -651,6 +656,37 @@ func (s *Service) reply(
 	s.logger.WarnContext(ctx, "gave up after too many tool rounds",
 		"conversation_id", conv.ID, "rounds", maxToolRounds)
 	return s.apologise(ctx, sess)
+}
+
+// repeatedLookupWithoutProgress catches a model asking for the same read-only
+// lookup after receiving the same answer twice. A second attempt is useful if
+// the calendar briefly failed; a third identical attempt only makes the
+// customer wait. Booking and handoff tools are intentionally excluded because
+// they change state and have their own idempotency and confirmation rules.
+func repeatedLookupWithoutProgress(calls []ai.ToolCall, turns []ai.Turn) bool {
+	if len(calls) == 0 || len(turns) < 2 {
+		return false
+	}
+	previous, before := turns[len(turns)-1], turns[len(turns)-2]
+	if len(calls) != len(previous.Calls) || len(calls) != len(before.Calls) ||
+		len(previous.Results) != len(calls) || len(before.Results) != len(calls) {
+		return false
+	}
+	for i, call := range calls {
+		switch call.Name {
+		case toolListCategories, toolListServices, toolListStaff,
+			toolAvailableDates, toolAvailableSlots, toolListBookings:
+		default:
+			return false
+		}
+		if call.Name != previous.Calls[i].Name || call.Name != before.Calls[i].Name ||
+			strings.TrimSpace(string(call.Arguments)) != strings.TrimSpace(string(previous.Calls[i].Arguments)) ||
+			strings.TrimSpace(string(call.Arguments)) != strings.TrimSpace(string(before.Calls[i].Arguments)) ||
+			previous.Results[i].Output != before.Results[i].Output {
+			return false
+		}
+	}
+	return true
 }
 
 // menuReply answers the menu entries that do not need a model.

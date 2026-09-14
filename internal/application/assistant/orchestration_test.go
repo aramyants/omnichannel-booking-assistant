@@ -504,8 +504,8 @@ func TestTheLoopIsBounded(t *testing.T) {
 		t.Fatalf("Handle() returned error: %v", err)
 	}
 
-	if model.calls != maxToolRounds {
-		t.Errorf("the model was called %d times, want it capped at %d", model.calls, maxToolRounds)
+	if model.calls != 3 {
+		t.Errorf("the model repeated the same lookup %d times, want it stopped after 3 completions", model.calls)
 	}
 
 	// The customer is answered, and the assistant stays available: going round
@@ -515,6 +515,54 @@ func TestTheLoopIsBounded(t *testing.T) {
 	}
 	if conv := openConversation(t, store); conv.State != conversation.StateAssistantActive {
 		t.Errorf("state = %q, want the assistant still active", conv.State)
+	}
+}
+
+func TestRepeatedLookupGuardLeavesStateChangingCallsAlone(t *testing.T) {
+	call := ai.ToolCall{ID: "third", Name: toolConfirmBooking, Arguments: []byte(`{}`)}
+	turns := []ai.Turn{
+		{Calls: []ai.ToolCall{{ID: "first", Name: toolConfirmBooking, Arguments: []byte(`{}`)}},
+			Results: []ai.ToolResult{{CallID: "first", Output: `{"error":"try again"}`}}},
+		{Calls: []ai.ToolCall{{ID: "second", Name: toolConfirmBooking, Arguments: []byte(`{}`)}},
+			Results: []ai.ToolResult{{CallID: "second", Output: `{"error":"try again"}`}}},
+	}
+	if repeatedLookupWithoutProgress([]ai.ToolCall{call}, turns) {
+		t.Fatal("booking confirmation was treated like a repeatable read-only lookup")
+	}
+	call.Name = toolListServices
+	for i := range turns {
+		turns[i].Calls[0].Name = toolListServices
+	}
+	turns[1].Results[0].Output = `{"services":["new result"]}`
+	if repeatedLookupWithoutProgress([]ai.ToolCall{call}, turns) {
+		t.Fatal("a lookup with changed results was treated as no progress")
+	}
+}
+
+func TestModelKeepsConversationLanguageAfterShortAcknowledgement(t *testing.T) {
+	sender := &fakeSender{}
+	model := &scriptedAI{responses: []ai.Response{
+		textResponse("Конечно. Чем могу помочь?"),
+		textResponse("Подскажите, какой массаж вас интересует?"),
+	}}
+	svc, _ := newAIService(t, model, defaultScheduling(), sender)
+	first := incoming("language-1")
+	first.Content.Text = "Можно на русском?"
+	if err := svc.Handle(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	second := incoming("language-2")
+	second.Content.Text = "Da"
+	if err := svc.Handle(t.Context(), second); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.requests) != 2 || len(sender.sent) != 2 {
+		t.Fatalf("got %d model requests and %d replies, want two each", len(model.requests), len(sender.sent))
+	}
+	instructions := model.requests[1].Instructions
+	if !strings.Contains(instructions, "current language is Russian") ||
+		!strings.Contains(instructions, "app was originally set to Armenian") {
+		t.Fatalf("model lost the established Russian conversation: %s", instructions)
 	}
 }
 

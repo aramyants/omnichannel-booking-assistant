@@ -36,7 +36,7 @@ type Business struct {
 // decides whether the assistant replies at all, and no appointment can be
 // created except through code that checks it. The prompt shapes behaviour; the
 // code enforces it.
-func (s *Service) instructions(cust customer.Customer, languageTag string) string {
+func (s *Service) instructions(cust customer.Customer, currentLanguage language, appLanguageTag string) string {
 	now := s.now().In(s.business.Location)
 
 	var b strings.Builder
@@ -63,13 +63,16 @@ func (s *Service) instructions(cust customer.Customer, languageTag string) strin
 		fmt.Fprintf(&b, "The customer's name is %s.\n\n", cust.Name)
 	}
 
-	// The provider reports the language the customer has set their app to,
-	// which is the only signal available before they have written anything.
-	// Greeting an Armenian customer in English is the kind of first impression
-	// that ends the conversation.
-	if language := languageName(languageTag); language != "" {
-		fmt.Fprintf(&b, "Their messaging app is set to %s, so open in %s unless their "+
-			"message is plainly in another language.\n\n", language, language)
+	// The customer's app language is only a first-contact hint. Once the
+	// conversation changes language, repeating that stale hint competes with
+	// the instruction to answer in the language the customer is using now.
+	if language := languageName(string(currentLanguage)); language != "" {
+		fmt.Fprintf(&b, "The conversation's current language is %s. Continue in %s unless "+
+			"the customer's latest message clearly asks to switch languages.\n\n", language, language)
+	}
+	if app := languageName(appLanguageTag); app != "" && app != languageName(string(currentLanguage)) {
+		fmt.Fprintf(&b, "Their messaging app was originally set to %s; this is only a "+
+			"first-contact hint, not a reason to change the conversation's language.\n\n", app)
 	}
 
 	b.WriteString(`How to answer:
