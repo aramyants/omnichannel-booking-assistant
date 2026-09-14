@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
@@ -305,11 +306,15 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 	if msg.Content.Type == messaging.ContentTypeAudio && (conv.AssistantMayReply() || conv.WaitingForHumanLongerThan(handoffTimeout, now)) {
 		transcribed, err := s.transcribeInput(ctx, msg)
 		if err != nil {
-			audioFailed = true
 			s.logger.WarnContext(ctx, "could not transcribe customer audio", "error", err, "conversation_id", conv.ID)
-			// Only the audio was lost. A caption is something the customer
-			// typed, and it belongs in the transcript like any other text.
-			msg.Content = messaging.Content{Type: messaging.ContentTypeUnsupported, Text: msg.Content.Text, Description: "voice message"}
+			// A caption is customer-authored text. If the voice note is unreadable,
+			// answer that text now instead of making the customer repeat it.
+			if caption := strings.TrimSpace(msg.Content.Text); caption != "" {
+				msg.Content = messaging.Content{Type: messaging.ContentTypeText, Text: caption}
+			} else {
+				audioFailed = true
+				msg.Content = messaging.Content{Type: messaging.ContentTypeUnsupported, Description: "voice message"}
+			}
 		} else {
 			msg = transcribed
 		}

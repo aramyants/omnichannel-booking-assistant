@@ -43,6 +43,11 @@ func Download(client *http.Client, req *http.Request, limit int64) ([]byte, stri
 
 func Filename(name, contentType string) (string, error) {
 	ext := strings.ToLower(path.Ext(name))
+	// Telegram commonly stores Ogg/Opus voice notes with .oga or .opus file
+	// paths. The metadata and download may both omit a useful Content-Type.
+	if ext == ".oga" || ext == ".opus" {
+		return "voice.ogg", nil
+	}
 	for _, allowed := range []string{".flac", ".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".ogg", ".wav", ".webm"} {
 		if ext == allowed {
 			return "voice" + ext, nil

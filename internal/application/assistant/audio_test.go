@@ -76,7 +76,7 @@ func TestUnreadableAudioDoesNotGuessOrInvokeBookingModel(t *testing.T) {
 	}
 }
 
-func TestUnreadableAudioKeepsTheCaptionForTheTranscriptAndTheModel(t *testing.T) {
+func TestUnreadableAudioAnswersTheCaptionImmediately(t *testing.T) {
 	sender := &audioSender{}
 	model := &scriptedAI{responses: []ai.Response{textResponse("Конечно, в среду в 16:00 есть окно.")}}
 	svc, store := newAIService(t, model, defaultScheduling(), sender)
@@ -91,17 +91,11 @@ func TestUnreadableAudioKeepsTheCaptionForTheTranscriptAndTheModel(t *testing.T)
 
 	conv, _ := store.FindOrOpen(t.Context(), conversation.Conversation{Provider: voice.Provider, ExternalThreadID: voice.ExternalThreadID})
 	history, _ := svc.History(t.Context(), conv.ID)
-	if history[0].ContentType != messaging.ContentTypeUnsupported || history[0].Text != caption {
+	if history[0].ContentType != messaging.ContentTypeText || history[0].Text != caption {
 		t.Fatalf("caption was lost from the transcript: %+v", history[0])
 	}
-
-	followUp := incoming("follow-up")
-	followUp.Content = messaging.Content{Type: messaging.ContentTypeText, Text: "Есть место?"}
-	if err := svc.Handle(t.Context(), followUp); err != nil {
-		t.Fatal(err)
-	}
-	if model.calls != 1 {
-		t.Fatalf("expected one model call, got %d", model.calls)
+	if model.calls != 1 || len(sender.sent) != 1 || sender.sent[0].Text != "Конечно, в среду в 16:00 есть окно." {
+		t.Fatalf("caption was not answered immediately: calls=%d replies=%+v", model.calls, sender.sent)
 	}
 	var sawCaption bool
 	for _, m := range model.requests[0].Messages {
