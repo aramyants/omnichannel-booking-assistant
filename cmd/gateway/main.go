@@ -64,6 +64,11 @@ const webhookRegistrationTimeout = 15 * time.Second
 // system, for the same reason.
 const schedulingCheckTimeout = 15 * time.Second
 
+// Recover reminders persisted before a failed task creation during a previous
+// revision. Bound the startup pass so a Cloud Tasks outage cannot hold the
+// whole messaging gateway down indefinitely.
+const reminderReconcileTimeout = 45 * time.Second
+
 func main() {
 	// Install a structured logger before anything else can fail. Configuration
 	// loading is itself a source of fatal errors, and those entries need the
@@ -461,6 +466,15 @@ func openReminders(
 		if err != nil {
 			_ = scheduler.Close()
 			return nil, nil, nil, err
+		}
+		reconcileCtx, cancel := context.WithTimeout(ctx, reminderReconcileTimeout)
+		recovered, reconcileErr := service.Reconcile(reconcileCtx)
+		cancel()
+		if reconcileErr != nil {
+			logger.Error("could not reconcile scheduled reminders",
+				"error", reconcileErr, "scheduled", recovered)
+		} else if recovered > 0 {
+			logger.Info("reconciled scheduled reminders", "scheduled", recovered)
 		}
 		logger.Info("using Cloud Tasks for appointment reminders",
 			"queue", cfg.Reminders.Queue,

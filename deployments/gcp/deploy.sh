@@ -198,9 +198,9 @@ fi
 [[ -n "${BUSINESS_NAME:-}" ]]     && ENV_VARS+=",BUSINESS_NAME=${BUSINESS_NAME}"
 
 # The description can contain commas and newlines, which the comma-separated
-# --set-env-vars form cannot carry. It travels as its own delimited assignment.
+# update form cannot carry. It travels as its own delimited assignment.
 if [[ -n "${BUSINESS_DESCRIPTION:-}" ]]; then
-  DESCRIPTION_FLAG=(--set-env-vars "^@@^BUSINESS_DESCRIPTION=${BUSINESS_DESCRIPTION}")
+  DESCRIPTION_FLAG=(--update-env-vars "^@@^BUSINESS_DESCRIPTION=${BUSINESS_DESCRIPTION}")
 else
   DESCRIPTION_FLAG=()
 fi
@@ -235,7 +235,7 @@ gcloud run deploy "${SERVICE}" \
   --concurrency "${CONCURRENCY}" \
   --memory "${MEMORY}" \
   --service-account "${RUNTIME_SA}" \
-  --set-env-vars "${ENV_VARS}" \
+  --update-env-vars "${ENV_VARS}" \
   "${DESCRIPTION_FLAG[@]}" \
   "${SECRET_FLAGS[@]}" \
   --quiet
