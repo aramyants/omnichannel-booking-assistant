@@ -765,7 +765,7 @@ func (s *Store) ListScheduledReminders(ctx context.Context) ([]reminder.Reminder
 	var pending []reminder.Reminder
 	for {
 		snapshot, err := documents.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			return pending, nil
 		}
 		if err != nil {
