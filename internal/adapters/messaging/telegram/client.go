@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,13 +35,51 @@ type APIError struct {
 	// RetryAfter is how long Telegram asked the caller to wait. It is set only
 	// on rate-limit responses.
 	RetryAfter time.Duration
+
+	// MigrateToChatID is the chat's new id when the call named a group that
+	// has since been upgraded to a supergroup. It is zero otherwise.
+	MigrateToChatID int64
 }
 
 func (e *APIError) Error() string {
+	message := fmt.Sprintf("telegram %s: %d %s", e.Method, e.Code, e.Description)
 	if e.RetryAfter > 0 {
-		return fmt.Sprintf("telegram %s: %d %s (retry after %s)", e.Method, e.Code, e.Description, e.RetryAfter)
+		message += fmt.Sprintf(" (retry after %s)", e.RetryAfter)
 	}
-	return fmt.Sprintf("telegram %s: %d %s", e.Method, e.Code, e.Description)
+	if e.MigrateToChatID != 0 {
+		// Printed so that the value to put in the configuration can be read
+		// straight from the log.
+		message += fmt.Sprintf(" (the chat is now %d)", e.MigrateToChatID)
+	}
+	return message
+}
+
+// MigratedChatID returns the id a group moved to when err reports that the group
+// was upgraded to a supergroup, and "" for any other error.
+func MigratedChatID(err error) string {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.MigrateToChatID != 0 {
+		return strconv.FormatInt(apiErr.MigrateToChatID, 10)
+	}
+	return ""
+}
+
+// ResolveChatID returns the id chatID can be reached at now.
+//
+// Telegram gives a group a new id when it becomes a supergroup, which happens on
+// its own when certain group settings are changed, and refuses the old id from
+// then on. A staff chat configured correctly can therefore stop receiving every
+// notification without anything in this system changing. Asking about the chat
+// reveals the new id, so the move can be followed instead.
+func (c *Client) ResolveChatID(ctx context.Context, chatID string) (string, error) {
+	_, err := c.call(ctx, "getChat", getChatRequest{ChatID: chatID})
+	if err == nil {
+		return chatID, nil
+	}
+	if migrated := MigratedChatID(err); migrated != "" {
+		return migrated, nil
+	}
+	return chatID, err
 }
 
 // Retryable reports whether repeating the call could succeed. A rejected token
@@ -326,6 +365,9 @@ func (c *Client) call(ctx context.Context, method string, payload any) (json.Raw
 		}
 		if parsed.Parameters != nil && parsed.Parameters.RetryAfter > 0 {
 			apiErr.RetryAfter = time.Duration(parsed.Parameters.RetryAfter) * time.Second
+		}
+		if parsed.Parameters != nil {
+			apiErr.MigrateToChatID = parsed.Parameters.MigrateToChatID
 		}
 		return nil, apiErr
 	}

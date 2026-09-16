@@ -198,6 +198,10 @@ func run() error {
 		return err
 	}
 	defer closeStore()
+	if telegramClient != nil && cfg.Telegram.StaffChatID != "" {
+		cfg.Telegram.StaffChatID = resolveStaffChat(ctx, telegramClient, cfg.Telegram.StaffChatID, logger)
+	}
+
 	var staff assistant.StaffNotifier
 	if telegramClient != nil && cfg.Telegram.StaffChatID != "" {
 		notifier, err := telegram.NewStaffNotifier(telegramClient, cfg.Telegram.StaffChatID, store)
@@ -326,6 +330,31 @@ func registerTelegramWebhook(ctx context.Context, client *telegram.Client, cfg c
 	}
 
 	logger.Info("registered the telegram webhook", "callback_url", callbackURL)
+}
+
+// resolveStaffChat follows the staff group to the id it can be reached at now.
+//
+// Upgrading a Telegram group to a supergroup gives it a new id and makes every
+// call using the old one fail, so a correctly configured staff chat can stop
+// receiving handovers without anything in this deployment changing. Following
+// the move keeps notifications, staff replies and buttons working; the warning
+// names the value to put in TELEGRAM_STAFF_CHAT_ID so the lookup is not needed.
+func resolveStaffChat(ctx context.Context, client *telegram.Client, chatID string, logger *slog.Logger) string {
+	ctx, cancel := context.WithTimeout(ctx, webhookRegistrationTimeout)
+	defer cancel()
+
+	resolved, err := client.ResolveChatID(ctx, chatID)
+	if err != nil {
+		logger.Warn("could not check the staff chat", "error", err, "chat_id", chatID)
+		return chatID
+	}
+	if resolved != chatID {
+		logger.Warn("the staff chat became a supergroup and has a new id: using the new id, update TELEGRAM_STAFF_CHAT_ID",
+			"configured_chat_id", chatID,
+			"current_chat_id", resolved,
+		)
+	}
+	return resolved
 }
 
 // publishTelegramMenu tells Telegram what to show beside the text box.
