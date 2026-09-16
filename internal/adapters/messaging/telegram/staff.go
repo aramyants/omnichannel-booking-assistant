@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/assistant"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 )
 
 // staffTranscriptLines is how much of the conversation is quoted to the
@@ -33,8 +35,10 @@ type StaffThreads interface {
 
 type StaffNotifier struct {
 	client  *Client
-	chatID  string
 	threads StaffThreads
+
+	mu     sync.Mutex
+	chatID string
 }
 
 // NewStaffNotifier returns a notifier posting to chatID.
@@ -50,8 +54,16 @@ func NewStaffNotifier(client *Client, chatID string, threads StaffThreads) (*Sta
 
 // NotifyHandoff tells the staff chat that a customer needs a person.
 func (n *StaffNotifier) NotifyHandoff(ctx context.Context, notice assistant.HandoffNotice) error {
-	messageID, err := n.client.sendWithMarkup(ctx, n.chatID,
-		formatHandoff(notice), handoffButtons(notice.ConversationID))
+	text, buttons := formatHandoff(notice), handoffButtons(notice.ConversationID)
+
+	messageID, err := n.client.sendWithMarkup(ctx, n.chat(), text, buttons)
+	if migrated := MigratedChatID(err); migrated != "" {
+		// The group was upgraded to a supergroup while this process ran. The
+		// notice is the urgent part, so it follows the group to its new id
+		// rather than being lost until somebody edits the configuration.
+		n.moveTo(migrated)
+		messageID, err = n.client.sendWithMarkup(ctx, migrated, text, buttons)
+	}
 	if err != nil {
 		return err
 	}
@@ -65,6 +77,18 @@ func (n *StaffNotifier) NotifyHandoff(ctx context.Context, notice assistant.Hand
 		}
 	}
 	return nil
+}
+
+func (n *StaffNotifier) chat() string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.chatID
+}
+
+func (n *StaffNotifier) moveTo(chatID string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.chatID = chatID
 }
 
 // formatHandoff writes the notice as something a person can act on from their
@@ -89,17 +113,7 @@ func formatHandoff(notice assistant.HandoffNotice) string {
 		fmt.Fprintf(&b, "Phone: %s\n", phone)
 	}
 
-	// A colleague reading this on their phone needs something they can act on.
-	// A username is tappable; failing that, a direct link to the account works
-	// even for somebody who has never set one, which is the common case.
-	switch {
-	case notice.Handle != "":
-		fmt.Fprintf(&b, "Telegram: @%s\n", strings.TrimPrefix(notice.Handle, "@"))
-	case notice.ExternalUserID != "":
-		fmt.Fprintf(&b, "Open the chat: tg://user?id=%s\n", notice.ExternalUserID)
-	default:
-		fmt.Fprintf(&b, "Channel: %s\n", notice.Provider)
-	}
+	writeChannel(&b, notice)
 
 	if detail := strings.TrimSpace(notice.Detail); detail != "" {
 		fmt.Fprintf(&b, "\nWhy: %s\n", detail)
@@ -159,6 +173,60 @@ func handoffButtons(conversationID string) *inlineKeyboardMarkup {
 			CallbackData: staffActionData(string(assistant.CommandResume), conversationID),
 		},
 	}}}
+}
+
+// Meta Business Suite inboxes. The Page and Instagram account are the ones the
+// signed-in colleague manages, so no account id is needed in the link.
+const (
+	messengerInboxURL = "https://business.facebook.com/latest/inbox/messenger"
+	instagramInboxURL = "https://business.facebook.com/latest/inbox/instagram"
+)
+
+// writeChannel says where the customer is and gives a link that opens the chat.
+//
+// A colleague reading this on their phone needs something they can act on, and
+// the link has to belong to the customer's own channel: a Telegram link for a
+// Messenger customer opens nothing.
+func writeChannel(b *strings.Builder, notice assistant.HandoffNotice) {
+	switch notice.Provider {
+	case messaging.ProviderMessenger:
+		b.WriteString("Channel: Facebook Messenger\n")
+		fmt.Fprintf(b, "Open the inbox: %s\n", messengerInboxURL)
+	case messaging.ProviderInstagram:
+		b.WriteString("Channel: Instagram\n")
+		fmt.Fprintf(b, "Open the inbox: %s\n", instagramInboxURL)
+	case messaging.ProviderWhatsApp:
+		b.WriteString("Channel: WhatsApp\n")
+		// WhatsApp identifies a customer by their number, so the account id is
+		// itself the link.
+		if digits := digitsOnly(notice.ExternalUserID); digits != "" {
+			fmt.Fprintf(b, "Open the chat: https://wa.me/%s\n", digits)
+		} else if digits := digitsOnly(notice.Customer.Phone); digits != "" {
+			fmt.Fprintf(b, "Open the chat: https://wa.me/%s\n", digits)
+		}
+	default:
+		// Telegram. A username is tappable; failing that, a direct link to the
+		// account works even for somebody who has never set one, which is the
+		// common case.
+		switch {
+		case notice.Handle != "":
+			fmt.Fprintf(b, "Telegram: @%s\n", strings.TrimPrefix(notice.Handle, "@"))
+		case notice.ExternalUserID != "":
+			fmt.Fprintf(b, "Open the chat: tg://user?id=%s\n", notice.ExternalUserID)
+		default:
+			fmt.Fprintf(b, "Channel: %s\n", notice.Provider)
+		}
+	}
+}
+
+func digitsOnly(value string) string {
+	var digits strings.Builder
+	for _, r := range value {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	return digits.String()
 }
 
 // formatTranscript renders the tail of the conversation, oldest first.

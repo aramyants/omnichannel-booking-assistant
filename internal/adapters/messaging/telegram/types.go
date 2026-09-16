@@ -195,6 +195,11 @@ type apiResponse struct {
 	Description string `json:"description"`
 	Parameters  *struct {
 		RetryAfter int `json:"retry_after"`
+
+		// MigrateToChatID is set when a group was upgraded to a supergroup.
+		// The upgrade gives the chat a new id and every call using the old one
+		// is refused from then on.
+		MigrateToChatID int64 `json:"migrate_to_chat_id"`
 	} `json:"parameters"`
 }
 

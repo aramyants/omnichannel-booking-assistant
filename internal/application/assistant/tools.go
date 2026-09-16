@@ -267,9 +267,14 @@ const timeLayout = "15:04"
 // the model having to reason about offsets, which it does badly.
 const dateLayout = "2006-01-02"
 
-// maxSlotsReturned bounds what one tool call hands back. A full day of slots is
-// more than a customer can read and more context than the answer needs.
-const maxSlotsReturned = 12
+// maxSlotsReturned bounds what one tool call hands back.
+//
+// It covers a whole day at the finest grid a calendar uses, so no free time is
+// ever cut off. A limit of 12 once ended a 30-minute grid at mid-afternoon, and
+// the model then told customers a specialist had nothing in the evening when the
+// evening was free. Only the few times a reply names become buttons, so the
+// longer list costs context, not screen space.
+const maxSlotsReturned = 96
 
 // buttonDateLayout is how a day is written on a button: digits only, so that it
 // needs no language.
@@ -712,7 +717,7 @@ func (t *toolset) availableSlots(ctx context.Context, s *session, call ai.ToolCa
 		"date":       args.Date,
 		"service_id": args.ServiceID,
 		"times":      times,
-		"note":       "These times fit the selected service but are not reserved. If none are available, try another date or call list_staff for this service; do not offer unfiltered times.",
+		"note":       "This is every remaining start time for the selected service on this date, earliest first; nothing later exists. They are not reserved. When the customer asks for a part of the day, pick matching times from this list. If none are available, try another date or call list_staff for this service; do not offer unfiltered times.",
 	})
 }
 
@@ -845,7 +850,9 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 		return "", errors.New("wait for the customer to confirm in a new message after seeing the summary")
 	}
 
-	created, err := t.scheduling.Create(ctx, draft.ToRequest(s.customer.ID))
+	request := draft.ToRequest(s.customer.ID)
+	request.Comment = bookingComment(s.conv.Provider, draft.CustomerName)
+	created, err := t.scheduling.Create(ctx, request)
 
 	switch {
 	case err == nil:
@@ -1206,6 +1213,37 @@ func (t *toolset) rememberContact(ctx context.Context, s *session, name, phone s
 	s.customer.Phone = phone
 	if name != "" {
 		s.customer.Name = name
+	}
+}
+
+// bookingComment is the note stored on an appointment the assistant creates.
+//
+// Calendars such as Altegio match a booking to an existing client card by phone
+// number and keep that card's name, so the name a customer gives in the chat can
+// silently disappear behind an older one. Writing it on the appointment keeps it
+// in front of the colleague who greets them, together with the channel to reply on.
+func bookingComment(provider messaging.Provider, customerName string) string {
+	channel := channelName(provider)
+	if name := strings.TrimSpace(customerName); name != "" {
+		return fmt.Sprintf("Booked by the online assistant via %s. Name given in the chat: %s", channel, name)
+	}
+	return fmt.Sprintf("Booked by the online assistant via %s.", channel)
+}
+
+func channelName(provider messaging.Provider) string {
+	switch provider {
+	case messaging.ProviderTelegram:
+		return "Telegram"
+	case messaging.ProviderWhatsApp:
+		return "WhatsApp"
+	case messaging.ProviderMessenger:
+		return "Facebook Messenger"
+	case messaging.ProviderInstagram:
+		return "Instagram"
+	case "":
+		return "chat"
+	default:
+		return string(provider)
 	}
 }
 
