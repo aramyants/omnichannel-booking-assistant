@@ -203,12 +203,6 @@ type apiResponse struct {
 	} `json:"parameters"`
 }
 
-// getChatRequest asks about a chat. It is used to learn whether a configured
-// chat id still points at the chat, or has been replaced by an upgrade.
-type getChatRequest struct {
-	ChatID string `json:"chat_id"`
-}
-
 // sentMessage is the part of a sendMessage result this system keeps: the id of
 // the message it just posted, so a reply to it can be recognised later.
 type sentMessage struct {

@@ -67,12 +67,16 @@ func MigratedChatID(err error) string {
 // ResolveChatID returns the id chatID can be reached at now.
 //
 // Telegram gives a group a new id when it becomes a supergroup, which happens on
-// its own when certain group settings are changed, and refuses the old id from
-// then on. A staff chat configured correctly can therefore stop receiving every
-// notification without anything in this system changing. Asking about the chat
-// reveals the new id, so the move can be followed instead.
+// its own when certain group settings are changed, and refuses the old id for
+// anything that changes the chat from then on. A staff chat configured correctly
+// can therefore stop receiving every notification without anything in this
+// system changing.
+//
+// getChat still answers for the old group, so it cannot reveal the move.
+// Clearing the chat's command menu is refused with the new id, and the staff
+// chat is meant to have no menu anyway, so that is the probe.
 func (c *Client) ResolveChatID(ctx context.Context, chatID string) (string, error) {
-	_, err := c.call(ctx, "getChat", getChatRequest{ChatID: chatID})
+	err := c.SetCommands(ctx, chatID, "", nil)
 	if err == nil {
 		return chatID, nil
 	}

@@ -32,13 +32,20 @@ func upgradedGroupServer(t *testing.T) (*httptest.Server, func() []string) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			ChatID string `json:"chat_id"`
+			Scope  *struct {
+				ChatID string `json:"chat_id"`
+			} `json:"scope"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		chat := body.ChatID
+		if chat == "" && body.Scope != nil {
+			chat = body.Scope.ChatID
+		}
 		mu.Lock()
-		chats = append(chats, body.ChatID)
+		chats = append(chats, chat)
 		mu.Unlock()
 
-		if body.ChatID == oldGroupID {
+		if chat == oldGroupID {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(upgradedGroupResponse))
 			return
@@ -73,6 +80,9 @@ func TestUpgradedGroupErrorsNameTheNewChat(t *testing.T) {
 	}
 }
 
+// TestResolveChatIDFollowsAnUpgradedGroup: the probe must be a call Telegram
+// refuses for an upgraded group. getChat still answers for the old id, which is
+// how a first version of this check missed a real migration.
 func TestResolveChatIDFollowsAnUpgradedGroup(t *testing.T) {
 	srv, _ := upgradedGroupServer(t)
 	client := NewClient(testToken, WithBaseURL(srv.URL))
