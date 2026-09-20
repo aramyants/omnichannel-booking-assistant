@@ -2,9 +2,11 @@ package altegio
 
 import (
 	"context"
+	"html"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
@@ -47,16 +49,56 @@ func (c *Client) ListServicesForStaff(ctx context.Context, staffID string) ([]bo
 			continue
 		}
 		services = append(services, booking.Service{
-			ID:       strconv.FormatInt(dto.ID, 10),
-			Name:     dto.Title,
-			Category: categories[dto.CategoryID],
-			Duration: time.Duration(dto.SeanceLength) * time.Second,
-			PriceMin: dto.PriceMin,
-			PriceMax: dto.PriceMax,
-			Currency: c.currency,
+			ID:          strconv.FormatInt(dto.ID, 10),
+			Name:        dto.Title,
+			Category:    categories[dto.CategoryID],
+			Description: serviceDescription(dto),
+			Duration:    time.Duration(dto.SeanceLength) * time.Second,
+			PriceMin:    dto.PriceMin,
+			PriceMax:    dto.PriceMax,
+			Currency:    c.currency,
 		})
 	}
 	return services, nil
+}
+
+func serviceDescription(dto serviceDTO) string {
+	// Prefer the documented Online Booking field. The fallback costs nothing and
+	// keeps compatibility with response variants observed in older accounts.
+	raw := strings.TrimSpace(dto.Comment)
+	if raw == "" {
+		raw = strings.TrimSpace(dto.Description)
+	}
+	if raw == "" {
+		return ""
+	}
+
+	// Some catalogue editors store rich text. Messaging channels need plain
+	// text; a small tolerant stripper is enough here and avoids leaking tags
+	// into a customer's service list.
+	var plain strings.Builder
+	inTag := false
+	for _, r := range html.UnescapeString(raw) {
+		switch r {
+		case '<':
+			inTag = true
+			plain.WriteByte('\n')
+		case '>':
+			inTag = false
+			plain.WriteByte('\n')
+		default:
+			if !inTag {
+				plain.WriteRune(r)
+			}
+		}
+	}
+	lines := make([]string, 0)
+	for _, line := range strings.Split(plain.String(), "\n") {
+		if line = strings.Join(strings.Fields(line), " "); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ListStaff returns the people who can perform services.

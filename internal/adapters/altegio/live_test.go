@@ -73,8 +73,8 @@ func TestLiveCatalogue(t *testing.T) {
 	}
 
 	for _, service := range services {
-		t.Logf("service %s  %q  category=%q  duration=%s  price=%q",
-			service.ID, service.Name, service.Category, service.Duration, service.PriceLabel())
+		t.Logf("service %s  %q  category=%q  duration=%s  price=%q  description=%q",
+			service.ID, service.Name, service.Category, service.Duration, service.PriceLabel(), service.Description)
 
 		if service.ID == "" || service.Name == "" {
 			t.Errorf("service decoded with an empty id or name: %+v", service)

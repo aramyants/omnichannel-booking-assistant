@@ -8,6 +8,7 @@
         "category_id": 20,
         "price_min": 8000,
         "price_max": 12000,
+		"comment": "<p>Gentle care &amp; styling.</p><p>Мягкий уход.</p>",
         "seance_length": 3600,
         "active": 1
       },

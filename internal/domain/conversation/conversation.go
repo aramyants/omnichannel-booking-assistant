@@ -5,6 +5,8 @@ package conversation
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
@@ -94,6 +96,34 @@ type Conversation struct {
 	// on that old keyboard must not act on a newly prepared draft.
 	PendingChoiceMessageID string
 	PendingChoiceEventID   string
+
+	// PresentedChoices are the numbered options in the latest successful
+	// assistant reply. They may outnumber a channel's buttons, and let a
+	// customer answer a scan-friendly list with just "2" on every channel.
+	PresentedChoices []string
+}
+
+// ResolvePresentedChoice translates a bare one-based number into the option
+// the customer was last shown. Longer messages are left untouched: a phone
+// number or a sentence beginning with a digit is not a menu selection.
+func (c Conversation) ResolvePresentedChoice(text string) (string, bool) {
+	selection := strings.TrimSpace(text)
+	for _, label := range c.PresentedChoices {
+		if strings.EqualFold(selection, strings.TrimSpace(label)) {
+			return strings.TrimSpace(label), true
+		}
+	}
+
+	selection = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(selection, "."), ")"))
+	if selection == "" || strings.ContainsAny(selection, " \t\r\n") {
+		return "", false
+	}
+	position, err := strconv.Atoi(selection)
+	if err != nil || position < 1 || position > len(c.PresentedChoices) {
+		return "", false
+	}
+	label := strings.TrimSpace(c.PresentedChoices[position-1])
+	return label, label != ""
 }
 
 // Key is the unique address of a conversation across all channels.

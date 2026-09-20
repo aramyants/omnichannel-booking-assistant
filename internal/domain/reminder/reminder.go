@@ -33,10 +33,14 @@ type Reminder struct {
 	ConversationID    string
 	Provider          messaging.Provider
 	ExternalThreadID  string
-	ExpectedStartsAt  time.Time
-	DueAt             time.Time
-	Status            Status
-	CreatedAt         time.Time
+	// Language is captured when the reminder is planned. It keeps the delayed
+	// message in the language of the booking conversation without asking a
+	// model to rediscover it later. Empty legacy values fall back to English.
+	Language         string
+	ExpectedStartsAt time.Time
+	DueAt            time.Time
+	Status           Status
+	CreatedAt        time.Time
 
 	ClaimID      string
 	ClaimExpires time.Time

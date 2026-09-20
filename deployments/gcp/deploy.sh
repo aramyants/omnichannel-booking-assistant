@@ -197,13 +197,24 @@ else
 fi
 [[ -n "${BUSINESS_NAME:-}" ]]     && ENV_VARS+=",BUSINESS_NAME=${BUSINESS_NAME}"
 
-# The description can contain commas and newlines, which the comma-separated
-# update form cannot carry. It travels as its own delimited assignment.
-if [[ -n "${BUSINESS_DESCRIPTION:-}" ]]; then
-  DESCRIPTION_FLAG=(--update-env-vars "^@@^BUSINESS_DESCRIPTION=${BUSINESS_DESCRIPTION}")
-else
-  DESCRIPTION_FLAG=()
-fi
+# Business-authored text can contain commas and newlines, which the default
+# comma-separated update form cannot carry. Each value travels as its own
+# delimited assignment and is omitted when it has not been configured.
+TEXT_ENV_FLAGS=()
+add_text_env() {
+  local name="$1"
+  local value="${!name:-}"
+  [[ -n "${value}" ]] && TEXT_ENV_FLAGS+=(--update-env-vars "^@@^${name}=${value}")
+}
+for name in \
+  BUSINESS_DESCRIPTION \
+  BUSINESS_ADDRESS_EN BUSINESS_ADDRESS_HY BUSINESS_ADDRESS_RU \
+  BUSINESS_PHONE \
+  BUSINESS_PREPARATION_EN BUSINESS_PREPARATION_HY BUSINESS_PREPARATION_RU \
+  BUSINESS_AMENITIES_EN BUSINESS_AMENITIES_HY BUSINESS_AMENITIES_RU \
+  BUSINESS_INSTAGRAM_URL BUSINESS_MAP_URL BUSINESS_PARKING_URL; do
+  add_text_env "${name}"
+done
 [[ -n "${ALTEGIO_COMPANY_ID:-}" ]] && ENV_VARS+=",ALTEGIO_COMPANY_ID=${ALTEGIO_COMPANY_ID}"
 [[ -n "${ALTEGIO_TIMEZONE:-}" ]]  && ENV_VARS+=",ALTEGIO_TIMEZONE=${ALTEGIO_TIMEZONE}"
 [[ -n "${ALTEGIO_CURRENCY:-}" ]]  && ENV_VARS+=",ALTEGIO_CURRENCY=${ALTEGIO_CURRENCY}"
@@ -236,7 +247,7 @@ gcloud run deploy "${SERVICE}" \
   --memory "${MEMORY}" \
   --service-account "${RUNTIME_SA}" \
   --update-env-vars "${ENV_VARS}" \
-  "${DESCRIPTION_FLAG[@]}" \
+  "${TEXT_ENV_FLAGS[@]}" \
   "${SECRET_FLAGS[@]}" \
   --quiet
 

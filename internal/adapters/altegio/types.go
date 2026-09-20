@@ -22,6 +22,12 @@ type serviceDTO struct {
 	PriceMin   float64 `json:"price_min"`
 	PriceMax   float64 `json:"price_max"`
 
+	// Comment is the documented customer-facing service copy returned by the
+	// Online Booking API. Description is retained as a tolerant fallback for
+	// older or account-specific response variants.
+	Comment     string `json:"comment"`
+	Description string `json:"description"`
+
 	// SeanceLength is the appointment duration in seconds. Altegio sends null
 	// when a business has not set one, which decodes to zero: a real account
 	// was seen returning null for every service.

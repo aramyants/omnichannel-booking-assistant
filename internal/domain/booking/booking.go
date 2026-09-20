@@ -40,6 +40,11 @@ type Service struct {
 	Name     string
 	Category string
 
+	// Description is the customer-facing explanation maintained in the
+	// scheduling catalogue. It is optional: a missing description must never
+	// make an otherwise bookable service disappear.
+	Description string
+
 	// Duration is how long the appointment takes.
 	Duration time.Duration
 
@@ -123,6 +128,14 @@ type Booking struct {
 	CustomerID string
 	ServiceIDs []string
 	StaffID    string
+
+	// CustomerName, ServiceNames and StaffName are the display snapshot shown
+	// when the appointment was confirmed. Keeping it with the booking lets a
+	// delayed reminder remain useful even if the live catalogue later changes.
+	// Empty values on older records are valid and are simply omitted.
+	CustomerName string
+	ServiceNames []string
+	StaffName    string
 
 	StartsAt time.Time
 	Duration time.Duration

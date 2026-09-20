@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -133,6 +134,20 @@ func TestOpeningTheChatIsAnsweredWithoutAModel(t *testing.T) {
 
 	if got, want := len(sender.sent[0].Choices), len(menuChoices(languageArmenian)); got != want {
 		t.Errorf("offered %d choices, want the whole menu of %d", got, want)
+	}
+}
+
+func TestGreetingsAreReadableNumberedMenusInEveryLanguage(t *testing.T) {
+	for _, lang := range languages {
+		text := fmt.Sprintf(speak(lang).welcome, "Studio Nine")
+		if !strings.Contains(text, "\n\n") {
+			t.Errorf("%s greeting has no paragraph spacing: %q", lang, text)
+		}
+		for position := 1; position <= len(menuChoices(lang)); position++ {
+			if marker := fmt.Sprintf("%d. ", position); !strings.Contains(text, marker) {
+				t.Errorf("%s greeting does not contain option %q: %q", lang, marker, text)
+			}
+		}
 	}
 }
 

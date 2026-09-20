@@ -63,6 +63,7 @@ func (s *Service) RelayStaffReply(ctx context.Context, reply StaffReply) error {
 	s.retireChoices(ctx, sender, &conv)
 	conv.LastChoiceMessageID = ""
 	conv.PendingChoiceMessageID, conv.PendingChoiceEventID = "", ""
+	conv.PresentedChoices = nil
 
 	text := reply.Text
 	if name := strings.TrimSpace(reply.AuthorName); name != "" {

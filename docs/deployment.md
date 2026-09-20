@@ -58,6 +58,45 @@ two revisions: a service cannot know its own URL until it exists, and it needs
 that URL for webhooks and authenticated reminder tasks, so the script deploys,
 reads the URL back and applies it. Later runs deploy once.
 
+### Automatic, atomic releases from GitHub
+
+Run `deployments/gcp/deploy.sh` for the first deployment and whenever the
+service's infrastructure, secrets or runtime configuration must change. Normal
+application releases do not need that script or copied environment variables.
+
+The checked-in `cloudbuild.yaml` is the release pipeline for the existing
+service. It:
+
+1. runs formatting checks, `go vet`, and the race-enabled test suite;
+2. builds an image named by the exact Git commit and pushes it to Artifact
+   Registry;
+3. deploys that image as a tagged revision with zero production traffic;
+4. calls the candidate revision's `/health` endpoint and verifies its reported
+   commit; and
+5. moves 100% of traffic in one Cloud Run traffic update only after the probe
+   succeeds.
+
+Connect the GitHub repository once in **Cloud Run > the service > Source >
+Connect repository**, choose Cloud Build, select the `main` branch, and choose
+`cloudbuild.yaml` as the configuration file. The build identity needs Artifact
+Registry Writer, Cloud Run Admin, Logs Writer, and permission to act as
+`booking-assistant-runtime@PROJECT_ID.iam.gserviceaccount.com`. After that, a
+merge to `main` is the deploy action. A failed test, build, startup, or health
+probe leaves the currently serving revision untouched.
+
+The defaults in `cloudbuild.yaml` match this service (`europe-west1`, repository
+`cloud-run-source-deploy`, and service `omnichannel-booking-assistant`). Change
+the trigger's `_REGION`, `_REPOSITORY`, or `_SERVICE` substitutions if the
+Google Cloud resources use different names.
+
+SSH for Cloud Run services is currently a limited preview, not a dependable
+deployment channel. This production image is also deliberately distroless and
+contains no shell. Use Cloud Logging for diagnosis, Cloud Shell or the local
+`gcloud` CLI for administration, and deploy a new immutable revision for code
+changes. If the project is later admitted to the SSH preview, use it only for
+temporary inspection rather than changing a live container: instances remain
+disposable and those changes disappear when an instance stops.
+
 Cloud Tasks signs reminder requests with an OIDC token for the runtime service
 account. The public Cloud Run service validates that identity inside the
 reminder route; provider webhook routes continue to use their own signatures or

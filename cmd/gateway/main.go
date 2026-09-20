@@ -28,6 +28,7 @@ import (
 	cloudtasksadapter "github.com/aramyants/omnichannel-booking-assistant/internal/adapters/tasks/cloudtasks"
 	localtasks "github.com/aramyants/omnichannel-booking-assistant/internal/adapters/tasks/local"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/tasks/taskhttp"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/assistant"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/reminders"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
@@ -198,6 +199,10 @@ func run() error {
 		return err
 	}
 	defer closeStore()
+	if telegramClient != nil && cfg.Telegram.StaffChatID != "" {
+		cfg.Telegram.StaffChatID = resolveStaffChat(ctx, telegramClient, cfg.Telegram.StaffChatID, logger)
+	}
+
 	var staff assistant.StaffNotifier
 	if telegramClient != nil && cfg.Telegram.StaffChatID != "" {
 		notifier, err := telegram.NewStaffNotifier(telegramClient, cfg.Telegram.StaffChatID, store)
@@ -212,8 +217,9 @@ func run() error {
 			"wait without anyone being told. Set TELEGRAM_STAFF_CHAT_ID")
 	}
 
+	appointmentMessages := newAppointmentMessages(cfg)
 	reminderService, reminderHandler, closeReminders, err := openReminders(
-		ctx, cfg, store, senders, logger,
+		ctx, cfg, store, senders, appointmentMessages, logger,
 	)
 	if err != nil {
 		return err
@@ -222,18 +228,20 @@ func run() error {
 	gw.reminder = reminderHandler
 
 	assistantService, err := assistant.NewService(assistant.Deps{
-		Senders:       senders,
-		Customers:     store,
-		Conversations: store,
-		Messages:      store,
-		Processed:     store,
-		Logger:        logger,
-		AI:            model,
-		Speech:        speech,
-		Scheduling:    scheduling,
-		Bookings:      store,
-		Staff:         staff,
-		Reminders:     reminderService,
+		Senders:             senders,
+		Customers:           store,
+		Conversations:       store,
+		Messages:            store,
+		Processed:           store,
+		Turns:               store,
+		Logger:              logger,
+		AI:                  model,
+		Speech:              speech,
+		Scheduling:          scheduling,
+		Bookings:            store,
+		Staff:               staff,
+		Reminders:           reminderService,
+		AppointmentMessages: appointmentMessages,
 		Business: assistant.Business{
 			Name:        cfg.BusinessName,
 			Description: cfg.BusinessDescription,
@@ -328,6 +336,31 @@ func registerTelegramWebhook(ctx context.Context, client *telegram.Client, cfg c
 	logger.Info("registered the telegram webhook", "callback_url", callbackURL)
 }
 
+// resolveStaffChat follows the staff group to the id it can be reached at now.
+//
+// Upgrading a Telegram group to a supergroup gives it a new id and makes every
+// call using the old one fail, so a correctly configured staff chat can stop
+// receiving handovers without anything in this deployment changing. Following
+// the move keeps notifications, staff replies and buttons working; the warning
+// names the value to put in TELEGRAM_STAFF_CHAT_ID so the lookup is not needed.
+func resolveStaffChat(ctx context.Context, client *telegram.Client, chatID string, logger *slog.Logger) string {
+	ctx, cancel := context.WithTimeout(ctx, webhookRegistrationTimeout)
+	defer cancel()
+
+	resolved, err := client.ResolveChatID(ctx, chatID)
+	if err != nil {
+		logger.Warn("could not check the staff chat", "error", err, "chat_id", chatID)
+		return chatID
+	}
+	if resolved != chatID {
+		logger.Warn("the staff chat became a supergroup and has a new id: using the new id, update TELEGRAM_STAFF_CHAT_ID",
+			"configured_chat_id", chatID,
+			"current_chat_id", resolved,
+		)
+	}
+	return resolved
+}
+
 // publishTelegramMenu tells Telegram what to show beside the text box.
 //
 // It is published on every start for the same reason the webhook is: the menu
@@ -384,6 +417,7 @@ type appStore interface {
 	assistant.ConversationRepository
 	assistant.MessageRepository
 	assistant.ProcessedEvents
+	assistant.ConversationTurns
 	assistant.BookingRepository
 
 	// Staff notifications are linked to the conversation they announce, so a
@@ -397,6 +431,7 @@ func openReminders(
 	cfg config.Config,
 	store appStore,
 	assistantSenders map[messaging.Provider]assistant.Sender,
+	appointmentMessages appointmentmessage.Renderer,
 	logger *slog.Logger,
 ) (*reminders.Service, http.Handler, func(), error) {
 	if !cfg.Reminders.Enabled() {
@@ -416,6 +451,7 @@ func openReminders(
 		LeadTime:   cfg.Reminders.LeadTime,
 		Location:   cfg.Altegio.Location,
 		Logger:     logger,
+		Renderer:   appointmentMessages,
 	}
 
 	switch cfg.Reminders.Backend {
@@ -489,6 +525,26 @@ func openReminders(
 	default:
 		return nil, nil, nil, fmt.Errorf("unsupported reminder backend %q", cfg.Reminders.Backend)
 	}
+}
+
+func newAppointmentMessages(cfg config.Config) appointmentmessage.Renderer {
+	localized := func(text config.LocalizedText) appointmentmessage.LocalizedText {
+		return appointmentmessage.LocalizedText{
+			English:  text.English,
+			Armenian: text.Armenian,
+			Russian:  text.Russian,
+		}
+	}
+	return appointmentmessage.New(appointmentmessage.Business{
+		Name:         cfg.BusinessName,
+		Address:      localized(cfg.BusinessProfile.Address),
+		Phone:        cfg.BusinessProfile.Phone,
+		Preparation:  localized(cfg.BusinessProfile.Preparation),
+		Amenities:    localized(cfg.BusinessProfile.Amenities),
+		InstagramURL: cfg.BusinessProfile.InstagramURL,
+		MapURL:       cfg.BusinessProfile.MapURL,
+		ParkingURL:   cfg.BusinessProfile.ParkingURL,
+	}, cfg.Altegio.Location)
 }
 
 // openStore builds the configured store and returns a function that releases

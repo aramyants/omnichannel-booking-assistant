@@ -122,9 +122,10 @@ func (m *orderedModel) Complete(ctx context.Context, req ai.Request) (ai.Respons
 	return ai.Response{Text: "Received."}, nil
 }
 
-func TestDistinctMessagesSerializeAcrossInstances(t *testing.T) {
+func TestNewMessageSupersedesAnObsoleteAnswerAcrossInstances(t *testing.T) {
 	model := &orderedModel{entered: make(chan struct{}), release: make(chan struct{})}
-	svc, _ := newAIService(t, model, defaultScheduling(), &fakeSender{})
+	sender := &fakeSender{}
+	svc, _ := newAIService(t, model, defaultScheduling(), sender)
 	other := *svc
 	finished := make(chan error, 2)
 	go func() { finished <- svc.Handle(t.Context(), incomingText("first", "Garik")) }()
@@ -139,7 +140,9 @@ func TestDistinctMessagesSerializeAcrossInstances(t *testing.T) {
 		finished <- other.Handle(t.Context(), incomingText("second", "Grigoryan"))
 	}()
 	<-secondStarted
-	// Holding the shared conversation lease must prevent a second model call.
+	// The second fragment cancels the obsolete answer. It may therefore reach the
+	// model while this test is still holding the first call, but only its answer
+	// may be delivered.
 	time.Sleep(150 * time.Millisecond)
 	model.mu.Lock()
 	count := len(model.requests)
@@ -150,10 +153,13 @@ func TestDistinctMessagesSerializeAcrossInstances(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if count != 1 {
-		t.Fatalf("%d overlapping model calls", count)
+	if count != 2 {
+		t.Fatalf("model saw %d requests, want the obsolete turn and its replacement", count)
 	}
-	if got := model.requests[1].Messages; len(got) != 3 || got[0].Text != "Garik" || got[1].Role != ai.RoleAssistant || got[2].Text != "Grigoryan" {
-		t.Fatalf("second request lost prior conversation: %+v", got)
+	if got := model.requests[1].Messages; len(got) != 2 || got[0].Text != "Garik" || got[1].Text != "Grigoryan" {
+		t.Fatalf("replacement request lost the customer's fragments: %+v", got)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("sent %d replies, want only the newest turn's answer", len(sender.sent))
 	}
 }

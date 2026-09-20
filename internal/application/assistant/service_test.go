@@ -59,6 +59,7 @@ func newTestService(t *testing.T, sender Sender) (*Service, *memory.Store) {
 		Conversations: store,
 		Messages:      store,
 		Processed:     store,
+		Turns:         store,
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Now:           func() time.Time { return testNow },
 	})

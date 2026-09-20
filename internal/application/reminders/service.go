@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
@@ -106,6 +108,7 @@ type Deps struct {
 	LeadTime   time.Duration
 	Location   *time.Location
 	Logger     *slog.Logger
+	Renderer   appointmentmessage.Renderer
 	Now        func() time.Time
 }
 
@@ -119,6 +122,7 @@ type Service struct {
 	leadTime   time.Duration
 	location   *time.Location
 	logger     *slog.Logger
+	renderer   appointmentmessage.Renderer
 	now        func() time.Time
 }
 
@@ -161,6 +165,7 @@ func NewService(deps Deps) (*Service, error) {
 		leadTime:   deps.LeadTime,
 		location:   loc,
 		logger:     deps.Logger,
+		renderer:   deps.Renderer,
 		now:        now,
 	}, nil
 }
@@ -172,6 +177,7 @@ func (s *Service) Plan(
 	ctx context.Context,
 	b booking.Booking,
 	conv conversation.Conversation,
+	language string,
 ) error {
 	// Meta channels need channel-specific templates/consent or messaging-window
 	// checks. Until those exist, schedule reminders only on Telegram.
@@ -192,6 +198,7 @@ func (s *Service) Plan(
 		ConversationID:    conv.ID,
 		Provider:          conv.Provider,
 		ExternalThreadID:  conv.ExternalThreadID,
+		Language:          language,
 		ExpectedStartsAt:  b.StartsAt,
 		DueAt:             dueAt,
 		Status:            reminder.StatusScheduled,
@@ -270,10 +277,15 @@ func (s *Service) Deliver(ctx context.Context, reminderID string) error {
 		return fmt.Errorf("deliver reminder: no sender configured for %s", claimed.Provider)
 	}
 
-	text := fmt.Sprintf("Reminder: your appointment is %s at %s. Reference: %s.",
-		b.StartsAt.In(s.location).Format("Monday 2 January 2006"),
-		b.StartsAt.In(s.location).Format("15:04"),
-		b.ExternalID,
+	text := s.renderer.Reminder(
+		appointmentmessage.ParseLanguage(claimed.Language),
+		appointmentmessage.Appointment{
+			CustomerName: b.CustomerName,
+			StartsAt:     b.StartsAt,
+			Service:      strings.Join(b.ServiceNames, ", "),
+			Specialist:   b.StaffName,
+			Reference:    b.ExternalID,
+		},
 	)
 	if err := sender.Send(ctx, messaging.Outgoing{
 		Provider:         claimed.Provider,

@@ -15,6 +15,7 @@ func (c *Conversation) ObserveExternalReply(sentAt, receivedAt time.Time) {
 	c.LastMessageAt = receivedAt
 	c.LastChoiceMessageID = ""
 	c.PendingChoiceMessageID, c.PendingChoiceEventID = "", ""
+	c.PresentedChoices = nil
 	// Staff may have changed the booking outside the assistant workflow.
 	c.Draft, c.BookingChange = nil, nil
 }

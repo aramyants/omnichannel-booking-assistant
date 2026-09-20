@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
@@ -68,6 +69,9 @@ type ConversationRepository interface {
 
 // MessageRepository stores the transcript.
 type MessageRepository interface {
+	// Append stores msg idempotently. A provider retry can reach this point
+	// after an earlier attempt already recorded the inbound message, and that
+	// must not put the same customer sentence into the model context twice.
 	Append(ctx context.Context, msg conversation.Message) error
 
 	// Recent returns up to limit messages, oldest first. It is what the AI
@@ -91,6 +95,18 @@ type ProcessedEvents interface {
 	Release(ctx context.Context, key, claimID string) error
 }
 
+// ConversationTurns records which customer message is currently the newest
+// for a channel thread.
+//
+// Messages from one customer are still processed serially, but customers often
+// send a thought as two or three short messages. When a newer part arrives
+// while the model is answering an earlier part, the earlier answer is obsolete:
+// the newest turn should answer all of the accumulated text once.
+type ConversationTurns interface {
+	RegisterTurn(ctx context.Context, conversationKey, eventID string, at time.Time) error
+	IsLatestTurn(ctx context.Context, conversationKey, eventID string) (bool, error)
+}
+
 // Deps are the collaborators a Service needs.
 //
 // They are gathered into a struct rather than passed positionally because
@@ -102,6 +118,7 @@ type Deps struct {
 	Conversations ConversationRepository
 	Messages      MessageRepository
 	Processed     ProcessedEvents
+	Turns         ConversationTurns
 	Logger        *slog.Logger
 
 	// AI interprets the conversation. When it is absent the assistant falls
@@ -124,6 +141,11 @@ type Deps struct {
 	// Reminders plans delayed notifications after a confirmed create or move.
 	Reminders ReminderPlanner
 
+	// AppointmentMessages renders the deterministic success message after the
+	// calendar confirms a booking. The zero value is safe and simply omits
+	// optional business details.
+	AppointmentMessages appointmentmessage.Renderer
+
 	Business Business
 
 	// Now supplies the current time. It is injected so tests can assert on
@@ -138,6 +160,8 @@ type Service struct {
 	conversations ConversationRepository
 	messages      MessageRepository
 	processed     ProcessedEvents
+	turns         ConversationTurns
+	activeTurns   *activeTurnRegistry
 	logger        *slog.Logger
 	now           func() time.Time
 	ai            ai.Provider
@@ -158,6 +182,8 @@ func NewService(deps Deps) (*Service, error) {
 		return nil, errors.New("assistant: message repository is required")
 	case deps.Processed == nil:
 		return nil, errors.New("assistant: processed event store is required")
+	case deps.Turns == nil:
+		return nil, errors.New("assistant: conversation turn store is required")
 	case deps.Logger == nil:
 		return nil, errors.New("assistant: logger is required")
 	}
@@ -183,6 +209,8 @@ func NewService(deps Deps) (*Service, error) {
 		conversations: deps.Conversations,
 		messages:      deps.Messages,
 		processed:     deps.Processed,
+		turns:         deps.Turns,
+		activeTurns:   newActiveTurnRegistry(),
 		logger:        deps.Logger,
 		now:           now,
 		ai:            deps.AI,
@@ -194,6 +222,7 @@ func NewService(deps Deps) (*Service, error) {
 			bookings:   deps.Bookings,
 			customers:  deps.Customers,
 			reminders:  deps.Reminders,
+			messages:   deps.AppointmentMessages,
 			now:        now,
 			location:   business.Location,
 			logger:     deps.Logger,
@@ -245,6 +274,15 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 			"dedupe_key", msg.DedupeKey())
 		return nil
 	}
+
+	turnKey := conversation.Key(msg.Provider, msg.ExternalThreadID)
+	if err := s.turns.RegisterTurn(ctx, turnKey, msg.ExternalMessageID, now); err != nil {
+		return fmt.Errorf("register the customer turn: %w", err)
+	}
+	// A newer fragment makes any model answer currently being composed for the
+	// same chat obsolete. This cancels it immediately when both requests land on
+	// this instance; the durable latest-turn check below covers other instances.
+	s.activeTurns.Supersede(turnKey)
 
 	// Errors before delivery leave no externally visible result, so release the
 	// lease and let the provider retry. After a reply is sent the lease is kept
@@ -320,12 +358,22 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 		}
 	}
 
+	// A numbered answer is resolved only against the options in the last reply
+	// that was successfully delivered. Keep the customer's literal "2" in the
+	// transcript, while handing the canonical category or service name to the
+	// conversation logic below.
+	resolvedChoice, selectedPresentedChoice := conv.ResolvePresentedChoice(msg.Content.Text)
+	originalText := msg.Content.Text
+	if selectedPresentedChoice {
+		msg.Content.Text = resolvedChoice
+	}
+
 	if err := s.messages.Append(ctx, conversation.Message{
 		ID:                id.New(),
 		ConversationID:    conv.ID,
 		Direction:         conversation.DirectionInbound,
 		ContentType:       msg.Content.Type,
-		Text:              msg.Content.Text,
+		Text:              originalText,
 		ExternalMessageID: msg.ExternalMessageID,
 		CreatedAt:         now,
 	}); err != nil {
@@ -373,9 +421,53 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 		return fmt.Errorf("no sender configured for %s", msg.Provider)
 	}
 
-	history, err := s.messages.Recent(ctx, conv.ID, recentMessageLimit)
+	turnCtx, finishTurn := s.activeTurns.Activate(ctx, turnKey, msg.ExternalMessageID)
+	defer finishTurn()
+
+	completeSuperseded := func(stage string) error {
+		// Tools may already have prepared a draft before the follow-up arrived.
+		// Keep that truthful state when possible, but never retry an obsolete
+		// customer turn solely because this best-effort save failed.
+		if saveErr := s.conversations.Save(ctx, conv); saveErr != nil {
+			s.logger.WarnContext(ctx, "could not save an obsolete assistant turn",
+				"error", saveErr, "conversation_id", conv.ID, "stage", stage)
+		}
+		s.logger.InfoContext(ctx, "coalesced an obsolete customer turn into a newer message",
+			"conversation_id", conv.ID, "stage", stage)
+		releaseClaim = false
+		s.completeDelivery(ctx, msg.DedupeKey(), claimID, s.now())
+		return nil
+	}
+
+	isLatest, err := s.turns.IsLatestTurn(turnCtx, turnKey, msg.ExternalMessageID)
 	if err != nil {
+		if errors.Is(context.Cause(turnCtx), errTurnSuperseded) {
+			return completeSuperseded("before_history")
+		}
+		return fmt.Errorf("check the customer turn before reading history: %w", err)
+	}
+	if !isLatest {
+		return completeSuperseded("before_history")
+	}
+
+	history, err := s.messages.Recent(turnCtx, conv.ID, recentMessageLimit)
+	if err != nil {
+		if errors.Is(context.Cause(turnCtx), errTurnSuperseded) {
+			return completeSuperseded("reading_history")
+		}
 		return fmt.Errorf("read the conversation history: %w", err)
+	}
+	if selectedPresentedChoice {
+		// Recent returns a detached slice. Replacing only this request's inbound
+		// text gives the model the meaning of the number without falsifying the
+		// stored customer transcript.
+		for i := len(history) - 1; i >= 0; i-- {
+			if history[i].Direction == conversation.DirectionInbound &&
+				history[i].ExternalMessageID == msg.ExternalMessageID {
+				history[i].Text = resolvedChoice
+				break
+			}
+		}
 	}
 
 	sess := &session{
@@ -395,15 +487,18 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 
 	// Bound the whole model/tool loop, leaving time to deliver a useful retry
 	// response even when a provider is slow. Typing feedback runs independently.
-	replyCtx, cancelReply := context.WithTimeout(ctx, 45*time.Second)
+	replyCtx, cancelReply := context.WithTimeout(turnCtx, 45*time.Second)
 	var text string
 	if audioFailed {
 		text = audioRetry(sess.language)
 	} else {
-		text, err = s.reply(replyCtx, sess, msg, history)
+		text, err = s.reply(replyCtx, sess, msg, history, selectedPresentedChoice)
 	}
 	cancelReply()
 	if err != nil {
+		if errors.Is(err, errTurnSuperseded) || errors.Is(context.Cause(turnCtx), errTurnSuperseded) {
+			return completeSuperseded("composing_reply")
+		}
 		return err
 	}
 
@@ -433,30 +528,65 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 		})
 	}
 
+	// A newer message may have arrived on another Cloud Run instance while the
+	// model or calendar was working. Check the shared cursor immediately before
+	// the externally visible send, so only the answer to the newest fragment is
+	// delivered.
+	isLatest, err = s.turns.IsLatestTurn(turnCtx, turnKey, msg.ExternalMessageID)
+	if err != nil {
+		if errors.Is(context.Cause(turnCtx), errTurnSuperseded) {
+			return completeSuperseded("before_send")
+		}
+		return fmt.Errorf("check the customer turn before sending: %w", err)
+	}
+	if !isLatest {
+		return completeSuperseded("before_send")
+	}
+
 	// Whatever the exchange ended up offering travels with the reply. A channel
 	// with buttons draws them; one without ignores them, and the reply names
 	// the same options in words either way.
 	reply := msg.Reply(text).WithChoices(sess.buttons(text))
-	if err := s.checkExternalReply(ctx, conv); err != nil {
+	presentedChoices := sess.presentedChoices(text)
+	if err := s.checkExternalReply(turnCtx, conv); err != nil {
+		if errors.Is(context.Cause(turnCtx), errTurnSuperseded) {
+			return completeSuperseded("checking_staff_reply")
+		}
 		return err
 	}
 	var sentID string
 	if tracked, ok := sender.(choiceSender); ok {
-		sentID, err = tracked.SendTracked(ctx, reply)
+		sentID, err = tracked.SendTracked(turnCtx, reply)
 	} else {
-		err = sender.Send(ctx, reply)
+		err = sender.Send(turnCtx, reply)
 	}
 	if err != nil {
+		if errors.Is(context.Cause(turnCtx), errTurnSuperseded) {
+			// Delivery may have reached the provider before cancellation became
+			// observable. The newer turn will answer the customer either way, and
+			// retrying this old one risks a duplicate or out-of-order response.
+			return completeSuperseded("sending_reply")
+		}
 		return fmt.Errorf("send the reply: %w", err)
 	}
-	if _, ok := sender.(choiceSender); ok {
+	tracked, tracksChoices := sender.(choiceSender)
+	if tracksChoices {
 		conv.LastChoiceMessageID = ""
 		conv.PendingChoiceMessageID, conv.PendingChoiceEventID = "", ""
 		if len(reply.Choices) > 0 {
 			conv.LastChoiceMessageID = sentID
 		}
-		if err := s.conversations.Save(ctx, conv); err != nil {
-			s.logger.ErrorContext(ctx, "sent choices but could not store their message id", "error", err, "conversation_id", conv.ID)
+	}
+	conv.PresentedChoices = presentedChoices
+	if err := s.conversations.Save(ctx, conv); err != nil {
+		s.logger.ErrorContext(ctx, "sent a reply but could not store its current choices", "error", err, "conversation_id", conv.ID)
+		if tracksChoices {
+			// A button we cannot identify later is worse than no button: it looks
+			// usable and then gets rejected as stale. Remove it from the delivered
+			// message immediately; the same choices remain readable in its text.
+			if len(reply.Choices) > 0 && sentID != "" {
+				s.retireUntrackedChoices(ctx, tracked, conv.ExternalThreadID, sentID, conv.ID)
+			}
 		}
 	}
 
@@ -584,13 +714,14 @@ func (s *Service) reply(
 	sess *session,
 	msg messaging.Envelope,
 	history []conversation.Message,
+	selectedPresentedChoice bool,
 ) (string, error) {
 	conv, cust := sess.conv, sess.customer
 
 	// Some menu entries are answered here rather than by the model: they say
 	// the same thing every time, and answering them from a table means they
 	// arrive instantly and keep working when nothing else does.
-	if text, ok := s.menuReply(ctx, sess, msg); ok {
+	if text, ok := s.menuReply(ctx, sess, msg, selectedPresentedChoice); ok {
 		return text, nil
 	}
 
@@ -606,8 +737,14 @@ func (s *Service) reply(
 	}
 
 	for round := 1; round <= maxToolRounds; round++ {
+		if errors.Is(context.Cause(ctx), errTurnSuperseded) {
+			return "", errTurnSuperseded
+		}
 		resp, err := s.ai.Complete(ctx, req)
 		if err != nil {
+			if errors.Is(context.Cause(ctx), errTurnSuperseded) {
+				return "", errTurnSuperseded
+			}
 			// A model that cannot be reached must not silence the assistant.
 			// The customer gets an honest answer and a colleague picks it up.
 			s.logger.ErrorContext(ctx, "the ai provider failed",
@@ -641,12 +778,21 @@ func (s *Service) reply(
 
 		turn := ai.Turn{Calls: resp.ToolCalls}
 		for _, tc := range resp.ToolCalls {
+			if errors.Is(context.Cause(ctx), errTurnSuperseded) {
+				return "", errTurnSuperseded
+			}
 			if err := s.checkExternalReply(ctx, *sess.conv); err != nil {
 				return "", err
 			}
 			s.logger.InfoContext(ctx, "running a tool for the assistant",
 				"conversation_id", conv.ID, "tool", tc.Name)
 			turn.Results = append(turn.Results, s.tools.execute(ctx, sess, tc))
+			// Once the calendar has accepted a booking, send the application's
+			// factual confirmation immediately. A second model round would be
+			// slower and could paraphrase away or invent practical visit details.
+			if sess.finalReply != "" {
+				return sess.finalReply, nil
+			}
 		}
 		req.Turns = append(req.Turns, turn)
 	}
@@ -704,16 +850,20 @@ func repeatedLookupWithoutProgress(calls []ai.ToolCall, turns []ai.Turn) bool {
 // The rest of the menu stays with the model. Booking, prices and appointments
 // all need tools and a conversation, and answering them from a table would mean
 // answering them badly.
-func (s *Service) menuReply(ctx context.Context, sess *session, msg messaging.Envelope) (string, bool) {
-	switch commandIn(msg.Content.Text) {
+func (s *Service) menuReply(
+	ctx context.Context,
+	sess *session,
+	msg messaging.Envelope,
+	selectedPresentedChoice bool,
+) (string, bool) {
+	switch menuAction(msg.Content.Text) {
 	case "start", "help":
 		sess.offerFixed(offerMenu)
 		return s.greeting(sess.language), true
 	case "person":
 		return s.handOver(ctx, sess)
-	default:
-		return "", false
 	}
+	return s.catalogueReply(ctx, sess, msg.Content.Text, selectedPresentedChoice)
 }
 
 // handOver answers a customer who asked for a person outright.

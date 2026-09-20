@@ -131,9 +131,14 @@ func TestConfirmingBooksTheAppointment(t *testing.T) {
 		t.Error("the booking was sent without an idempotency key")
 	}
 
-	output := resultOf(t, model, 3)
-	if !strings.Contains(output, "998877") {
-		t.Errorf("result = %s, want the reference", output)
+	if model.calls != 3 {
+		t.Errorf("model calls = %d, want no paraphrasing call after booking", model.calls)
+	}
+	output := sender.sent[len(sender.sent)-1].Text
+	for _, want := range []string{"Ձեր ամրագրումը հաստատված է", "Women's haircut", "Mariam", "998877"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("confirmation does not contain %q: %s", want, output)
+		}
 	}
 
 	// The draft is spent once the appointment exists.
@@ -148,6 +153,9 @@ func TestConfirmingBooksTheAppointment(t *testing.T) {
 	}
 	if len(booked) != 1 || booked[0].ExternalID != "998877" {
 		t.Errorf("stored bookings = %+v, want the new appointment", booked)
+	}
+	if len(booked) == 1 && (strings.Join(booked[0].ServiceNames, ", ") != "Women's haircut" || booked[0].StaffName != "Mariam") {
+		t.Errorf("stored booking lost its display snapshot: %+v", booked[0])
 	}
 }
 
@@ -591,6 +599,9 @@ func TestListingBookings(t *testing.T) {
 	}
 	if err := svc.Handle(t.Context(), incoming("4128")); err != nil {
 		t.Fatalf("confirmation Handle() returned error: %v", err)
+	}
+	if err := svc.Handle(t.Context(), incomingText("4129", "/appointments")); err != nil {
+		t.Fatalf("appointments Handle() returned error: %v", err)
 	}
 
 	if output := resultOf(t, model, 4); !strings.Contains(output, "998877") {

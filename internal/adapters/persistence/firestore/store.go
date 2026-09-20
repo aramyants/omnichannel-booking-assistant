@@ -8,6 +8,7 @@ package firestore
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"slices"
@@ -34,6 +35,7 @@ const (
 	collectionConversations = "conversations"
 	collectionMessages      = "messages"
 	collectionProcessed     = "processed_events"
+	collectionTurns         = "conversation_turns"
 	collectionBookings      = "bookings"
 
 	// collectionStaffThreads maps a message posted in the staff chat to the
@@ -216,6 +218,7 @@ type conversationDoc struct {
 	LastChoiceMessageID    string          `firestore:"last_choice_message_id"`
 	PendingChoiceMessageID string          `firestore:"pending_choice_message_id"`
 	PendingChoiceEventID   string          `firestore:"pending_choice_event_id"`
+	PresentedChoices       []string        `firestore:"presented_choices"`
 	HandoffAt              time.Time       `firestore:"handoff_at"`
 	ExternalReplyRevision  int64           `firestore:"external_reply_revision"`
 	AssistantResumedAt     time.Time       `firestore:"assistant_resumed_at"`
@@ -234,6 +237,7 @@ func toConversationDoc(conv conversation.Conversation) conversationDoc {
 		LastChoiceMessageID:    conv.LastChoiceMessageID,
 		PendingChoiceMessageID: conv.PendingChoiceMessageID,
 		PendingChoiceEventID:   conv.PendingChoiceEventID,
+		PresentedChoices:       conv.PresentedChoices,
 		HandoffAt:              conv.HandoffAt,
 		ExternalReplyRevision:  conv.ExternalReplyRevision,
 		AssistantResumedAt:     conv.AssistantResumedAt,
@@ -279,6 +283,7 @@ func fromConversationDoc(doc conversationDoc) conversation.Conversation {
 		LastChoiceMessageID:    doc.LastChoiceMessageID,
 		PendingChoiceMessageID: doc.PendingChoiceMessageID,
 		PendingChoiceEventID:   doc.PendingChoiceEventID,
+		PresentedChoices:       doc.PresentedChoices,
 		HandoffAt:              doc.HandoffAt,
 		ExternalReplyRevision:  doc.ExternalReplyRevision,
 		AssistantResumedAt:     doc.AssistantResumedAt,
@@ -430,10 +435,17 @@ type messageDoc struct {
 // UUIDv7, which sort chronologically, so the transcript reads back in order
 // from the document key alone.
 func (s *Store) Append(ctx context.Context, msg conversation.Message) error {
+	documentID := msg.ID
+	if msg.ExternalMessageID != "" {
+		// Provider retries are recorded under one stable document while sort_id
+		// keeps the UUIDv7 from the first attempt for chronological reads.
+		digest := sha256.Sum256([]byte(msg.ConversationID + "\x00" + msg.ExternalMessageID))
+		documentID = fmt.Sprintf("incoming-%x", digest)
+	}
 	_, err := s.client.
 		Collection(collectionMessages).Doc(msg.ConversationID).
-		Collection(collectionMessages).Doc(msg.ID).
-		Set(ctx, messageDoc{
+		Collection(collectionMessages).Doc(documentID).
+		Create(ctx, messageDoc{
 			ID:                msg.ID,
 			SortID:            msg.ID,
 			ConversationID:    msg.ConversationID,
@@ -443,10 +455,57 @@ func (s *Store) Append(ctx context.Context, msg conversation.Message) error {
 			ExternalMessageID: msg.ExternalMessageID,
 			CreatedAt:         msg.CreatedAt,
 		})
+	if status.Code(err) == codes.AlreadyExists {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("firestore: append message: %w", err)
 	}
 	return nil
+}
+
+type turnDoc struct {
+	EventID   string    `firestore:"event_id"`
+	UpdatedAt time.Time `firestore:"updated_at"`
+}
+
+func turnDocumentID(conversationKey string) string {
+	digest := sha256.Sum256([]byte(conversationKey))
+	return fmt.Sprintf("%x", digest)
+}
+
+// RegisterTurn records the newest customer event observed for a conversation.
+// Set is intentionally unconditional: whichever delivery reaches this boundary
+// last is the turn the customer is currently waiting to have answered.
+func (s *Store) RegisterTurn(
+	ctx context.Context,
+	conversationKey, eventID string,
+	at time.Time,
+) error {
+	_, err := s.client.Collection(collectionTurns).Doc(turnDocumentID(conversationKey)).Set(ctx, turnDoc{
+		EventID:   eventID,
+		UpdatedAt: at,
+	})
+	if err != nil {
+		return fmt.Errorf("firestore: register conversation turn: %w", err)
+	}
+	return nil
+}
+
+// IsLatestTurn reports whether eventID is still the newest observed event.
+func (s *Store) IsLatestTurn(
+	ctx context.Context,
+	conversationKey, eventID string,
+) (bool, error) {
+	snapshot, err := s.client.Collection(collectionTurns).Doc(turnDocumentID(conversationKey)).Get(ctx)
+	if err != nil {
+		return false, fmt.Errorf("firestore: read conversation turn: %w", err)
+	}
+	var doc turnDoc
+	if err := snapshot.DataTo(&doc); err != nil {
+		return false, fmt.Errorf("firestore: decode conversation turn: %w", err)
+	}
+	return doc.EventID == eventID, nil
 }
 
 // Recent returns up to limit messages, oldest first.
@@ -599,6 +658,9 @@ type bookingDoc struct {
 	CustomerID      string    `firestore:"customer_id"`
 	ServiceIDs      []string  `firestore:"service_ids"`
 	StaffID         string    `firestore:"staff_id"`
+	CustomerName    string    `firestore:"customer_name,omitempty"`
+	ServiceNames    []string  `firestore:"service_names,omitempty"`
+	StaffName       string    `firestore:"staff_name,omitempty"`
 	StartsAt        time.Time `firestore:"starts_at"`
 	DurationSecs    int64     `firestore:"duration_seconds"`
 	Status          string    `firestore:"status"`
@@ -617,6 +679,9 @@ func (s *Store) SaveBooking(ctx context.Context, b booking.Booking) error {
 		CustomerID:      b.CustomerID,
 		ServiceIDs:      b.ServiceIDs,
 		StaffID:         b.StaffID,
+		CustomerName:    b.CustomerName,
+		ServiceNames:    b.ServiceNames,
+		StaffName:       b.StaffName,
 		StartsAt:        b.StartsAt,
 		DurationSecs:    int64(b.Duration.Seconds()),
 		Status:          string(b.Status),
@@ -651,6 +716,9 @@ func (s *Store) ListBookings(ctx context.Context, customerID string) ([]booking.
 			CustomerID:      doc.CustomerID,
 			ServiceIDs:      doc.ServiceIDs,
 			StaffID:         doc.StaffID,
+			CustomerName:    doc.CustomerName,
+			ServiceNames:    doc.ServiceNames,
+			StaffName:       doc.StaffName,
 			StartsAt:        doc.StartsAt,
 			Duration:        time.Duration(doc.DurationSecs) * time.Second,
 			Status:          booking.Status(doc.Status),
@@ -673,6 +741,7 @@ type reminderDoc struct {
 	ConversationID    string    `firestore:"conversation_id"`
 	Provider          string    `firestore:"provider"`
 	ExternalThreadID  string    `firestore:"external_thread_id"`
+	Language          string    `firestore:"language,omitempty"`
 	ExpectedStartsAt  time.Time `firestore:"expected_starts_at"`
 	DueAt             time.Time `firestore:"due_at"`
 	Status            string    `firestore:"status"`
@@ -690,6 +759,7 @@ func toReminderDoc(r reminder.Reminder) reminderDoc {
 		ConversationID:    r.ConversationID,
 		Provider:          string(r.Provider),
 		ExternalThreadID:  r.ExternalThreadID,
+		Language:          r.Language,
 		ExpectedStartsAt:  r.ExpectedStartsAt,
 		DueAt:             r.DueAt,
 		Status:            string(r.Status),
@@ -708,6 +778,7 @@ func fromReminderDoc(doc reminderDoc) reminder.Reminder {
 		ConversationID:    doc.ConversationID,
 		Provider:          messaging.Provider(doc.Provider),
 		ExternalThreadID:  doc.ExternalThreadID,
+		Language:          doc.Language,
 		ExpectedStartsAt:  doc.ExpectedStartsAt,
 		DueAt:             doc.DueAt,
 		Status:            reminder.Status(doc.Status),

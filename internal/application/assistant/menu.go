@@ -117,11 +117,36 @@ func commandIn(text string) string {
 // transcript needs to be able to tell what the customer said from what the
 // interface did on their behalf, and it must not echo either back.
 func expandMenuCommand(text string) (string, bool) {
-	intent, ok := menuIntents[commandIn(text)]
+	intent, ok := menuIntents[menuAction(text)]
 	if !ok {
 		return text, false
 	}
 	return fmt.Sprintf("[the customer tapped the menu: %s]", intent), true
+}
+
+// menuAction recognises both a provider slash command and the visible label of
+// an inline menu button. Telegram sends the latter back as ordinary text, so
+// handling only /book and /person makes identical controls behave differently.
+func menuAction(text string) string {
+	if command := commandIn(text); command != "" {
+		return command
+	}
+
+	written := strings.TrimSpace(text)
+	for _, lang := range languages {
+		p := speak(lang)
+		switch written {
+		case p.bookAVisit:
+			return "book"
+		case p.servicesPrices:
+			return "services"
+		case p.myAppointments:
+			return "appointments"
+		case p.talkToAPerson:
+			return "person"
+		}
+	}
+	return ""
 }
 
 // greeting is the answer to a customer opening the chat or asking what this is.

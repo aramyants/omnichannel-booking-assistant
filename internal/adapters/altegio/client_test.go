@@ -180,6 +180,9 @@ func TestListServices(t *testing.T) {
 	if first.Category != "Hair" {
 		t.Errorf("category = %q, want Hair", first.Category)
 	}
+	if first.Description != "Gentle care & styling.\nМягкий уход." {
+		t.Errorf("description = %q", first.Description)
+	}
 	if first.Duration != time.Hour {
 		t.Errorf("duration = %s, want 1h", first.Duration)
 	}
@@ -188,6 +191,16 @@ func TestListServices(t *testing.T) {
 	}
 	if got, want := first.PriceLabel(), "8000-12000 AMD"; got != want {
 		t.Errorf("PriceLabel() = %q, want %q", got, want)
+	}
+}
+
+func TestServiceDescriptionPrefersTheDocumentedCommentField(t *testing.T) {
+	got := serviceDescription(serviceDTO{
+		Comment:     "<p>Customer-facing &amp; current.</p>",
+		Description: "legacy fallback",
+	})
+	if got != "Customer-facing & current." {
+		t.Errorf("serviceDescription() = %q", got)
 	}
 }
 

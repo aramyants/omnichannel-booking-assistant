@@ -56,6 +56,10 @@ type Config struct {
 	// which no list of services does.
 	BusinessDescription string
 
+	// BusinessProfile contains optional, customer-facing visit details used in
+	// booking confirmations and reminders. Empty facts are omitted.
+	BusinessProfile BusinessProfile
+
 	Telegram  Telegram
 	WhatsApp  WhatsApp
 	Messenger DirectMessaging
@@ -64,6 +68,28 @@ type Config struct {
 	AI        AI
 	Storage   Storage
 	Reminders Reminders
+}
+
+// LocalizedText is business-authored copy in each supported language. The
+// application does not translate a missing value at runtime because doing so
+// could change practical visit instructions.
+type LocalizedText struct {
+	English  string
+	Armenian string
+	Russian  string
+}
+
+// BusinessProfile configures factual contact and visit information. It is
+// intentionally separate from BusinessDescription: these values are rendered
+// verbatim after a real booking and must never be inferred from marketing copy.
+type BusinessProfile struct {
+	Address      LocalizedText
+	Phone        string
+	Preparation  LocalizedText
+	Amenities    LocalizedText
+	InstagramURL string
+	MapURL       string
+	ParkingURL   string
 }
 
 // ReminderBackend names how delayed reminder work is scheduled.
@@ -366,6 +392,38 @@ func Load() (Config, error) {
 
 	cfg.BusinessName = getenv("BUSINESS_NAME", "")
 	cfg.BusinessDescription = getenv("BUSINESS_DESCRIPTION", "")
+	cfg.BusinessProfile = BusinessProfile{
+		Address: LocalizedText{
+			English:  getenv("BUSINESS_ADDRESS_EN", ""),
+			Armenian: getenv("BUSINESS_ADDRESS_HY", ""),
+			Russian:  getenv("BUSINESS_ADDRESS_RU", ""),
+		},
+		Phone: getenv("BUSINESS_PHONE", ""),
+		Preparation: LocalizedText{
+			English:  getenv("BUSINESS_PREPARATION_EN", ""),
+			Armenian: getenv("BUSINESS_PREPARATION_HY", ""),
+			Russian:  getenv("BUSINESS_PREPARATION_RU", ""),
+		},
+		Amenities: LocalizedText{
+			English:  getenv("BUSINESS_AMENITIES_EN", ""),
+			Armenian: getenv("BUSINESS_AMENITIES_HY", ""),
+			Russian:  getenv("BUSINESS_AMENITIES_RU", ""),
+		},
+		InstagramURL: getenv("BUSINESS_INSTAGRAM_URL", ""),
+		MapURL:       getenv("BUSINESS_MAP_URL", ""),
+		ParkingURL:   getenv("BUSINESS_PARKING_URL", ""),
+	}
+	for _, setting := range []struct{ name, value string }{
+		{"BUSINESS_INSTAGRAM_URL", cfg.BusinessProfile.InstagramURL},
+		{"BUSINESS_MAP_URL", cfg.BusinessProfile.MapURL},
+		{"BUSINESS_PARKING_URL", cfg.BusinessProfile.ParkingURL},
+	} {
+		if setting.value != "" {
+			if err := validateHTTPSURL(setting.name, setting.value); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
 	cfg.AI = AI{
 		APIKey:             getenv("OPENAI_API_KEY", ""),
 		Model:              getenv("OPENAI_MODEL", ""),

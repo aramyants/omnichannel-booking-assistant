@@ -52,8 +52,9 @@ type Store struct {
 	conversations       map[string]conversation.Conversation
 	conversationKeyByID map[string]string
 
-	messages  map[string][]conversation.Message
-	processed map[string]processedEntry
+	messages   map[string][]conversation.Message
+	processed  map[string]processedEntry
+	latestTurn map[string]string
 
 	// bookings is keyed by customer, which is how a customer's appointments
 	// are read back.
@@ -96,6 +97,7 @@ func New(opts ...Option) *Store {
 		conversationKeyByID: make(map[string]string),
 		messages:            make(map[string][]conversation.Message),
 		processed:           make(map[string]processedEntry),
+		latestTurn:          make(map[string]string),
 		bookings:            make(map[string][]booking.Booking),
 		reminders:           make(map[string]reminder.Reminder),
 		staffThreads:        make(map[string]string),
@@ -311,6 +313,12 @@ func (s *Store) FindByID(_ context.Context, conversationID string) (conversation
 func (s *Store) Append(_ context.Context, msg conversation.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, stored := range s.messages[msg.ConversationID] {
+		if stored.ID == msg.ID ||
+			(msg.ExternalMessageID != "" && stored.ExternalMessageID == msg.ExternalMessageID) {
+			return nil
+		}
+	}
 
 	s.messages[msg.ConversationID] = append(s.messages[msg.ConversationID], msg)
 	return nil
@@ -329,6 +337,21 @@ func (s *Store) Recent(_ context.Context, conversationID string, limit int) ([]c
 	// Cloned so a caller cannot mutate stored state through the returned slice,
 	// which a durable store would never allow either.
 	return slices.Clone(all), nil
+}
+
+// RegisterTurn records the newest customer event observed for a conversation.
+func (s *Store) RegisterTurn(_ context.Context, conversationKey, eventID string, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.latestTurn[conversationKey] = eventID
+	return nil
+}
+
+// IsLatestTurn reports whether eventID is still the newest observed event.
+func (s *Store) IsLatestTurn(_ context.Context, conversationKey, eventID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.latestTurn[conversationKey] == eventID, nil
 }
 
 // SaveBooking records an appointment, replacing any earlier version of it.

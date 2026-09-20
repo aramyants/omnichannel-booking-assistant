@@ -1,11 +1,30 @@
-# Meta setup status — 12 September 2026
+# Meta setup status — 14 September 2026
 
 This records dashboard observations and the current test-channel activation.
-The bot improvements and Meta transports were merged to `main` in PR #19. Cloud
-Run is healthy and runs version `ecd7520`, including WhatsApp Business app
-reply/takeover handling. The WhatsApp test configuration is stored but the
-runtime channel is paused during the studio phone account's WhatsApp review.
-Messenger and Instagram still lack channel credentials and account IDs.
+Cloud Run is healthy on revision `omnichannel-booking-assistant-00007-8m7`
+(build `ecd7520`), including WhatsApp Business app reply/takeover handling.
+Newer fixes are on GitHub `main` at `abd680e` but have not yet been verified as
+deployed. The WhatsApp test configuration is stored, while the runtime channel
+is deliberately paused. The studio phone account entered WhatsApp review on
+12 September; the outcome has not yet been confirmed from the phone. Messenger
+and Instagram still lack channel credentials and account IDs.
+
+On 14 September, the Emotion Concept Chrome profile showed **Confirmation
+required** before Meta Business settings could be accessed. The Aram profile
+required a separate login. The business email showed no later decision email;
+the WhatsApp Business phone app remains the authoritative source for the review
+result. No account takeover has been established by the available evidence.
+Meta account confirmation and the phone review result are needed before making
+further changes in Meta. Advanced WhatsApp permissions, app review evidence and
+the coexistence/provider access path also remain incomplete.
+
+Cloud Run logs showed three successful Altegio bookings on 12 September whose
+Cloud Tasks reminder creation failed: the downstream task request exceeded
+Cloud Tasks' 30-second deadline limit. Those three stored reminders are now
+past due, so the recovery code intentionally will not send them late. The
+bounded task request and startup reconciliation are committed on `main` and
+await production deployment. A later deployment must be checked with a new
+future booking/reminder; prior missed reminders cannot be recovered.
 
 ## Confirmed assets
 

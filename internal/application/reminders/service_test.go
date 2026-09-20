@@ -5,11 +5,13 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/persistence/memory"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
@@ -66,9 +68,16 @@ func (s *fakeSender) count() int {
 	return len(s.sent)
 }
 
+func (s *fakeSender) messages() []messaging.Outgoing {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]messaging.Outgoing(nil), s.sent...)
+}
+
 func appointment(startsAt time.Time) booking.Booking {
 	return booking.Booking{
 		ID: "bk-1", ExternalID: "998877", CustomerID: "cust-1",
+		CustomerName: "Garik", ServiceNames: []string{"Motion sport"}, StaffName: "Yaroslava",
 		StartsAt: startsAt, Duration: time.Hour, Status: booking.StatusConfirmed,
 		CreatedAt: testNow,
 	}
@@ -88,7 +97,7 @@ func TestMetaRemindersAreNotScheduledWithoutWindowAwareDelivery(t *testing.T) {
 	for _, provider := range []messaging.Provider{messaging.ProviderWhatsApp, messaging.ProviderInstagram, messaging.ProviderMessenger} {
 		conv := reminderConversation()
 		conv.Provider = provider
-		if err := svc.Plan(t.Context(), appointment(now.Add(72*time.Hour)), conv); err != nil {
+		if err := svc.Plan(t.Context(), appointment(now.Add(72*time.Hour)), conv, "en"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -116,6 +125,7 @@ func newTestService(
 		LeadTime:  24 * time.Hour,
 		Location:  time.UTC,
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Renderer:  appointmentmessage.New(appointmentmessage.Business{}, time.UTC),
 		Now:       func() time.Time { return *now },
 	})
 	if err != nil {
@@ -130,7 +140,7 @@ func plan(t *testing.T, svc *Service, store *memory.Store, startsAt time.Time) T
 	if err := store.SaveBooking(t.Context(), b); err != nil {
 		t.Fatalf("SaveBooking() returned error: %v", err)
 	}
-	if err := svc.Plan(t.Context(), b, reminderConversation()); err != nil {
+	if err := svc.Plan(t.Context(), b, reminderConversation(), "en"); err != nil {
 		t.Fatalf("Plan() returned error: %v", err)
 	}
 	tasks := svc.scheduler.(*fakeScheduler).snapshot()
@@ -150,7 +160,7 @@ func TestPlanSchedulesAtTheLeadTimeAndIsDeterministic(t *testing.T) {
 		if err := store.SaveBooking(t.Context(), b); err != nil {
 			t.Fatal(err)
 		}
-		if err := svc.Plan(t.Context(), b, reminderConversation()); err != nil {
+		if err := svc.Plan(t.Context(), b, reminderConversation(), "en"); err != nil {
 			t.Fatalf("Plan() returned error: %v", err)
 		}
 	}
@@ -175,7 +185,7 @@ func TestReconcileRestoresTaskAfterPersistedScheduleFailure(t *testing.T) {
 	if err := store.SaveBooking(t.Context(), b); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Plan(t.Context(), b, reminderConversation()); err == nil {
+	if err := svc.Plan(t.Context(), b, reminderConversation(), "en"); err == nil {
 		t.Fatal("Plan() succeeded despite the task creation failure")
 	}
 	if pending, err := store.ListScheduledReminders(t.Context()); err != nil || len(pending) != 1 {
@@ -232,7 +242,7 @@ func TestLongHorizonReconcileKeepsOriginalCheckpoint(t *testing.T) {
 	if again := scheduler.snapshot()[1]; again != first {
 		t.Errorf("long-horizon checkpoint drifted: %+v, want %+v", again, first)
 	}
-	if err := svc.Plan(t.Context(), appointment(testNow.Add(90*24*time.Hour)), reminderConversation()); err != nil {
+	if err := svc.Plan(t.Context(), appointment(testNow.Add(90*24*time.Hour)), reminderConversation(), "en"); err != nil {
 		t.Fatal(err)
 	}
 	if again := scheduler.snapshot()[2]; again != first {
@@ -245,7 +255,7 @@ func TestAppointmentInsideLeadWindowGetsNoImmediateReminder(t *testing.T) {
 	scheduler := &fakeScheduler{}
 	svc, _ := newTestService(t, &now, scheduler, &fakeSender{})
 
-	if err := svc.Plan(t.Context(), appointment(now.Add(12*time.Hour)), reminderConversation()); err != nil {
+	if err := svc.Plan(t.Context(), appointment(now.Add(12*time.Hour)), reminderConversation(), "en"); err != nil {
 		t.Fatalf("Plan() returned error: %v", err)
 	}
 	if len(scheduler.snapshot()) != 0 {
@@ -292,6 +302,17 @@ func TestDeliverSendsOnceAndRecordsTheTranscript(t *testing.T) {
 	if sender.count() != 1 {
 		t.Errorf("sent %d reminders, want exactly 1", sender.count())
 	}
+	text := sender.messages()[0].Text
+	for _, want := range []string{
+		"A reminder about your upcoming appointment",
+		"Service: Motion sport",
+		"Specialist: Yaroslava",
+		"Booking reference: 998877",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("reminder does not contain %q:\n%s", want, text)
+		}
+	}
 	stored, err := store.FindReminder(t.Context(), task.ReminderID)
 	if err != nil || stored.Status != reminder.StatusSent {
 		t.Errorf("stored reminder = %+v, %v; want sent", stored, err)
@@ -299,6 +320,30 @@ func TestDeliverSendsOnceAndRecordsTheTranscript(t *testing.T) {
 	history, err := store.Recent(t.Context(), "conv-1", 10)
 	if err != nil || len(history) != 1 || history[0].Direction != conversation.DirectionOutbound {
 		t.Errorf("history = %+v, %v; want the delivered reminder", history, err)
+	}
+}
+
+func TestReminderKeepsTheBookingConversationLanguage(t *testing.T) {
+	now := testNow
+	scheduler := &fakeScheduler{}
+	sender := &fakeSender{}
+	svc, store := newTestService(t, &now, scheduler, sender)
+	b := appointment(now.Add(72 * time.Hour))
+	if err := store.SaveBooking(t.Context(), b); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Plan(t.Context(), b, reminderConversation(), "ru-RU"); err != nil {
+		t.Fatal(err)
+	}
+	task := scheduler.snapshot()[0]
+	now = task.RunAt
+	if err := svc.Deliver(t.Context(), task.ReminderID); err != nil {
+		t.Fatal(err)
+	}
+	text := sender.messages()[0].Text
+	if !strings.Contains(text, "Напоминаем о вашей предстоящей записи") ||
+		!strings.Contains(text, "Услуга: Motion sport") {
+		t.Fatalf("reminder did not retain Russian:\n%s", text)
 	}
 }
 

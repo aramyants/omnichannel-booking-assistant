@@ -210,7 +210,7 @@ func (t *toolset) confirmReschedule(ctx context.Context, s *session) (string, er
 		s.conv.BookingChange = nil
 		s.offer()
 		if t.recordChangedBooking(ctx, moved, "rescheduled") && t.reminders != nil {
-			if planErr := t.reminders.Plan(ctx, moved, *s.conv); planErr != nil {
+			if planErr := t.reminders.Plan(ctx, moved, *s.conv, string(s.language)); planErr != nil {
 				t.logger.ErrorContext(ctx, "rescheduled an appointment but could not plan its reminder",
 					"error", planErr, "external_id", moved.ExternalID)
 			}

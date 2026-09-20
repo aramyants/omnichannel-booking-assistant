@@ -13,7 +13,7 @@ import (
 func categoryCalendar() *stubScheduling {
 	calendar := defaultScheduling()
 	calendar.services = []booking.Service{
-		{ID: "face", Name: "Face motion", Category: "Face Motion", PriceMin: 29000, PriceMax: 30000, Currency: "AMD"},
+		{ID: "face", Name: "Face motion", Category: "Face Motion", Description: "Gentle facial care.", PriceMin: 29000, PriceMax: 30000, Currency: "AMD"},
 		{ID: "guasha", Name: "Face Motion Guasha", Category: "Face Motion", PriceMin: 29000, PriceMax: 29000, Currency: "AMD"},
 		{ID: "sport", Name: "Motion sport", Category: "Motion Sport", PriceMin: 44000, PriceMax: 70000, Currency: "AMD"},
 		{ID: "relax", Name: "Motion Relax", Category: "Motion Relax", PriceMin: 27000, PriceMax: 27000, Currency: "AMD"},
@@ -36,7 +36,8 @@ func TestCategoryRequestsExcludeUnrelatedServicesAndButtons(t *testing.T) {
 				t.Fatal(err)
 			}
 			result := resultOf(t, model, 2)
-			if strings.Contains(result, "Motion sport") || strings.Contains(result, "Motion Relax") || !strings.Contains(result, "Face Motion Guasha") {
+			if strings.Contains(result, "Motion sport") || strings.Contains(result, "Motion Relax") ||
+				!strings.Contains(result, "Face Motion Guasha") || !strings.Contains(result, "Gentle facial care.") {
 				t.Fatalf("wrong category results: %s", result)
 			}
 			if got := labelsOf(sender.sent[0].Choices); !slices.Equal(got, []string{"Face motion", "Face Motion Guasha"}) {

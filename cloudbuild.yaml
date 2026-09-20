@@ -1,0 +1,97 @@
+# Continuous delivery for the existing Cloud Run service.
+#
+# The bootstrap script creates the service, its runtime identity, secrets and
+# supporting Google Cloud resources. A repository trigger then uses this file
+# for every ordinary release: test one commit, build one immutable image, probe
+# that exact revision at zero traffic, and promote it only when it answers.
+
+substitutions:
+  _REGION: europe-west1
+  _REPOSITORY: cloud-run-source-deploy
+  _SERVICE: omnichannel-booking-assistant
+
+steps:
+  - id: test
+    name: golang:1.27
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        unformatted="$$(gofmt -l .)"
+        if [[ -n "$$unformatted" ]]; then
+          echo "These files are not gofmt-formatted:"
+          echo "$$unformatted"
+          exit 1
+        fi
+        go vet ./...
+        go test ./... -race -count=1
+
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg
+      - VERSION=$SHORT_SHA
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA
+      - .
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA
+
+  - id: deploy-candidate
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA
+      - --region=${_REGION}
+      - --no-traffic
+      - --tag=candidate-$SHORT_SHA
+      - --update-env-vars=BUILD_VERSION=$SHORT_SHA
+      - --quiet
+
+  - id: verify-candidate
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        tag="candidate-$SHORT_SHA"
+        gcloud run services describe "${_SERVICE}" \
+          --region "${_REGION}" \
+          --format=json > /tmp/service.json
+        candidate_url="$$(python3 -c 'import json, sys; tag=sys.argv[1]; print(next(item["url"] for item in json.load(sys.stdin)["status"]["traffic"] if item.get("tag") == tag))' "$$tag" < /tmp/service.json)"
+        response="$$(curl -fsS --retry 10 --retry-delay 2 --retry-all-errors "$$candidate_url/health")"
+        echo "$$response"
+        echo "$$response" | grep -Fq '"status":"ok"'
+        echo "$$response" | grep -Fq '"version":"$SHORT_SHA"'
+
+  - id: promote-candidate
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        tag="candidate-$SHORT_SHA"
+        gcloud run services update-traffic "${_SERVICE}" \
+          --region "${_REGION}" \
+          --to-tags "$$tag=100" \
+          --quiet
+        gcloud run services update-traffic "${_SERVICE}" \
+          --region "${_REGION}" \
+          --remove-tags "$$tag" \
+          --quiet
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1200s

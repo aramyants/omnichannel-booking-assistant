@@ -80,9 +80,11 @@ var phrasebook = map[language]phrases{
 		servicesPrices: "Services and prices",
 		startAgain:     "Start again",
 		whatICanDo:     "What I can do",
-		welcome: "Hello! I am the booking assistant at %s. " +
-			"I can show you the services, find a free time and book it for you. " +
-			"What would you like?",
+		welcome: "Hello! 👋\n\nI’m the booking assistant at %s.\n\n" +
+			"I can show services and prices, find a free time, and book your visit.\n\n" +
+			"What would you like?\n\n" +
+			"1. Book a visit\n2. Services and prices\n3. My appointments\n4. Talk to a person\n\n" +
+			"Tap a button or send the number.",
 		apology: "Sorry, I could not check that just now. Please try again in a moment, " +
 			"or tap the button and a colleague will take over.",
 		handedOver: "Of course. A colleague will reply here shortly.",
@@ -102,9 +104,11 @@ var phrasebook = map[language]phrases{
 		servicesPrices: "Ծառայություններ և գներ",
 		startAgain:     "Սկսել նորից",
 		whatICanDo:     "Ինչ կարող եմ անել",
-		welcome: "Բարև Ձեզ: Ես %s-ի ամրագրման օգնականն եմ: " +
-			"Կարող եմ ցույց տալ ծառայությունները, գտնել ազատ ժամ և ամրագրել Ձեզ համար: " +
-			"Ինչո՞վ կարող եմ օգնել:",
+		welcome: "Բարև Ձեզ 👋\n\nԵս %s-ի ամրագրման օգնականն եմ։\n\n" +
+			"Կարող եմ ցույց տալ ծառայություններն ու գները, գտնել ազատ ժամ և ամրագրել Ձեր այցը։\n\n" +
+			"Ինչո՞վ կարող եմ օգնել։\n\n" +
+			"1. Ամրագրել այց\n2. Ծառայություններ և գներ\n3. Իմ այցերը\n4. Կապվել աշխատակցի հետ\n\n" +
+			"Սեղմեք կոճակը կամ ուղարկեք համարը։",
 		apology: "Ներողություն, հիմա չկարողացա ստուգել: Խնդրում եմ փորձեք մի փոքր ուշ, " +
 			"կամ սեղմեք կոճակը՝ աշխատակցի հետ կապվելու համար:",
 		handedOver: "Իհարկե: Աշխատակիցը շուտով կպատասխանի այստեղ:",
@@ -125,9 +129,11 @@ var phrasebook = map[language]phrases{
 		servicesPrices: "Услуги и цены",
 		startAgain:     "Начать заново",
 		whatICanDo:     "Что я умею",
-		welcome: "Здравствуйте! Я помощник по записи в %s. " +
-			"Могу показать услуги, найти свободное время и записать вас. " +
-			"Чем могу помочь?",
+		welcome: "Здравствуйте! 👋\n\nЯ помощник по записи в %s.\n\n" +
+			"Могу показать услуги и цены, найти свободное время и записать вас.\n\n" +
+			"Чем могу помочь?\n\n" +
+			"1. Записаться\n2. Услуги и цены\n3. Мои записи\n4. Связаться с сотрудником\n\n" +
+			"Нажмите кнопку или отправьте номер.",
 		apology: "Извините, сейчас не получилось проверить. Попробуйте, пожалуйста, чуть позже " +
 			"или нажмите кнопку, и с вами свяжется сотрудник.",
 		handedOver: "Конечно. Сотрудник ответит здесь в ближайшее время.",

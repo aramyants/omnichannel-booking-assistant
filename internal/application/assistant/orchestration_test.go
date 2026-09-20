@@ -81,6 +81,7 @@ func (p *stubReminderPlanner) Plan(
 	_ context.Context,
 	b booking.Booking,
 	_ conversation.Conversation,
+	_ string,
 ) error {
 	p.planned = append(p.planned, b)
 	return p.err
@@ -203,6 +204,7 @@ func newAIService(t *testing.T, model ai.Provider, scheduling Scheduling, sender
 		Conversations: store,
 		Messages:      store,
 		Processed:     store,
+		Turns:         store,
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Now:           func() time.Time { return testNow },
 		AI:            model,

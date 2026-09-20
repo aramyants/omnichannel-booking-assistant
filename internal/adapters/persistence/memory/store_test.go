@@ -196,6 +196,52 @@ func TestRecentOnAnUnknownConversation(t *testing.T) {
 	}
 }
 
+func TestAppendIsIdempotentForProviderRetries(t *testing.T) {
+	store := New()
+	first := conversation.Message{
+		ID:                "attempt-1",
+		ConversationID:    "conv-1",
+		Direction:         conversation.DirectionInbound,
+		Text:              "I need a face massage",
+		ExternalMessageID: "provider-message-42",
+	}
+	second := first
+	second.ID = "attempt-2"
+	if err := store.Append(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(t.Context(), second); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.Recent(t.Context(), "conv-1", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != first.ID {
+		t.Fatalf("provider retry produced duplicate transcript entries: %+v", got)
+	}
+}
+
+func TestConversationTurnsTrackTheNewestArrival(t *testing.T) {
+	store := New()
+	if err := store.RegisterTurn(t.Context(), "telegram:chat", "first", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if latest, err := store.IsLatestTurn(t.Context(), "telegram:chat", "first"); err != nil || !latest {
+		t.Fatalf("first turn latest = %t, %v", latest, err)
+	}
+	if err := store.RegisterTurn(t.Context(), "telegram:chat", "second", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if latest, err := store.IsLatestTurn(t.Context(), "telegram:chat", "first"); err != nil || latest {
+		t.Fatalf("obsolete turn latest = %t, %v", latest, err)
+	}
+	if latest, err := store.IsLatestTurn(t.Context(), "telegram:chat", "second"); err != nil || !latest {
+		t.Fatalf("second turn latest = %t, %v", latest, err)
+	}
+}
+
 func TestProcessedEvents(t *testing.T) {
 	now := time.Unix(1756728000, 0).UTC()
 	store := New(WithClock(func() time.Time { return now }))

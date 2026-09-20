@@ -11,11 +11,13 @@ validates every request before it reaches Altegio.
 
 ## Status
 
-The Telegram path is complete locally: messages are authenticated, normalised,
-deduplicated and answered; the assistant can inspect the live Altegio calendar,
-create appointments, list the appointments it created, and safely cancel or
-reschedule them. Production credentials and a live end-to-end booking are still
-required before launch.
+Telegram is live on Cloud Run with Firestore, OpenAI, Altegio and Cloud Tasks.
+The production logs confirm live Altegio bookings. The currently serving revision
+is `omnichannel-booking-assistant-00007-8m7` (build `ecd7520`). Newer fixes on
+`main` improve Telegram voice and buttons, conversation quality and reminder
+task recovery; deployment of that build is pending verification. See the
+[Meta status log](docs/meta-onboarding-status.md) for the activation blockers on
+the other channels.
 
 | Area | State |
 | --- | --- |
@@ -27,12 +29,12 @@ required before launch.
 | Booking from a conversation | done |
 | Durable Firestore storage | done |
 | Cancel and reschedule | done |
-| Delayed reminders | done, local timers or Cloud Tasks |
+| Delayed reminders | Cloud Tasks wired; scheduling fix and recovery awaiting production deployment |
 | Staff handover and replies from the staff chat | done |
 | Buttons, and fixed phrases in Armenian, Russian and English | done |
-| WhatsApp | done, enabled when credentials are configured |
+| WhatsApp | transport implemented; deliberately paused while the studio phone account review is unresolved |
 | WhatsApp coexistence: a reply sent from the Business app takes the conversation over | done |
-| Instagram, Messenger | text and incoming audio implemented; credentials and deployment required |
+| Instagram, Messenger | text and incoming audio implemented; credentials and Meta activation required |
 | Viber | not started |
 
 ## Design

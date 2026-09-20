@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -358,6 +359,57 @@ func TestTranscriptReadsBackInOrder(t *testing.T) {
 	}
 }
 
+func TestAppendIsIdempotentForProviderRetries(t *testing.T) {
+	store := newStore(t)
+	conversationID := unique(t, "conv-retry")
+	providerID := unique(t, "provider-message")
+	first := conversation.Message{
+		ID:                "01a0-first-attempt",
+		ConversationID:    conversationID,
+		Direction:         conversation.DirectionInbound,
+		ContentType:       messaging.ContentTypeText,
+		Text:              "I need a face massage",
+		ExternalMessageID: providerID,
+		CreatedAt:         testNow,
+	}
+	second := first
+	second.ID = "01a0-retry-attempt"
+	if err := store.Append(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(t.Context(), second); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.Recent(t.Context(), conversationID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != first.ID {
+		t.Fatalf("provider retry produced duplicate transcript entries: %+v", got)
+	}
+}
+
+func TestConversationTurnsTrackTheNewestArrival(t *testing.T) {
+	store := newStore(t)
+	key := unique(t, "telegram:thread")
+	if err := store.RegisterTurn(t.Context(), key, "first", testNow); err != nil {
+		t.Fatal(err)
+	}
+	if latest, err := store.IsLatestTurn(t.Context(), key, "first"); err != nil || !latest {
+		t.Fatalf("first turn latest = %t, %v", latest, err)
+	}
+	if err := store.RegisterTurn(t.Context(), key, "second", testNow.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if latest, err := store.IsLatestTurn(t.Context(), key, "first"); err != nil || latest {
+		t.Fatalf("obsolete turn latest = %t, %v", latest, err)
+	}
+	if latest, err := store.IsLatestTurn(t.Context(), key, "second"); err != nil || !latest {
+		t.Fatalf("second turn latest = %t, %v", latest, err)
+	}
+}
+
 func TestProcessedEvents(t *testing.T) {
 	store := newStore(t)
 	key := unique(t, "telegram:msg")
@@ -453,6 +505,7 @@ func TestBookingsRoundTrip(t *testing.T) {
 		ID: "bk-1", ExternalID: unique(t, "ext-1"), CustomerID: customerID,
 		ManagementToken: "private-hash-1",
 		ServiceIDs:      []string{"1001"}, StaffID: "501",
+		CustomerName: "Garik Grigoryan", ServiceNames: []string{"Motion sport"}, StaffName: "Yaroslava",
 		StartsAt: testNow.Add(24 * time.Hour), Duration: time.Hour,
 		Status: booking.StatusConfirmed, CreatedAt: testNow,
 	}
@@ -478,6 +531,10 @@ func TestBookingsRoundTrip(t *testing.T) {
 	}
 	if got[0].ManagementToken != "private-hash-1" {
 		t.Errorf("management token = %q, want it preserved", got[0].ManagementToken)
+	}
+	if got[0].CustomerName != "Garik Grigoryan" || got[0].StaffName != "Yaroslava" ||
+		!slices.Equal(got[0].ServiceNames, []string{"Motion sport"}) {
+		t.Errorf("display snapshot was not preserved: %+v", got[0])
 	}
 }
 
@@ -518,7 +575,7 @@ func TestReminderRoundTripAndClaim(t *testing.T) {
 	r := reminder.Reminder{
 		ID: unique(t, "reminder"), BookingExternalID: "998877", CustomerID: "cust-1",
 		ConversationID: "conv-1", Provider: messaging.ProviderTelegram,
-		ExternalThreadID: "thread-1", ExpectedStartsAt: testNow.Add(48 * time.Hour),
+		ExternalThreadID: "thread-1", Language: "ru", ExpectedStartsAt: testNow.Add(48 * time.Hour),
 		DueAt: testNow.Add(24 * time.Hour), Status: reminder.StatusScheduled, CreatedAt: testNow,
 	}
 	if err := store.EnsureReminder(t.Context(), r); err != nil {
@@ -538,7 +595,7 @@ func TestReminderRoundTripAndClaim(t *testing.T) {
 		}
 	}
 	loaded, err := store.FindReminder(t.Context(), r.ID)
-	if err != nil || !loaded.DueAt.Equal(r.DueAt) {
+	if err != nil || !loaded.DueAt.Equal(r.DueAt) || loaded.Language != "ru" {
 		t.Fatalf("FindReminder() = %+v, %v", loaded, err)
 	}
 
