@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/platform/id"
 )
 
@@ -59,6 +60,10 @@ func (c *Client) Check(ctx context.Context, selection booking.Selection) error {
 // outcome is not learned is reported as ErrOutcomeUnknown so the caller
 // reconciles rather than guessing.
 func (c *Client) Create(ctx context.Context, req booking.Request) (booking.Booking, error) {
+	phone, err := customer.NormalizePhone(req.Phone)
+	if err != nil {
+		return booking.Booking{}, fmt.Errorf("%w: %w", booking.ErrRejected, err)
+	}
 	appointment, err := c.toAppointment(req.Selection())
 	if err != nil {
 		return booking.Booking{}, err
@@ -68,7 +73,7 @@ func (c *Client) Create(ctx context.Context, req booking.Request) (booking.Booki
 		method: http.MethodPost,
 		path:   "/book_record/" + c.companyID,
 		body: bookRecordRequest{
-			Phone:         req.Phone,
+			Phone:         phone,
 			FullName:      req.CustomerName,
 			Email:         req.Email,
 			Comment:       req.Comment,

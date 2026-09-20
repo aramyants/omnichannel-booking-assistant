@@ -409,6 +409,14 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 	// A colleague handling the conversation must not be talked over, and a
 	// customer waiting for a person must not be answered by the bot again.
 	if !conv.AssistantMayReply() {
+		// Consent withdrawal remains effective during handover. Do not send an
+		// automated reply over the colleague or interpret STOP as cancellation.
+		if conv.Provider == messaging.ProviderWhatsApp && stopsReminders(msg.Content.Text) {
+			conv.ReminderOptIn = false
+			if err := s.conversations.Save(ctx, conv); err != nil {
+				return err
+			}
+		}
 		s.logger.InfoContext(ctx, "left the message for a colleague",
 			"conversation_id", conv.ID, "conversation_state", string(conv.State))
 		releaseClaim = false
@@ -547,6 +555,9 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 	// with buttons draws them; one without ignores them, and the reply names
 	// the same options in words either way.
 	reply := msg.Reply(text).WithChoices(sess.buttons(text))
+	if len(reply.Choices) > 0 {
+		reply.ChoiceToken = id.New()
+	}
 	presentedChoices := sess.presentedChoices(text)
 	if err := s.checkExternalReply(turnCtx, conv); err != nil {
 		if errors.Is(context.Cause(turnCtx), errTurnSuperseded) {
@@ -578,6 +589,10 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 		}
 	}
 	conv.PresentedChoices = presentedChoices
+	if !tracksChoices {
+		conv.LastChoiceMessageID = reply.ChoiceToken
+		conv.PendingChoiceMessageID, conv.PendingChoiceEventID = "", ""
+	}
 	if err := s.conversations.Save(ctx, conv); err != nil {
 		s.logger.ErrorContext(ctx, "sent a reply but could not store its current choices", "error", err, "conversation_id", conv.ID)
 		if tracksChoices {
@@ -847,15 +862,27 @@ func repeatedLookupWithoutProgress(calls []ai.ToolCall, turns []ai.Turn) bool {
 // needs a model to understand, and routing it through one only adds a way for
 // it to be missed.
 //
-// The rest of the menu stays with the model. Booking, prices and appointments
-// all need tools and a conversation, and answering them from a table would mean
-// answering them badly.
+// Catalogue browsing reads live services without a model round trip. Free-text
+// availability and booking requests continue through the guarded tool flow.
 func (s *Service) menuReply(
 	ctx context.Context,
 	sess *session,
 	msg messaging.Envelope,
 	selectedPresentedChoice bool,
 ) (string, bool) {
+	if text, ok := s.reminderConsent(ctx, sess, msg.Content.Text); ok {
+		return text, true
+	}
+	if (menuAction(msg.Content.Text) == "start" || isGreeting(msg.Content.Text)) && s.tools != nil && s.tools.scheduling != nil {
+		text, ok := s.catalogueReply(ctx, sess, "/services", false)
+		if ok {
+			intro := strings.SplitN(s.greeting(sess.language), "\n\n", 3)
+			if len(intro) > 2 {
+				intro = intro[:2]
+			}
+			return strings.Join(intro, "\n\n") + "\n\n" + text, true
+		}
+	}
 	switch menuAction(msg.Content.Text) {
 	case "start", "help":
 		sess.offerFixed(offerMenu)

@@ -30,6 +30,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/tasks/taskhttp"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/assistant"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/calendar"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/reminders"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
@@ -218,8 +219,10 @@ func run() error {
 	}
 
 	appointmentMessages := newAppointmentMessages(cfg)
+	liveReader, _ := scheduling.(calendar.Reader)
+	gw.calendar = calendar.New(store, calendar.Settings{Name: cfg.BusinessName, Addresses: map[string]string{"en": cfg.BusinessProfile.Address.English, "ru": cfg.BusinessProfile.Address.Russian, "hy": cfg.BusinessProfile.Address.Armenian}, Location: cfg.Altegio.Location}).WithReader(liveReader)
 	reminderService, reminderHandler, closeReminders, err := openReminders(
-		ctx, cfg, store, senders, appointmentMessages, logger,
+		ctx, cfg, store, senders, appointmentMessages, logger, liveReader,
 	)
 	if err != nil {
 		return err
@@ -419,6 +422,7 @@ type appStore interface {
 	assistant.ProcessedEvents
 	assistant.ConversationTurns
 	assistant.BookingRepository
+	calendar.Repository
 
 	// Staff notifications are linked to the conversation they announce, so a
 	// colleague replying to one is understood.
@@ -433,6 +437,7 @@ func openReminders(
 	assistantSenders map[messaging.Provider]assistant.Sender,
 	appointmentMessages appointmentmessage.Renderer,
 	logger *slog.Logger,
+	readers ...calendar.Reader,
 ) (*reminders.Service, http.Handler, func(), error) {
 	if !cfg.Reminders.Enabled() {
 		logger.Info("appointment reminders are disabled")
@@ -443,15 +448,22 @@ func openReminders(
 	for provider, sender := range assistantSenders {
 		senders[provider] = sender
 	}
+	if client, ok := assistantSenders[messaging.ProviderWhatsApp].(*meta.Client); ok {
+		senders[messaging.ProviderWhatsApp] = meta.TemplateReminders{Client: client, Templates: cfg.WhatsApp.ReminderTemplates, Location: cfg.Altegio.Location}
+	}
 	deps := reminders.Deps{
-		Repository: store,
-		Bookings:   store,
-		Messages:   store,
-		Senders:    senders,
-		LeadTime:   cfg.Reminders.LeadTime,
-		Location:   cfg.Altegio.Location,
-		Logger:     logger,
-		Renderer:   appointmentMessages,
+		Conversations: store,
+		Repository:    store,
+		Bookings:      store,
+		Messages:      store,
+		Senders:       senders,
+		LeadTime:      cfg.Reminders.LeadTime,
+		Location:      cfg.Altegio.Location,
+		Logger:        logger,
+		Renderer:      appointmentMessages,
+	}
+	if len(readers) > 0 {
+		deps.Reader = readers[0]
 	}
 
 	switch cfg.Reminders.Backend {
@@ -544,7 +556,7 @@ func newAppointmentMessages(cfg config.Config) appointmentmessage.Renderer {
 		InstagramURL: cfg.BusinessProfile.InstagramURL,
 		MapURL:       cfg.BusinessProfile.MapURL,
 		ParkingURL:   cfg.BusinessProfile.ParkingURL,
-	}, cfg.Altegio.Location)
+	}, cfg.Altegio.Location).WithCalendar(cfg.PublicBaseURL)
 }
 
 // openStore builds the configured store and returns a function that releases

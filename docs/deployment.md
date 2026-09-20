@@ -67,7 +67,8 @@ application releases do not need that script or copied environment variables.
 The checked-in `cloudbuild.yaml` is the release pipeline for the existing
 service. It:
 
-1. runs formatting checks, `go vet`, and the race-enabled test suite;
+1. runs formatting checks, `go vet`, the race-enabled test suite, and
+   `govulncheck` (a vulnerability failure now blocks Cloud Build deployment too);
 2. builds an image named by the exact Git commit and pushes it to Artifact
    Registry;
 3. deploys that image as a tagged revision with zero production traffic;
@@ -88,6 +89,11 @@ The defaults in `cloudbuild.yaml` match this service (`europe-west1`, repository
 `cloud-run-source-deploy`, and service `omnichannel-booking-assistant`). Change
 the trigger's `_REGION`, `_REPOSITORY`, or `_SERVICE` substitutions if the
 Google Cloud resources use different names.
+
+The release also applies the studio's verified public address, phone, Instagram
+and map URL using `--update-env-vars`, preserving all other runtime settings and
+Secret Manager bindings. See [booking experience](booking-experience.md) for
+calendar and reminder setup and the remaining Meta activation requirements.
 
 SSH for Cloud Run services is currently a limited preview, not a dependable
 deployment channel. This production image is also deliberately distroless and

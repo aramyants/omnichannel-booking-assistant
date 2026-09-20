@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -205,6 +206,10 @@ type changeDraftDoc struct {
 }
 
 type conversationDoc struct {
+	ReminderOptIn          bool            `firestore:"reminder_opt_in"`
+	CatalogueCategory      string          `firestore:"catalogue_category,omitempty"`
+	CatalogueServiceID     string          `firestore:"catalogue_service_id,omitempty"`
+	CataloguePage          int             `firestore:"catalogue_page,omitempty"`
 	ID                     string          `firestore:"id"`
 	CustomerID             string          `firestore:"customer_id"`
 	Provider               string          `firestore:"provider"`
@@ -226,6 +231,8 @@ type conversationDoc struct {
 
 func toConversationDoc(conv conversation.Conversation) conversationDoc {
 	doc := conversationDoc{
+		ReminderOptIn:     conv.ReminderOptIn,
+		CatalogueCategory: conv.CatalogueCategory, CatalogueServiceID: conv.CatalogueServiceID, CataloguePage: conv.CataloguePage,
 		ID:                     conv.ID,
 		CustomerID:             conv.CustomerID,
 		Provider:               string(conv.Provider),
@@ -272,6 +279,8 @@ func toConversationDoc(conv conversation.Conversation) conversationDoc {
 
 func fromConversationDoc(doc conversationDoc) conversation.Conversation {
 	conv := conversation.Conversation{
+		ReminderOptIn:     doc.ReminderOptIn,
+		CatalogueCategory: doc.CatalogueCategory, CatalogueServiceID: doc.CatalogueServiceID, CataloguePage: doc.CataloguePage,
 		ID:                     doc.ID,
 		CustomerID:             doc.CustomerID,
 		Provider:               messaging.Provider(doc.Provider),
@@ -691,6 +700,25 @@ func (s *Store) SaveBooking(ctx context.Context, b booking.Booking) error {
 		return fmt.Errorf("firestore: record a booking: %w", err)
 	}
 	return nil
+}
+
+// FindBooking reads one appointment for a capability-authenticated calendar link.
+func (s *Store) FindBooking(ctx context.Context, reference string) (booking.Booking, error) {
+	if reference == "" || strings.Contains(reference, "/") {
+		return booking.Booking{}, booking.ErrNotFound
+	}
+	snapshot, err := s.client.Collection(collectionBookings).Doc(reference).Get(ctx)
+	if status.Code(err) == codes.NotFound {
+		return booking.Booking{}, booking.ErrNotFound
+	}
+	if err != nil {
+		return booking.Booking{}, err
+	}
+	var doc bookingDoc
+	if err := snapshot.DataTo(&doc); err != nil {
+		return booking.Booking{}, err
+	}
+	return booking.Booking{ID: doc.ID, ExternalID: doc.ExternalID, ManagementToken: doc.ManagementToken, CustomerID: doc.CustomerID, ServiceIDs: doc.ServiceIDs, StaffID: doc.StaffID, CustomerName: doc.CustomerName, ServiceNames: doc.ServiceNames, StaffName: doc.StaffName, StartsAt: doc.StartsAt, Duration: time.Duration(doc.DurationSecs) * time.Second, Status: booking.Status(doc.Status), CreatedAt: doc.CreatedAt}, nil
 }
 
 // ListBookings returns a customer's appointments, soonest first.

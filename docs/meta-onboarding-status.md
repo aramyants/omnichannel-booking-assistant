@@ -1,4 +1,20 @@
-# Meta setup status — 14 September 2026
+# Meta setup status
+
+## Runtime recheck — 20 September 2026
+
+Cloud Run is healthy at `d25bc15` before the booking-experience release.
+Messenger Page ID and token, Instagram account ID/token/signing secret, and
+WhatsApp credentials are now present in production. This supersedes the older
+"lack channel credentials" statement below, but does **not** prove current
+Meta review approval, webhook delivery, or end-to-end messaging access.
+
+WhatsApp still uses phone ID `1350823718109876`, Meta's test number, not the
+studio's production phone. No appointment reminder template names are configured.
+Cloud Tasks reminders are enabled with a 24-hour lead time, Firestore persistence,
+and OIDC authentication. New capabilities and activation limits are documented in
+[booking experience](booking-experience.md).
+
+## Historical observations — 14 September 2026
 
 This records dashboard observations and the current test-channel activation.
 Cloud Run is healthy on revision `omnichannel-booking-assistant-00007-8m7`

@@ -59,7 +59,7 @@ func (s *Service) Reconcile(ctx context.Context) (int, error) {
 	var scheduled int
 	var schedulingErrors []error
 	for _, r := range pending {
-		if r.Provider != messaging.ProviderTelegram || !r.ExpectedStartsAt.After(now) || !r.DueAt.After(now) {
+		if !s.SupportsReminder(r.Provider, r.Language) || !r.ExpectedStartsAt.After(now) || !r.DueAt.After(now) {
 			continue
 		}
 		if err := s.scheduleWake(ctx, r, now); err != nil {
@@ -85,6 +85,18 @@ type MessageRepository interface {
 type Sender interface {
 	Send(ctx context.Context, msg messaging.Outgoing) error
 }
+type TemplateSender interface {
+	SupportsReminder(string) bool
+	SendReminder(context.Context, messaging.Outgoing, string, booking.Booking, string) error
+}
+
+func (s *Service) SupportsReminder(provider messaging.Provider, lang string) bool {
+	if provider == messaging.ProviderTelegram {
+		return s.senders[provider] != nil
+	}
+	sender, ok := s.senders[provider].(TemplateSender)
+	return provider == messaging.ProviderWhatsApp && ok && sender.SupportsReminder(string(appointmentmessage.ParseLanguage(lang)))
+}
 
 // Task is one request for the reminder worker to wake up.
 type Task struct {
@@ -100,6 +112,12 @@ type Scheduler interface {
 
 // Deps are the collaborators a Service needs.
 type Deps struct {
+	Conversations interface {
+		FindByID(context.Context, string) (conversation.Conversation, error)
+	}
+	Reader interface {
+		ReadBooking(context.Context, booking.Booking) (booking.Booking, error)
+	}
 	Repository Repository
 	Bookings   BookingRepository
 	Messages   MessageRepository
@@ -114,6 +132,12 @@ type Deps struct {
 
 // Service plans and sends reminders.
 type Service struct {
+	conversations interface {
+		FindByID(context.Context, string) (conversation.Conversation, error)
+	}
+	reader interface {
+		ReadBooking(context.Context, booking.Booking) (booking.Booking, error)
+	}
 	repository Repository
 	bookings   BookingRepository
 	messages   MessageRepository
@@ -157,16 +181,18 @@ func NewService(deps Deps) (*Service, error) {
 	}
 
 	return &Service{
-		repository: deps.Repository,
-		bookings:   deps.Bookings,
-		messages:   deps.Messages,
-		senders:    senders,
-		scheduler:  deps.Scheduler,
-		leadTime:   deps.LeadTime,
-		location:   loc,
-		logger:     deps.Logger,
-		renderer:   deps.Renderer,
-		now:        now,
+		conversations: deps.Conversations,
+		reader:        deps.Reader,
+		repository:    deps.Repository,
+		bookings:      deps.Bookings,
+		messages:      deps.Messages,
+		senders:       senders,
+		scheduler:     deps.Scheduler,
+		leadTime:      deps.LeadTime,
+		location:      loc,
+		logger:        deps.Logger,
+		renderer:      deps.Renderer,
+		now:           now,
 	}, nil
 }
 
@@ -179,9 +205,9 @@ func (s *Service) Plan(
 	conv conversation.Conversation,
 	language string,
 ) error {
-	// Meta channels need channel-specific templates/consent or messaging-window
-	// checks. Until those exist, schedule reminders only on Telegram.
-	if conv.Provider != messaging.ProviderTelegram {
+	// WhatsApp requires an explicitly configured approved template and consent.
+	// Messenger/Instagram have no enabled out-of-window delivery path here.
+	if !s.SupportsReminder(conv.Provider, language) || (conv.Provider != messaging.ProviderTelegram && !conv.ReminderOptIn) {
 		return nil
 	}
 	dueAt := b.StartsAt.Add(-s.leadTime)
@@ -258,9 +284,22 @@ func (s *Service) Deliver(ctx context.Context, reminderID string) error {
 			}
 		}
 	}()
-	if claimed.Provider != messaging.ProviderTelegram {
+	if !s.SupportsReminder(claimed.Provider, claimed.Language) {
 		release = false
 		return s.finish(ctx, claimed, claimID, reminder.StatusSkipped, now)
+	}
+	if claimed.Provider != messaging.ProviderTelegram {
+		if s.conversations == nil {
+			return errors.New("reminder consent repository unavailable")
+		}
+		conv, err := s.conversations.FindByID(ctx, claimed.ConversationID)
+		if err != nil {
+			return err
+		}
+		if !conv.ReminderOptIn {
+			release = false
+			return s.finish(ctx, claimed, claimID, reminder.StatusSkipped, now)
+		}
 	}
 
 	b, current, err := s.currentBooking(ctx, claimed)
@@ -280,6 +319,7 @@ func (s *Service) Deliver(ctx context.Context, reminderID string) error {
 	text := s.renderer.Reminder(
 		appointmentmessage.ParseLanguage(claimed.Language),
 		appointmentmessage.Appointment{
+			CalendarURL:  s.renderer.CalendarURL(b, appointmentmessage.ParseLanguage(claimed.Language)),
 			CustomerName: b.CustomerName,
 			StartsAt:     b.StartsAt,
 			Service:      strings.Join(b.ServiceNames, ", "),
@@ -287,11 +327,17 @@ func (s *Service) Deliver(ctx context.Context, reminderID string) error {
 			Reference:    b.ExternalID,
 		},
 	)
-	if err := sender.Send(ctx, messaging.Outgoing{
+	outgoing := messaging.Outgoing{
 		Provider:         claimed.Provider,
 		ExternalThreadID: claimed.ExternalThreadID,
 		Text:             text,
-	}); err != nil {
+	}
+	if templated, ok := sender.(TemplateSender); ok && claimed.Provider == messaging.ProviderWhatsApp {
+		err = templated.SendReminder(ctx, outgoing, string(appointmentmessage.ParseLanguage(claimed.Language)), b, s.renderer.CalendarURL(b, appointmentmessage.ParseLanguage(claimed.Language)))
+	} else {
+		err = sender.Send(ctx, outgoing)
+	}
+	if err != nil {
 		return fmt.Errorf("deliver reminder: send: %w", err)
 	}
 
@@ -327,6 +373,36 @@ func (s *Service) currentBooking(
 	for _, b := range booked {
 		if b.ExternalID != r.BookingExternalID {
 			continue
+		}
+		if s.reader != nil && b.Status == booking.StatusConfirmed {
+			refreshed, err := s.reader.ReadBooking(ctx, b)
+			if errors.Is(err, booking.ErrNotFound) {
+				return b, false, nil
+			}
+			if err != nil {
+				return b, false, err
+			}
+			b = refreshed
+			if writer, ok := s.bookings.(interface {
+				SaveBooking(context.Context, booking.Booking) error
+			}); ok {
+				if err := writer.SaveBooking(ctx, b); err != nil {
+					return b, false, err
+				}
+			}
+			if b.Status == booking.StatusConfirmed && !b.StartsAt.Equal(r.ExpectedStartsAt) {
+				conv := conversation.Conversation{ID: r.ConversationID, CustomerID: r.CustomerID, Provider: r.Provider, ExternalThreadID: r.ExternalThreadID}
+				if s.conversations != nil {
+					current, err := s.conversations.FindByID(ctx, r.ConversationID)
+					if err != nil {
+						return b, false, err
+					}
+					conv = current
+				}
+				if err := s.Plan(ctx, b, conv, r.Language); err != nil {
+					return b, false, err
+				}
+			}
 		}
 		return b, b.Status == booking.StatusConfirmed &&
 			b.StartsAt.Equal(r.ExpectedStartsAt) && b.StartsAt.After(s.now()), nil

@@ -15,3 +15,17 @@ func TestInteractionMetadataSurvivesSerialization(t *testing.T) {
 		t.Fatalf("lost durable interaction metadata: %+v", got)
 	}
 }
+
+func TestCatalogueAndConsentSurviveSerialization(t *testing.T) {
+	conv := conversation.Conversation{ID: "conv", Provider: messaging.ProviderWhatsApp, CatalogueCategory: "Motion Sport", CatalogueServiceID: "123", CataloguePage: 2, ReminderOptIn: true, LastChoiceMessageID: "nonce"}
+	got := fromConversationDoc(toConversationDoc(conv))
+	if got.CatalogueCategory != conv.CatalogueCategory || got.CatalogueServiceID != conv.CatalogueServiceID || got.CataloguePage != 2 || !got.ReminderOptIn || got.LastChoiceMessageID != "nonce" {
+		t.Fatalf("lost menu/consent: %+v", got)
+	}
+	conv.ReminderOptIn = false
+	conv.CatalogueCategory, conv.CatalogueServiceID, conv.CataloguePage = "", "", 0
+	got = fromConversationDoc(toConversationDoc(conv))
+	if got.ReminderOptIn || got.CatalogueCategory != "" || got.CatalogueServiceID != "" || got.CataloguePage != 0 {
+		t.Fatal("cleared state was restored")
+	}
+}

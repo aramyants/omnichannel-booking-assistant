@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -192,6 +193,15 @@ type request struct {
 	repeatable bool
 }
 
+func (r request) logPath() string {
+	parts := strings.Split(strings.Trim(r.path, "/"), "/")
+	if (len(parts) == 4 && parts[0] == "book_record") || (len(parts) == 4 && parts[0] == "user" && parts[1] == "records") {
+		parts[len(parts)-1] = "[redacted]"
+		return "/" + strings.Join(parts, "/")
+	}
+	return r.path
+}
+
 // call sends req and decodes the response payload into a value of type T.
 //
 // It is a package function rather than a method because Go methods cannot take
@@ -204,7 +214,7 @@ func call[T any](ctx context.Context, c *Client, req request) (T, error) {
 	if req.body != nil {
 		encoded, err := json.Marshal(req.body)
 		if err != nil {
-			return zero, fmt.Errorf("altegio %s: encode request: %w", req.path, err)
+			return zero, fmt.Errorf("altegio %s: encode request: %w", req.logPath(), err)
 		}
 		body = encoded
 	}
@@ -219,14 +229,14 @@ func call[T any](ctx context.Context, c *Client, req request) (T, error) {
 		// Waiting here rather than sleeping keeps the call cancellable: a
 		// shutdown does not have to wait out a rate-limit delay.
 		if err := c.limiter.Wait(ctx); err != nil {
-			return zero, fmt.Errorf("altegio %s: %w", req.path, err)
+			return zero, fmt.Errorf("altegio %s: %w", req.logPath(), err)
 		}
 
 		payload, err := c.attempt(ctx, req, body)
 		if err == nil {
 			var decoded T
 			if err := json.Unmarshal(payload, &decoded); err != nil {
-				return zero, fmt.Errorf("altegio %s: decode response: %w", req.path, err)
+				return zero, fmt.Errorf("altegio %s: decode response: %w", req.logPath(), err)
 			}
 			return decoded, nil
 		}
@@ -238,10 +248,10 @@ func call[T any](ctx context.Context, c *Client, req request) (T, error) {
 
 		wait := backoff(attempt)
 		c.logger.WarnContext(ctx, "retrying an altegio request",
-			"path", req.path, "attempt", attempt, "wait", wait.String(), "error", err)
+			"path", req.logPath(), "attempt", attempt, "wait", wait.String(), "error", err)
 
 		if err := c.sleep(ctx, wait); err != nil {
-			return zero, fmt.Errorf("altegio %s: %w", req.path, err)
+			return zero, fmt.Errorf("altegio %s: %w", req.logPath(), err)
 		}
 	}
 
@@ -257,7 +267,7 @@ func (c *Client) attempt(ctx context.Context, req request, body []byte) (json.Ra
 
 	httpReq, err := http.NewRequestWithContext(ctx, req.method, c.baseURL+req.path, reader)
 	if err != nil {
-		return nil, fmt.Errorf("altegio %s: build request: %w", req.path, err)
+		return nil, fmt.Errorf("altegio %s: build request: %w", req.logPath(), err)
 	}
 
 	// Altegio refuses any request without this exact Accept header, answering
@@ -271,18 +281,22 @@ func (c *Client) attempt(ctx context.Context, req request, body []byte) (json.Ra
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		} // never log management hashes in URLs
 		// A transport failure on a request that cannot be repeated leaves the
 		// outcome genuinely unknown: the request may have been applied.
 		if !req.repeatable {
-			return nil, fmt.Errorf("altegio %s: %w: %w", req.path, booking.ErrOutcomeUnknown, err)
+			return nil, fmt.Errorf("altegio %s: %w: %w", req.logPath(), booking.ErrOutcomeUnknown, err)
 		}
-		return nil, fmt.Errorf("altegio %s: %w: %w", req.path, booking.ErrUnavailable, err)
+		return nil, fmt.Errorf("altegio %s: %w: %w", req.logPath(), booking.ErrUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		return nil, fmt.Errorf("altegio %s: %w: read response: %w", req.path, booking.ErrUnavailable, err)
+		return nil, fmt.Errorf("altegio %s: %w: read response: %w", req.logPath(), booking.ErrUnavailable, err)
 	}
 
 	// Successful DELETE endpoints legitimately return 204 with no envelope.
@@ -298,7 +312,7 @@ func (c *Client) attempt(ctx context.Context, req request, body []byte) (json.Ra
 		return nil, c.translate(req, resp.StatusCode, env.Meta, env.Errors)
 	}
 	if decodeErr != nil {
-		return nil, fmt.Errorf("altegio %s: decode response: %w", req.path, decodeErr)
+		return nil, fmt.Errorf("altegio %s: decode response: %w", req.logPath(), decodeErr)
 	}
 
 	return env.Data, nil
@@ -335,16 +349,16 @@ func (c *Client) translate(req request, status int, meta, fieldErrors json.RawMe
 	case status == http.StatusUnauthorized, status == http.StatusForbidden:
 		// Repeating this cannot help: the credentials are wrong or lack the
 		// permission, and both are deployment problems.
-		return fmt.Errorf("altegio %s: %w: credentials rejected: %s", req.path, booking.ErrRejected, message)
+		return fmt.Errorf("altegio %s: %w: credentials rejected: %s", req.logPath(), booking.ErrRejected, message)
 
 	case status == http.StatusNotFound:
-		return fmt.Errorf("altegio %s: %w: %s", req.path, booking.ErrNotFound, message)
+		return fmt.Errorf("altegio %s: %w: %s", req.logPath(), booking.ErrNotFound, message)
 
 	case status == http.StatusTooManyRequests:
-		return fmt.Errorf("altegio %s: %w: rate limited: %s", req.path, booking.ErrUnavailable, message)
+		return fmt.Errorf("altegio %s: %w: rate limited: %s", req.logPath(), booking.ErrUnavailable, message)
 
 	case status >= http.StatusInternalServerError:
-		return fmt.Errorf("altegio %s: %w: %s", req.path, booking.ErrUnavailable, message)
+		return fmt.Errorf("altegio %s: %w: %s", req.logPath(), booking.ErrUnavailable, message)
 
 	default:
 		// Altegio names the fields it objected to only when the request itself
@@ -354,11 +368,11 @@ func (c *Client) translate(req request, status int, meta, fieldErrors json.RawMe
 		// nothing of the kind happened.
 		if len(rejectedFields(fieldErrors)) > 0 {
 			return fmt.Errorf("altegio %s: %w: %w: %s",
-				req.path, booking.ErrRejected, errRequestInvalid, message)
+				req.logPath(), booking.ErrRejected, errRequestInvalid, message)
 		}
 
 		return fmt.Errorf("altegio %s: %w: %w: %s",
-			req.path, booking.ErrRejected, errRequestRejected, message)
+			req.logPath(), booking.ErrRejected, errRequestRejected, message)
 	}
 }
 

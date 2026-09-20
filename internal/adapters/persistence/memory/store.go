@@ -371,6 +371,20 @@ func (s *Store) SaveBooking(_ context.Context, b booking.Booking) error {
 	return nil
 }
 
+// FindBooking reads one appointment for a capability-authenticated calendar link.
+func (s *Store) FindBooking(_ context.Context, reference string) (booking.Booking, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, bookings := range s.bookings {
+		for _, b := range bookings {
+			if b.ExternalID == reference {
+				return b, nil
+			}
+		}
+	}
+	return booking.Booking{}, booking.ErrNotFound
+}
+
 // ListBookings returns a customer's appointments, soonest first.
 func (s *Store) ListBookings(_ context.Context, customerID string) ([]booking.Booking, error) {
 	s.mu.Lock()

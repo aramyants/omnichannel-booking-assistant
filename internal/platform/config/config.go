@@ -214,6 +214,8 @@ type Telegram struct {
 // WhatsApp holds the credentials for the WhatsApp Cloud API. The channel is
 // disabled, and its endpoint not served, when the access token is absent.
 type WhatsApp struct {
+	// Approved utility template names, with the six documented body parameters.
+	ReminderTemplates map[string]string
 	// AccessToken authorises sending. It belongs to the Meta app.
 	AccessToken string
 
@@ -369,11 +371,12 @@ func Load() (Config, error) {
 	errs = append(errs, cfg.Telegram.validate()...)
 
 	cfg.WhatsApp = WhatsApp{
-		AccessToken:   getenv("WHATSAPP_ACCESS_TOKEN", ""),
-		PhoneNumberID: getenv("WHATSAPP_PHONE_NUMBER_ID", ""),
-		AppSecret:     getenv("META_APP_SECRET", ""),
-		VerifyToken:   getenv("META_VERIFY_TOKEN", ""),
-		GraphVersion:  getenv("META_GRAPH_VERSION", ""),
+		ReminderTemplates: map[string]string{"en": getenv("WHATSAPP_REMINDER_TEMPLATE_EN", ""), "ru": getenv("WHATSAPP_REMINDER_TEMPLATE_RU", ""), "hy": getenv("WHATSAPP_REMINDER_TEMPLATE_HY", "")},
+		AccessToken:       getenv("WHATSAPP_ACCESS_TOKEN", ""),
+		PhoneNumberID:     getenv("WHATSAPP_PHONE_NUMBER_ID", ""),
+		AppSecret:         getenv("META_APP_SECRET", ""),
+		VerifyToken:       getenv("META_VERIFY_TOKEN", ""),
+		GraphVersion:      getenv("META_GRAPH_VERSION", ""),
 	}
 	errs = append(errs, cfg.WhatsApp.validate()...)
 	var directErrs []error

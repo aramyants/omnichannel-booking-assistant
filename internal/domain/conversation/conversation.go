@@ -101,6 +101,11 @@ type Conversation struct {
 	// assistant reply. They may outnumber a channel's buttons, and let a
 	// customer answer a scan-friendly list with just "2" on every channel.
 	PresentedChoices []string
+	// Catalogue navigation survives restarts and is separate from booking drafts.
+	CatalogueCategory  string
+	CatalogueServiceID string
+	CataloguePage      int
+	ReminderOptIn      bool
 }
 
 // ResolvePresentedChoice translates a bare one-based number into the option

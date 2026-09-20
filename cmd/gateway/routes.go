@@ -43,11 +43,15 @@ type gateway struct {
 	messenger http.Handler
 	instagram http.Handler
 	reminder  http.Handler
+	calendar  http.Handler
 }
 
 func (g *gateway) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET "+healthPath, handleHealth(g.version))
+	if g.calendar != nil {
+		mux.Handle("GET /calendar/{reference}", g.calendar)
+	}
 
 	if g.telegram != nil {
 		mux.Handle("POST "+TelegramWebhookPath, g.telegram)

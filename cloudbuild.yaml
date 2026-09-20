@@ -25,6 +25,7 @@ steps:
         fi
         go vet ./...
         go test ./... -race -count=1
+        go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
   - id: build
     name: gcr.io/cloud-builders/docker
@@ -53,7 +54,9 @@ steps:
       - --region=${_REGION}
       - --no-traffic
       - --tag=candidate-$SHORT_SHA
-      - --update-env-vars=BUILD_VERSION=$SHORT_SHA
+      # Public studio facts verified against motionconcept.rest; preserve every
+      # unrelated runtime variable and all Secret Manager bindings.
+      - "--update-env-vars=^|^BUILD_VERSION=$SHORT_SHA|BUSINESS_ADDRESS_EN=Myasnikyan 1/6, Yerevan|BUSINESS_ADDRESS_RU=Мясникян 1/6, Ереван|BUSINESS_ADDRESS_HY=Մյասնիկյան 1/6, Երևան|BUSINESS_PHONE=+37494768067|BUSINESS_INSTAGRAM_URL=https://www.instagram.com/e.motion.concept/|BUSINESS_MAP_URL=https://maps.app.goo.gl/g4wRcu26itphPVcv8"
       - --quiet
 
   - id: verify-candidate

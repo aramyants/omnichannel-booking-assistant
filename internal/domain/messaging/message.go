@@ -153,7 +153,8 @@ const maxChoices = 12
 
 // Outgoing is a message the assistant wants to deliver back to a customer.
 type Outgoing struct {
-	Provider Provider
+	ChoiceToken string
+	Provider    Provider
 
 	// ExternalThreadID is the conversation to deliver into, taken from the
 	// envelope being answered.

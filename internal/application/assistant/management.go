@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
@@ -209,11 +210,21 @@ func (t *toolset) confirmReschedule(ctx context.Context, s *session) (string, er
 	case err == nil:
 		s.conv.BookingChange = nil
 		s.offer()
-		if t.recordChangedBooking(ctx, moved, "rescheduled") && t.reminders != nil {
+		recorded := t.recordChangedBooking(ctx, moved, "rescheduled")
+		if recorded && t.reminders != nil {
 			if planErr := t.reminders.Plan(ctx, moved, *s.conv, string(s.language)); planErr != nil {
 				t.logger.ErrorContext(ctx, "rescheduled an appointment but could not plan its reminder",
 					"error", planErr, "external_id", moved.ExternalID)
 			}
+		}
+		lang := appointmentmessage.ParseLanguage(string(s.language))
+		link := ""
+		if recorded {
+			link = t.messages.CalendarURL(moved, lang)
+		}
+		s.finalReply = t.messages.Confirmation(lang, appointmentmessage.Appointment{CustomerName: moved.CustomerName, StartsAt: moved.StartsAt, Service: strings.Join(moved.ServiceNames, ", "), Specialist: moved.StaffName, Reference: moved.ExternalID, CalendarURL: link})
+		if recorded {
+			t.offerReminderConsent(s)
 		}
 		return encode(map[string]any{
 			"rescheduled": true,

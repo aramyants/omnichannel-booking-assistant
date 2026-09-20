@@ -89,6 +89,15 @@ func whatsAppEnvelope(
 		Content:    whatsAppContent(m),
 	}
 
+	if m.Interactive != nil {
+		payload := m.Interactive.ListReply.ID
+		if m.Interactive.Type == "button_reply" {
+			payload = m.Interactive.ButtonReply.ID
+		}
+		token, label := decodeChoice(payload)
+		envelope.ChoiceMessageID = token
+		envelope.Content = messaging.Content{Type: messaging.ContentTypeText, Text: label}
+	}
 	if err := envelope.Validate(); err != nil {
 		return messaging.Envelope{}, fmt.Errorf("%w: %w", ErrMalformedUpdate, err)
 	}
@@ -153,6 +162,27 @@ func (c *Client) SendWhatsApp(ctx context.Context, msg messaging.Outgoing) error
 	}
 	if c.phoneNumberID == "" {
 		return fmt.Errorf("whatsapp: no phone number id is configured")
+	}
+
+	if len(msg.Choices) > 0 {
+		chunks := textChunks(msg.Text, 1024)
+		for _, chunk := range chunks[:len(chunks)-1] {
+			if err := c.SendWhatsApp(ctx, messaging.Outgoing{Provider: msg.Provider, ExternalThreadID: msg.ExternalThreadID, Text: chunk}); err != nil {
+				return err
+			}
+		}
+		msg.Text = chunks[len(chunks)-1]
+		if payload := whatsAppInteractive(msg); payload != nil {
+			return c.post(ctx, c.phoneNumberID+"/messages", payload)
+		}
+	}
+	if chunks := textChunks(msg.Text, 4096); len(chunks) > 1 {
+		for _, chunk := range chunks {
+			if err := c.SendWhatsApp(ctx, messaging.Outgoing{Provider: msg.Provider, ExternalThreadID: msg.ExternalThreadID, Text: chunk}); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	payload := sendTextRequest{

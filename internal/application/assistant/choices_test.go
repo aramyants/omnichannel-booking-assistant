@@ -125,15 +125,15 @@ func TestOpeningTheChatIsAnsweredWithoutAModel(t *testing.T) {
 	}
 
 	// The customer's app is set to Armenian and they have written nothing else.
-	if want := svc.greeting(languageArmenian); sender.sent[0].Text != want {
-		t.Errorf("reply = %q, want %q", sender.sent[0].Text, want)
+	if !strings.Contains(sender.sent[0].Text, "1. Hair") {
+		t.Errorf("reply does not open live categories: %q", sender.sent[0].Text)
 	}
 	if !strings.Contains(sender.sent[0].Text, "Studio Nine") {
 		t.Errorf("reply = %q, want it to name the business", sender.sent[0].Text)
 	}
 
-	if got, want := len(sender.sent[0].Choices), len(menuChoices(languageArmenian)); got != want {
-		t.Errorf("offered %d choices, want the whole menu of %d", got, want)
+	if got, want := len(sender.sent[0].Choices), 3; got != want {
+		t.Errorf("offered %d choices, want category, appointments and person (%d)", got, want)
 	}
 }
 

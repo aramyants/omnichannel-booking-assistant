@@ -771,6 +771,9 @@ func (t *toolset) prepareBooking(ctx context.Context, s *session, call ai.ToolCa
 	if err != nil {
 		return "", err
 	}
+	if requiresCoordination(service) {
+		return "", errors.New("this treatment requires a colleague: four-hands needs two simultaneous therapists; extra time cannot be booked alone. Offer request_handoff. Do not substitute a standard service")
+	}
 	staff, err := t.findStaff(ctx, args.StaffID)
 	if err != nil {
 		return "", err
@@ -857,6 +860,18 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 	if draft.PreparedFromMessageID == s.incomingMessageID {
 		return "", errors.New("wait for the customer to confirm in a new message after seeing the summary")
 	}
+	// Also guard drafts persisted by an older release before coordination rules
+	// existed, and services whose live classification changed after preparation.
+	for _, serviceID := range draft.ServiceIDs {
+		service, err := t.findService(ctx, serviceID)
+		if err != nil {
+			return "", err
+		}
+		if requiresCoordination(service) {
+			s.conv.Draft = nil
+			return "", errors.New("this treatment requires staff coordination; offer request_handoff. Nothing has been booked")
+		}
+	}
 
 	request := draft.ToRequest(s.customer.ID)
 	request.Comment = bookingComment(s.conv.Provider, draft.CustomerName)
@@ -901,6 +916,12 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 		s.finalReply = t.messages.Confirmation(
 			appointmentmessage.ParseLanguage(string(s.language)),
 			appointmentmessage.Appointment{
+				CalendarURL: func() string {
+					if !recorded {
+						return ""
+					}
+					return t.messages.CalendarURL(created, appointmentmessage.ParseLanguage(string(s.language)))
+				}(),
 				CustomerName: created.CustomerName,
 				StartsAt:     created.StartsAt,
 				Service:      strings.Join(created.ServiceNames, ", "),
@@ -909,6 +930,9 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 			},
 		)
 
+		if recorded {
+			t.offerReminderConsent(s)
+		}
 		return encode(map[string]any{
 			"booked":     true,
 			"reference":  created.ExternalID,
@@ -1125,26 +1149,7 @@ func (t *toolset) findStaff(ctx context.Context, staffID string) (booking.Staff,
 // model that filled the field with something that is obviously not a number,
 // because the business will use it to reach the customer.
 func normalisePhone(raw string) (string, error) {
-	var b strings.Builder
-	for i, r := range strings.TrimSpace(raw) {
-		switch {
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == '+' && i == 0:
-			b.WriteRune(r)
-		case r == ' ' || r == '-' || r == '(' || r == ')':
-			// Separators people write are dropped rather than refused.
-		default:
-			return "", fmt.Errorf("%q is not a phone number; ask the customer for it", raw)
-		}
-	}
-
-	normalised := b.String()
-	digits := strings.TrimPrefix(normalised, "+")
-	if len(digits) < 7 || len(digits) > 15 {
-		return "", fmt.Errorf("%q is not a usable phone number; ask the customer to repeat it", raw)
-	}
-	return normalised, nil
+	return customer.NormalizePhone(raw)
 }
 
 // requestHandoff moves the conversation to a colleague.

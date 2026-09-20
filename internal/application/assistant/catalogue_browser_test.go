@@ -32,7 +32,7 @@ func TestBookActionOpensRealCategoriesWithoutWaitingForTheModel(t *testing.T) {
 	if len(sender.sent) != 1 {
 		t.Fatalf("sent %d messages, want one", len(sender.sent))
 	}
-	want := []string{"Face Motion", "Motion Sport", "Motion Relax"}
+	want := []string{"Face Motion", "Motion Sport", "Motion Relax", speak(languageArmenian).myAppointments, speak(languageArmenian).talkToAPerson}
 	if got := labelsOf(sender.sent[0].Choices); !slices.Equal(got, want) {
 		t.Fatalf("category buttons = %v, want %v", got, want)
 	}
@@ -48,7 +48,7 @@ func TestBookActionOpensRealCategoriesWithoutWaitingForTheModel(t *testing.T) {
 	}
 }
 
-func TestNumberOpensOnlyThatCategoryWithItsLocalizedDescriptions(t *testing.T) {
+func TestNumberOpensConciseCategoryAndBack(t *testing.T) {
 	sender := &fakeSender{}
 	model := &scriptedAI{}
 	svc, store := newAIService(t, model, describedCategoryCalendar(), sender)
@@ -66,10 +66,10 @@ func TestNumberOpensOnlyThatCategoryWithItsLocalizedDescriptions(t *testing.T) {
 		t.Fatalf("sent %d messages, want two", len(sender.sent))
 	}
 	reply := sender.sent[1]
-	if got, want := labelsOf(reply.Choices), []string{"Face motion", "Face Motion Guasha"}; !slices.Equal(got, want) {
+	if got, want := labelsOf(reply.Choices), []string{"Face motion", "Face Motion Guasha", navigationSpeak(languageArmenian).back}; !slices.Equal(got, want) {
 		t.Fatalf("service buttons = %v, want %v", got, want)
 	}
-	for _, wanted := range []string{"1. Face motion", "2. Face Motion Guasha", "60 րոպե", "29\u202f000–30\u202f000 AMD", "Դեմքի նուրբ խնամք"} {
+	for _, wanted := range []string{"1. Face motion", "2. Face Motion Guasha", "29\u202f000–30\u202f000 AMD"} {
 		if !strings.Contains(reply.Text, wanted) {
 			t.Errorf("service list %q does not contain %q", reply.Text, wanted)
 		}
@@ -81,12 +81,12 @@ func TestNumberOpensOnlyThatCategoryWithItsLocalizedDescriptions(t *testing.T) {
 	}
 
 	conv := openConversation(t, store)
-	if got, want := conv.PresentedChoices, []string{"Face motion", "Face Motion Guasha"}; !slices.Equal(got, want) {
+	if got, want := conv.PresentedChoices, []string{"Face motion", "Face Motion Guasha", navigationSpeak(languageArmenian).back}; !slices.Equal(got, want) {
 		t.Fatalf("current numbered choices = %v, want services %v", got, want)
 	}
 }
 
-func TestNumberedServiceIsCanonicalInputToTheAssistant(t *testing.T) {
+func TestNumberedServiceOpensLocalizedDetailsWithoutModel(t *testing.T) {
 	sender := &fakeSender{}
 	model := &scriptedAI{responses: []ai.Response{textResponse("Which specialist would you prefer?")}}
 	svc, _ := newAIService(t, model, describedCategoryCalendar(), sender)
@@ -96,12 +96,16 @@ func TestNumberedServiceIsCanonicalInputToTheAssistant(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if model.calls != 1 {
-		t.Fatalf("selecting the service called the model %d times, want one", model.calls)
+	if model.calls != 0 {
+		t.Fatalf("selecting the service called the model %d times, want zero", model.calls)
 	}
-	messages := model.requests[0].Messages
-	if len(messages) == 0 || messages[len(messages)-1].Text != "Face Motion Guasha" {
-		t.Fatalf("latest model input = %+v, want canonical selected service", messages)
+	reply := sender.sent[len(sender.sent)-1]
+	if !strings.Contains(reply.Text, "Face Motion Guasha") || !strings.Contains(reply.Text, "Դեմքի գուաշա մերսում") || strings.Contains(reply.Text, "Массаж лица") {
+		t.Fatalf("wrong details: %s", reply.Text)
+	}
+	n := navigationSpeak(languageArmenian)
+	if !slices.Equal(labelsOf(reply.Choices), []string{n.book, n.back, n.categories}) {
+		t.Fatalf("detail choices: %v", reply.Choices)
 	}
 }
 

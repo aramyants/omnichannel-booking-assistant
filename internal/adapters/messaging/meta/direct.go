@@ -49,11 +49,20 @@ func (c *DirectClient) Send(ctx context.Context, msg messaging.Outgoing) error {
 		return err
 	}
 	payload := directTextRequest{Recipient: party{ID: msg.ExternalThreadID}}
-	payload.Message.Text = msg.Text
 	if c.provider == messaging.ProviderMessenger {
 		payload.MessagingType = "RESPONSE"
 	}
-	return c.client.post(ctx, c.accountID+"/messages", payload)
+	chunks := textChunks(msg.Text, 1000)
+	for i, chunk := range chunks {
+		payload.Message.Text = chunk
+		if i == len(chunks)-1 {
+			payload.Message.QuickReplies = quickReplies(msg)
+		}
+		if err := c.client.post(ctx, c.accountID+"/messages", payload); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func NewMessengerHandler(webhook *Webhook, messages MessageHandler, logger *slog.Logger, pageID string) *Handler {
@@ -127,6 +136,11 @@ func parseDirect(body []byte, receivedAt time.Time, provider messaging.Provider,
 				ExternalUserID: event.Sender.ID, ExternalThreadID: event.Sender.ID,
 				SentAt: sentAt, ReceivedAt: receivedAt, Content: content,
 			}
+			if m.QuickReply != nil {
+				token, label := decodeChoice(m.QuickReply.Payload)
+				envelope.ChoiceMessageID = token
+				envelope.Content = messaging.Content{Type: messaging.ContentTypeText, Text: label}
+			}
 			if err := envelope.Validate(); err != nil {
 				return nil, fmt.Errorf("%w: %w", ErrMalformedUpdate, err)
 			}
@@ -140,6 +154,7 @@ type directTextRequest struct {
 	Recipient     party  `json:"recipient"`
 	MessagingType string `json:"messaging_type,omitempty"`
 	Message       struct {
-		Text string `json:"text"`
+		Text         string       `json:"text"`
+		QuickReplies []quickReply `json:"quick_replies,omitempty"`
 	} `json:"message"`
 }

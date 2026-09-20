@@ -73,7 +73,18 @@ type inboundMessage struct {
 	// Timestamp is unix seconds as a string, which is how Meta sends it.
 	Timestamp string `json:"timestamp"`
 
-	Type string `json:"type"`
+	Type        string `json:"type"`
+	Interactive *struct {
+		Type        string `json:"type"`
+		ButtonReply struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"button_reply"`
+		ListReply struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"list_reply"`
+	} `json:"interactive"`
 	Text struct {
 		Body string `json:"body"`
 	} `json:"text"`
@@ -109,7 +120,10 @@ type messagingEvent struct {
 	Timestamp int64 `json:"timestamp"`
 
 	Message *struct {
-		MID         string `json:"mid"`
+		MID        string `json:"mid"`
+		QuickReply *struct {
+			Payload string `json:"payload"`
+		} `json:"quick_reply"`
 		Text        string `json:"text"`
 		Attachments []struct {
 			Type    string `json:"type"`

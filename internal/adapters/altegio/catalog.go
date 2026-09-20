@@ -48,7 +48,7 @@ func (c *Client) ListServicesForStaff(ctx context.Context, staffID string) ([]bo
 		if dto.Active == 0 {
 			continue
 		}
-		services = append(services, booking.Service{
+		services = append(services, motionCatalogueCopy(booking.Service{
 			ID:          strconv.FormatInt(dto.ID, 10),
 			Name:        dto.Title,
 			Category:    categories[dto.CategoryID],
@@ -57,7 +57,7 @@ func (c *Client) ListServicesForStaff(ctx context.Context, staffID string) ([]bo
 			PriceMin:    dto.PriceMin,
 			PriceMax:    dto.PriceMax,
 			Currency:    c.currency,
-		})
+		}))
 	}
 	return services, nil
 }

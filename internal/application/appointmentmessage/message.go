@@ -7,6 +7,9 @@ package appointmentmessage
 import (
 	"strings"
 	"time"
+
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/calendar"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 )
 
 // Language is one of the languages for which the studio supplies fixed copy.
@@ -75,12 +78,19 @@ type Appointment struct {
 	Service      string
 	Specialist   string
 	Reference    string
+	CalendarURL  string
 }
 
 // Renderer formats appointment communication in the business timezone.
 type Renderer struct {
+	baseURL  string
 	business Business
 	location *time.Location
+}
+
+func (r Renderer) WithCalendar(baseURL string) Renderer { r.baseURL = baseURL; return r }
+func (r Renderer) CalendarURL(b booking.Booking, lang Language) string {
+	return calendar.Link(r.baseURL, b, string(lang))
 }
 
 // New returns a renderer. A nil location falls back to UTC rather than making
@@ -204,20 +214,30 @@ func (r Renderer) render(lang Language, appointment Appointment, reminder bool) 
 	}
 	when := appointment.StartsAt.In(location)
 	details := []string{
-		words.date + ": " + when.Format("02.01.2006"),
-		words.time + ": " + when.Format("15:04"),
+		"🗓 " + words.date + ": " + when.Format("02.01.2006"),
+		"🕒 " + words.time + ": " + when.Format("15:04") + " · " + location.String(),
 	}
 	if service := inline(appointment.Service); service != "" {
-		details = append(details, words.service+": "+service)
+		details = append(details, "🌿 "+words.service+": "+service)
 	}
 	if specialist := inline(appointment.Specialist); specialist != "" {
-		details = append(details, words.specialist+": "+specialist)
+		details = append(details, "👤 "+words.specialist+": "+specialist)
 	}
 	if reference := inline(appointment.Reference); reference != "" {
 		details = append(details, words.reference+": "+reference)
 	}
 
 	sections := []string{heading, strings.Join(details, "\n")}
+	if appointment.CalendarURL != "" {
+		label := "📅 Add to calendar"
+		if lang == Russian {
+			label = "📅 Добавить в календарь"
+		}
+		if lang == Armenian {
+			label = "📅 Ավելացնել օրացույցում"
+		}
+		sections = append(sections, label+"\n"+appointment.CalendarURL)
+	}
 	if address := r.business.Address.In(lang); address != "" {
 		sections = append(sections, "📍 "+address)
 	}
@@ -250,6 +270,17 @@ func (r Renderer) render(lang Language, appointment Appointment, reminder bool) 
 	if reminder {
 		closing = words.reminderClosing
 		namedClosing = words.reminderNamedClosing
+	}
+
+	if reminder {
+		warm := "🌿 A little time to slow down and focus on yourself. If your plans have changed, please let us know here."
+		if lang == Russian {
+			warm = "🌿 Немного времени для себя и спокойного отдыха. Если планы изменились, пожалуйста, напишите нам здесь."
+		}
+		if lang == Armenian {
+			warm = "🌿 Մի փոքր ժամանակ՝ ձեզ և հանգստի համար։ Եթե ձեր ծրագրերը փոխվել են, խնդրում ենք գրել մեզ այստեղ։"
+		}
+		sections = append(sections, warm)
 	}
 	if businessName := inline(r.business.Name); businessName != "" {
 		closing = replaceName(namedClosing, businessName)
