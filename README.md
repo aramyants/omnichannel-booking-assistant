@@ -215,8 +215,11 @@ return only that category's services and prices. Availability uses the selected
 service to filter eligible specialists, dates and times.
 
 For WhatsApp, Instagram and Messenger activation after verification, follow the
-[Meta connection checklist](docs/meta-setup.md). Meta replies are currently text,
-including replies to audio. Delayed reminders are currently Telegram only.
+[Meta connection checklist](docs/meta-setup.md). Messenger and Instagram use
+quick replies; WhatsApp uses reply buttons or a list, with numbered text as the
+fallback on every channel. Telegram reminders are enabled. WhatsApp reminders
+require explicit consent and a configured, approved template for the selected
+language; Messenger and Instagram proactive reminders remain disabled.
 
 ## Scheduling
 

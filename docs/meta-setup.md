@@ -111,26 +111,27 @@ A full booking test creates an actual appointment unless Altegio is a test accou
 
 ## What customers can do
 
-All channels share the booking, category filtering, cancellation, rescheduling
-and staff handover logic. Telegram also has inline buttons and typing feedback.
-Meta currently receives text/audio and sends text replies; it does not send
-Telegram keyboards. Audio is downloaded in memory and transcribed with the
-configured OpenAI key. The transcript becomes ordinary customer context; raw
-audio is not persisted and bot replies are always text. Files over 20 MiB and
-Telegram recordings reported longer than five minutes receive a resend/type
-prompt. Supported audio formats are checked before transcription.
+All channels share booking, guided category navigation, cancellation,
+rescheduling and staff handover logic. Telegram uses inline keyboards;
+Messenger and Instagram use quick replies; WhatsApp uses reply buttons or a
+list. Numbered text remains the fallback. Audio is downloaded in memory and
+transcribed with the configured OpenAI key. The transcript becomes ordinary
+customer context; raw audio is not persisted and bot replies are always text.
+Files over 20 MiB and Telegram recordings reported longer than five minutes
+receive a resend/type prompt. Supported audio formats are checked first.
 
-Delayed reminders are currently **Telegram only**. Meta reminders are skipped
-until channel-specific templates, consent and messaging-window handling are
-implemented. WhatsApp free-form replies are subject to its 24-hour customer
-service window; outside it an approved template is needed. Staff follow-ups also
-remain subject to their channel's messaging rules.
+Telegram reminders are enabled. WhatsApp reminders require explicit customer
+opt-in and an approved utility template configured for that exact language; the
+bot never falls back to a free-form message outside the customer service window.
+Messenger and Instagram proactive reminders are disabled. Staff follow-ups also
+remain subject to their channel's messaging rules. See
+[booking experience](booking-experience.md) for the six template parameters,
+calendar fallback and operational limits.
 [WhatsApp messaging policy](https://whatsappbusiness.com/policy/).
 
 ## Studio catalogue correction to review
 
-Read-only checks confirmed that Face Motion Guasha belongs to Garik, with a
-60-minute duration and 29,000 AMD price. The assistant now filters staff and
-availability by that service. Altegio also currently reports Face motion with
-Armando as 18,000 seconds (five hours); review that setting in Altegio. The bot
-uses the configured duration rather than guessing a replacement.
+The latest read-only catalogue check did not return Face Motion Gua Sha, so the
+bot does not advertise or book it. Add and activate it in Altegio before relying
+on the owner-provided 60-minute / 29,000 AMD description. The bot uses the live,
+staff-filtered duration rather than guessing a replacement.

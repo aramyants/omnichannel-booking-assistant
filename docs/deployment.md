@@ -188,12 +188,13 @@ The deployment stores `WHATSAPP_ACCESS_TOKEN`, `MESSENGER_ACCESS_TOKEN`,
 Manager. Their account IDs and `META_GRAPH_VERSION` are ordinary environment
 settings. Leave a channel's access token and account ID empty to disable it.
 
-Meta channels receive text/audio and reply with text; Telegram-specific inline
-buttons are not sent on Meta. Incoming audio uses `OPENAI_API_KEY` with
-`OPENAI_TRANSCRIPTION_MODEL` (default `gpt-4o-mini-transcribe`). Automated reminders
-are currently Telegram only; Meta reminders are skipped until channel-specific
-templates and messaging-window handling are implemented. Staff follow-ups remain
-subject to each channel's messaging window.
+Meta channels receive text/audio and send text with channel-native selections:
+quick replies on Messenger/Instagram and reply buttons or lists on WhatsApp.
+Incoming audio uses `OPENAI_API_KEY` with `OPENAI_TRANSCRIPTION_MODEL` (default
+`gpt-4o-mini-transcribe`). Telegram reminders are enabled. WhatsApp reminders
+are sent only after explicit opt-in and only through an approved, configured
+language template. Messenger/Instagram proactive reminders remain disabled.
+Staff follow-ups remain subject to each channel's messaging window.
 
 ## Operating the service
 
