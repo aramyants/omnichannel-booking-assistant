@@ -46,7 +46,7 @@ func (t *toolset) offerReminderConsent(s *session) {
 		return
 	}
 	enable, disable, question, _, _ := reminderLabels(s.language)
-	s.finalReply += "\n\n" + question + "\n1. " + enable + "\n2. " + disable
+	s.finalReply += "\n\n" + question
 	s.present(enable, disable)
 }
 

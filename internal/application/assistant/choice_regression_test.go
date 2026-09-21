@@ -83,6 +83,19 @@ func TestChoiceMustBeNamedAsAWholeLabel(t *testing.T) {
 	}
 }
 
+func TestNativeChoicesAreNotDuplicatedAsBareNumberedLines(t *testing.T) {
+	choices := []messaging.Choice{{Label: "Book a visit"}, {Label: "Services and prices"}}
+	text := "What would you like?\n\n1. Book a visit\n2. Services and prices\n\nTap a button or send the number."
+	got := withoutRedundantChoiceLines(text, choices)
+	if got != "What would you like?" {
+		t.Fatalf("cleaned text = %q", got)
+	}
+	informative := withoutRedundantChoiceLines("1. Motion Relax — 27,000 AMD", []messaging.Choice{{Label: "Motion Relax"}})
+	if informative != "1. Motion Relax — 27,000 AMD" {
+		t.Fatalf("informative catalogue line was removed: %q", informative)
+	}
+}
+
 func TestContactQuestionsSuppressOldChoicesInEveryCustomerLanguage(t *testing.T) {
 	for _, reply := range []string{
 		"13:30 is available. What is your phone number?",

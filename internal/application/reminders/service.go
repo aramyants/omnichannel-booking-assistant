@@ -316,22 +316,21 @@ func (s *Service) Deliver(ctx context.Context, reminderID string) error {
 		return fmt.Errorf("deliver reminder: no sender configured for %s", claimed.Provider)
 	}
 
-	text := s.renderer.Reminder(
-		appointmentmessage.ParseLanguage(claimed.Language),
-		appointmentmessage.Appointment{
-			CalendarURL:  s.renderer.CalendarURL(b, appointmentmessage.ParseLanguage(claimed.Language)),
-			CustomerName: b.CustomerName,
-			StartsAt:     b.StartsAt,
-			Service:      strings.Join(b.ServiceNames, ", "),
-			Specialist:   b.StaffName,
-			Reference:    b.ExternalID,
-		},
-	)
+	messageLanguage := appointmentmessage.ParseLanguage(claimed.Language)
+	appointment := appointmentmessage.Appointment{
+		CalendarURL:  s.renderer.CalendarURL(b, appointmentmessage.ParseLanguage(claimed.Language)),
+		CustomerName: b.CustomerName,
+		StartsAt:     b.StartsAt,
+		Service:      strings.Join(b.ServiceNames, ", "),
+		Specialist:   b.StaffName,
+		Reference:    b.ExternalID,
+	}
+	text := s.renderer.Reminder(messageLanguage, appointment)
 	outgoing := messaging.Outgoing{
 		Provider:         claimed.Provider,
 		ExternalThreadID: claimed.ExternalThreadID,
 		Text:             text,
-	}
+	}.WithLinks(s.renderer.Links(messageLanguage, appointment))
 	if templated, ok := sender.(TemplateSender); ok && claimed.Provider == messaging.ProviderWhatsApp {
 		err = templated.SendReminder(ctx, outgoing, string(appointmentmessage.ParseLanguage(claimed.Language)), b, s.renderer.CalendarURL(b, appointmentmessage.ParseLanguage(claimed.Language)))
 	} else {

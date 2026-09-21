@@ -147,6 +147,14 @@ type Choice struct {
 	Label string
 }
 
+// Link is a safe, tappable action that opens a customer-facing HTTPS page.
+// Its URL also remains in the message text as a fallback for clients that do
+// not render structured link buttons.
+type Link struct {
+	Label string
+	URL   string
+}
+
 // maxChoices bounds how many options one reply may carry. More than this is a
 // wall rather than a choice, and no phone shows it without scrolling.
 const maxChoices = 12
@@ -166,6 +174,7 @@ type Outgoing struct {
 	// them ignores the field: the reply text names the options either way, so
 	// a customer there simply types their answer instead of tapping it.
 	Choices []Choice
+	Links   []Link
 }
 
 // WithChoices returns a copy of o offering choices, dropping the empty and the
@@ -198,6 +207,25 @@ func (o Outgoing) WithChoices(choices []Choice) Outgoing {
 		return o
 	}
 	o.Choices = kept
+	return o
+}
+
+// WithLinks returns a copy of o with distinct, non-empty HTTPS actions.
+func (o Outgoing) WithLinks(links []Link) Outgoing {
+	kept := make([]Link, 0, len(links))
+	seen := make(map[string]bool, len(links))
+	for _, link := range links {
+		label, rawURL := strings.TrimSpace(link.Label), strings.TrimSpace(link.URL)
+		if label == "" || !strings.HasPrefix(strings.ToLower(rawURL), "https://") || seen[rawURL] {
+			continue
+		}
+		seen[rawURL] = true
+		kept = append(kept, Link{Label: label, URL: rawURL})
+		if len(kept) == 6 {
+			break
+		}
+	}
+	o.Links = kept
 	return o
 }
 

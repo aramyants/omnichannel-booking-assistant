@@ -176,7 +176,7 @@ func (c *Client) SendReturningID(ctx context.Context, msg messaging.Outgoing) (s
 	result, err := c.call(ctx, "sendMessage", sendMessageRequest{
 		ChatID:      msg.ExternalThreadID,
 		Text:        msg.Text,
-		ReplyMarkup: keyboardFor(msg.Choices),
+		ReplyMarkup: keyboardForMessage(msg),
 	})
 	if err != nil {
 		return "", err

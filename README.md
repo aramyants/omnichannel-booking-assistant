@@ -11,13 +11,11 @@ validates every request before it reaches Altegio.
 
 ## Status
 
-Telegram is live on Cloud Run with Firestore, OpenAI, Altegio and Cloud Tasks.
-The production logs confirm live Altegio bookings. The currently serving revision
-is `omnichannel-booking-assistant-00007-8m7` (build `ecd7520`). Newer fixes on
-`main` improve Telegram voice and buttons, conversation quality and reminder
-task recovery; deployment of that build is pending verification. See the
-[Meta status log](docs/meta-onboarding-status.md) for the activation blockers on
-the other channels.
+The service deploys atomically to Cloud Run through Cloud Build, with Firestore,
+OpenAI, Altegio and Cloud Tasks. Telegram, WhatsApp, Instagram and Messenger use
+the same guarded booking workflow; channel credentials and policy approval still
+determine which Meta channels can receive production traffic. See the
+[Meta status log](docs/meta-onboarding-status.md) for operational evidence.
 
 | Area | State |
 | --- | --- |
@@ -29,12 +27,12 @@ the other channels.
 | Booking from a conversation | done |
 | Durable Firestore storage | done |
 | Cancel and reschedule | done |
-| Delayed reminders | Cloud Tasks wired; scheduling fix and recovery awaiting production deployment |
-| Staff handover and replies from the staff chat | done |
+| Delayed reminders | Cloud Tasks wired; 24-hour Telegram delivery, WhatsApp opt-in templates and restart recovery |
+| Staff handover | notification-only Telegram feed; staff reply in the native inbox, then use a one-shot return-to-assistant action |
 | Buttons, and fixed phrases in Armenian, Russian and English | done |
 | WhatsApp | transport implemented; deliberately paused while the studio phone account review is unresolved |
 | WhatsApp coexistence: a reply sent from the Business app takes the conversation over | done |
-| Instagram, Messenger | text and incoming audio implemented; credentials and Meta activation required |
+| Instagram, Messenger | text, audio, native choices, typing feedback, native visit links and handoff to the native inbox implemented |
 | Viber | not started |
 
 ## Design
@@ -216,8 +214,10 @@ service to filter eligible specialists, dates and times.
 
 For WhatsApp, Instagram and Messenger activation after verification, follow the
 [Meta connection checklist](docs/meta-setup.md). Messenger and Instagram use
-quick replies; WhatsApp uses reply buttons or a list, with numbered text as the
-fallback on every channel. Telegram reminders are enabled. WhatsApp reminders
+quick replies; WhatsApp uses reply buttons or a list. Native action labels are
+not repeated as a numbered block in the message; informative service lists may
+still be numbered so a customer can type a position. Telegram reminders are
+enabled. WhatsApp reminders
 require explicit consent and a configured, approved template for the selected
 language; Messenger and Instagram proactive reminders remain disabled.
 

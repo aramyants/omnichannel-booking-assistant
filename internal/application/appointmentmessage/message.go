@@ -10,6 +10,7 @@ import (
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/calendar"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 )
 
 // Language is one of the languages for which the studio supplies fixed copy.
@@ -66,6 +67,7 @@ type Business struct {
 	Amenities    LocalizedText
 	InstagramURL string
 	MapURL       string
+	YandexMapURL string
 	ParkingURL   string
 }
 
@@ -114,6 +116,40 @@ func (r Renderer) Reminder(lang Language, appointment Appointment) string {
 	return r.render(lang, appointment, true)
 }
 
+// Links returns the same visit actions that are printed in a confirmation,
+// ordered by what a customer is most likely to need immediately. Channel
+// adapters may turn the first actions into native URL buttons.
+func (r Renderer) Links(lang Language, appointment Appointment) []messaging.Link {
+	calendar := "Add to calendar"
+	switch lang {
+	case Russian:
+		calendar = "Добавить в календарь"
+	case Armenian:
+		calendar = "Ավելացնել օրացույցում"
+	}
+	links := make([]messaging.Link, 0, 5)
+	if appointment.CalendarURL != "" {
+		links = append(links, messaging.Link{Label: calendar, URL: appointment.CalendarURL})
+	}
+	words := translations[lang]
+	if words.googleMap == "" {
+		words = translations[English]
+	}
+	if r.business.YandexMapURL != "" {
+		links = append(links, messaging.Link{Label: words.yandexMap, URL: r.business.YandexMapURL})
+	}
+	if r.business.MapURL != "" {
+		links = append(links, messaging.Link{Label: words.googleMap, URL: r.business.MapURL})
+	}
+	if r.business.InstagramURL != "" {
+		links = append(links, messaging.Link{Label: words.instagram, URL: r.business.InstagramURL})
+	}
+	if r.business.ParkingURL != "" {
+		links = append(links, messaging.Link{Label: words.parking, URL: r.business.ParkingURL})
+	}
+	return links
+}
+
 type labels struct {
 	confirmation             string
 	confirmationNamed        string
@@ -126,7 +162,8 @@ type labels struct {
 	preparation              string
 	amenities                string
 	instagram                string
-	mapLink                  string
+	googleMap                string
+	yandexMap                string
 	parking                  string
 	confirmationClosing      string
 	confirmationNamedClosing string
@@ -147,7 +184,8 @@ var translations = map[Language]labels{
 		preparation:              "Before your visit:",
 		amenities:                "At the studio:",
 		instagram:                "Instagram",
-		mapLink:                  "Map",
+		googleMap:                "Google Maps",
+		yandexMap:                "Yandex Maps",
 		parking:                  "Parking",
 		confirmationClosing:      "We look forward to seeing you!",
 		confirmationNamedClosing: "We look forward to seeing you at %s!",
@@ -166,7 +204,8 @@ var translations = map[Language]labels{
 		preparation:              "Այցից առաջ՝",
 		amenities:                "Ստուդիայում՝",
 		instagram:                "Instagram",
-		mapLink:                  "Քարտեզ",
+		googleMap:                "Google Maps",
+		yandexMap:                "Yandex Maps",
 		parking:                  "Կայանատեղի",
 		confirmationClosing:      "Սիրով սպասում ենք Ձեր այցին։",
 		confirmationNamedClosing: "Սիրով սպասում ենք Ձեր այցին՝ %s-ում։",
@@ -185,7 +224,8 @@ var translations = map[Language]labels{
 		preparation:              "Перед визитом:",
 		amenities:                "В студии:",
 		instagram:                "Instagram",
-		mapLink:                  "Карта",
+		googleMap:                "Google Maps",
+		yandexMap:                "Яндекс Карты",
 		parking:                  "Парковка",
 		confirmationClosing:      "Будем ждать вас!",
 		confirmationNamedClosing: "Ждём вас в %s!",
@@ -256,7 +296,10 @@ func (r Renderer) render(lang Language, appointment Appointment, reminder bool) 
 		links = append(links, words.instagram+": "+link)
 	}
 	if link := inline(r.business.MapURL); link != "" {
-		links = append(links, words.mapLink+": "+link)
+		links = append(links, words.googleMap+": "+link)
+	}
+	if link := inline(r.business.YandexMapURL); link != "" {
+		links = append(links, words.yandexMap+": "+link)
 	}
 	if link := inline(r.business.ParkingURL); link != "" {
 		links = append(links, words.parking+": "+link)

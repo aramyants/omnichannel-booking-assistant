@@ -203,3 +203,21 @@ func (c *Client) SendWhatsApp(ctx context.Context, msg messaging.Outgoing) error
 func (c *Client) Send(ctx context.Context, msg messaging.Outgoing) error {
 	return c.SendWhatsApp(ctx, msg)
 }
+
+// BeginFeedback marks the inbound WhatsApp message read and shows the native
+// typing indicator in the same Cloud API operation.
+func (c *Client) BeginFeedback(ctx context.Context, msg messaging.Envelope) error {
+	if c.phoneNumberID == "" || msg.ExternalMessageID == "" {
+		return nil
+	}
+	return c.post(ctx, c.phoneNumberID+"/messages", map[string]any{
+		"messaging_product": "whatsapp",
+		"status":            "read",
+		"message_id":        msg.ExternalMessageID,
+		"typing_indicator":  map[string]string{"type": "text"},
+	})
+}
+
+// WhatsApp ends the typing state when the reply is sent (or after its own
+// timeout), so there is no separate stop operation.
+func (c *Client) EndFeedback(context.Context, messaging.Envelope) error { return nil }

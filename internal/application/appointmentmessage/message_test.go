@@ -18,6 +18,7 @@ func TestConfirmationIsLocalizedAndShowsOnlyConfiguredFacts(t *testing.T) {
 		Phone:        "+374 94 768067",
 		InstagramURL: "https://www.instagram.com/e.motion.concept/",
 		MapURL:       "https://maps.example/studio",
+		YandexMapURL: "https://yandex.example/studio",
 	}, location)
 	appointment := Appointment{
 		CustomerName: "  Garik\nGrigoryan ",
@@ -38,7 +39,8 @@ func TestConfirmationIsLocalizedAndShowsOnlyConfiguredFacts(t *testing.T) {
 		"📍 Мясникян 1/6, Ереван",
 		"☎️ +374 94 768067",
 		"Instagram: https://www.instagram.com/e.motion.concept/",
-		"Карта: https://maps.example/studio",
+		"Google Maps: https://maps.example/studio",
+		"Яндекс Карты: https://yandex.example/studio",
 		"Ждём вас в E-Motion Concept Studio!",
 	} {
 		if !strings.Contains(got, want) {
@@ -48,6 +50,23 @@ func TestConfirmationIsLocalizedAndShowsOnlyConfiguredFacts(t *testing.T) {
 	for _, absent := range []string{"Перед визитом:", "В студии:", "Парковка:"} {
 		if strings.Contains(got, absent) {
 			t.Errorf("unconfigured section %q appeared:\n%s", absent, got)
+		}
+	}
+}
+
+func TestVisitLinksPrioritizeCalendarAndBothMaps(t *testing.T) {
+	renderer := New(Business{
+		InstagramURL: "https://instagram.example/studio",
+		MapURL:       "https://google.example/studio",
+		YandexMapURL: "https://yandex.example/studio",
+	}, time.UTC)
+	links := renderer.Links(Russian, Appointment{CalendarURL: "https://booking.example/calendar/1"})
+	if len(links) != 4 {
+		t.Fatalf("links = %+v", links)
+	}
+	for i, want := range []string{"Добавить в календарь", "Яндекс Карты", "Google Maps", "Instagram"} {
+		if links[i].Label != want {
+			t.Errorf("link %d label = %q, want %q", i, links[i].Label, want)
 		}
 	}
 }

@@ -20,6 +20,15 @@ type externalReplyHandler interface {
 	RecordExternalReply(context.Context, messaging.ExternalReply) error
 }
 
+type feedbackSender interface {
+	BeginFeedback(context.Context, messaging.Envelope) error
+	EndFeedback(context.Context, messaging.Envelope) error
+}
+
+type profileResolver interface {
+	ResolveProfile(context.Context, messaging.Envelope) (messaging.Sender, error)
+}
+
 // Handler serves the webhook endpoint for one Meta channel.
 //
 // It answers both halves of the contract: the GET that completes subscription,
@@ -31,6 +40,22 @@ type Handler struct {
 	parse                func(body []byte, receivedAt time.Time) ([]messaging.Envelope, error)
 	parseExternalReplies func([]byte, time.Time) ([]messaging.ExternalReply, error)
 	now                  func() time.Time
+	feedback             feedbackSender
+	profiles             profileResolver
+}
+
+// WithProfiles fills the provider-visible display name and handle before the
+// customer record is opened, avoiding questions for information already
+// available from Messenger or Instagram.
+func (h *Handler) WithProfiles(profiles profileResolver) *Handler {
+	h.profiles = profiles
+	return h
+}
+
+// WithFeedback enables native read/typing feedback for this webhook.
+func (h *Handler) WithFeedback(feedback feedbackSender) *Handler {
+	h.feedback = feedback
+	return h
 }
 
 // NewWhatsAppHandler returns the handler for the WhatsApp webhook endpoint.
@@ -135,7 +160,20 @@ func (h *Handler) serveDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, envelope := range envelopes {
-		if err := h.messages.Handle(ctx, envelope); err != nil {
+		if h.profiles != nil {
+			profileCtx, cancel := context.WithTimeout(ctx, feedbackTimeout)
+			profile, profileErr := h.profiles.ResolveProfile(profileCtx, envelope)
+			cancel()
+			if profileErr != nil {
+				h.logger.DebugContext(ctx, "could not read a meta customer profile", "error", profileErr, "provider", envelope.Provider)
+			} else {
+				envelope.Sender = profile
+			}
+		}
+		h.beginFeedback(ctx, envelope)
+		err := h.messages.Handle(ctx, envelope)
+		h.endFeedback(ctx, envelope)
+		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				h.logger.WarnContext(ctx, "abandoned a meta message mid-flight",
 					"dedupe_key", envelope.DedupeKey())
@@ -149,4 +187,28 @@ func (h *Handler) serveDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+const feedbackTimeout = 4 * time.Second
+
+func (h *Handler) beginFeedback(ctx context.Context, envelope messaging.Envelope) {
+	if h.feedback == nil {
+		return
+	}
+	feedbackCtx, cancel := context.WithTimeout(ctx, feedbackTimeout)
+	defer cancel()
+	if err := h.feedback.BeginFeedback(feedbackCtx, envelope); err != nil {
+		h.logger.DebugContext(ctx, "could not start meta typing feedback", "error", err, "provider", envelope.Provider)
+	}
+}
+
+func (h *Handler) endFeedback(ctx context.Context, envelope messaging.Envelope) {
+	if h.feedback == nil {
+		return
+	}
+	feedbackCtx, cancel := context.WithTimeout(ctx, feedbackTimeout)
+	defer cancel()
+	if err := h.feedback.EndFeedback(feedbackCtx, envelope); err != nil {
+		h.logger.DebugContext(ctx, "could not stop meta typing feedback", "error", err, "provider", envelope.Provider)
+	}
 }

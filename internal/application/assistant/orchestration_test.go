@@ -249,6 +249,36 @@ func TestModelReplyIsSentToTheCustomer(t *testing.T) {
 	}
 }
 
+func TestKnownChannelContactIsAvailableWithoutAskingAgain(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		provider messaging.Provider
+		userID   string
+		text     string
+	}{
+		{name: "WhatsApp sender id", provider: messaging.ProviderWhatsApp, userID: "37494768067", text: "I want an appointment next week"},
+		{name: "standalone phone message", provider: messaging.ProviderTelegram, userID: "219847362", text: "+374 94 768067"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sender := &fakeSender{}
+			model := &scriptedAI{responses: []ai.Response{textResponse("How can I help?")}}
+			svc, _ := newAIService(t, model, defaultScheduling(), sender)
+			svc.senders[tc.provider] = sender
+			msg := incomingText("contact", tc.text)
+			msg.Provider = tc.provider
+			msg.ExternalUserID, msg.ExternalThreadID = tc.userID, tc.userID
+			msg.Sender.DisplayName = "Anna Petrosyan"
+			if err := svc.Handle(t.Context(), msg); err != nil {
+				t.Fatal(err)
+			}
+			instructions := model.requests[0].Instructions
+			if !strings.Contains(instructions, "known booking name is Anna Petrosyan") || !strings.Contains(instructions, "known booking phone is +37494768067") {
+				t.Fatalf("known contact missing from instructions:\n%s", instructions)
+			}
+		})
+	}
+}
+
 // TestToolResultsAreFedBackToTheModel is the loop that makes the whole thing
 // work: the model asks, this code runs the tool, the answer goes back.
 func TestToolResultsAreFedBackToTheModel(t *testing.T) {

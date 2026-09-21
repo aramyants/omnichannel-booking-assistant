@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -125,8 +126,8 @@ func TestOpeningTheChatIsAnsweredWithoutAModel(t *testing.T) {
 	}
 
 	// The customer's app is set to Armenian and they have written nothing else.
-	if !strings.Contains(sender.sent[0].Text, "1. Hair") {
-		t.Errorf("reply does not open live categories: %q", sender.sent[0].Text)
+	if got := labelsOf(sender.sent[0].Choices); !slices.Contains(got, "Hair") {
+		t.Errorf("reply does not open live categories: text=%q choices=%v", sender.sent[0].Text, got)
 	}
 	if !strings.Contains(sender.sent[0].Text, "Studio Nine") {
 		t.Errorf("reply = %q, want it to name the business", sender.sent[0].Text)
@@ -137,15 +138,15 @@ func TestOpeningTheChatIsAnsweredWithoutAModel(t *testing.T) {
 	}
 }
 
-func TestGreetingsAreReadableNumberedMenusInEveryLanguage(t *testing.T) {
+func TestGreetingsUseNativeChoicesWithoutRepeatingTheirLabels(t *testing.T) {
 	for _, lang := range languages {
 		text := fmt.Sprintf(speak(lang).welcome, "Studio Nine")
 		if !strings.Contains(text, "\n\n") {
 			t.Errorf("%s greeting has no paragraph spacing: %q", lang, text)
 		}
 		for position := 1; position <= len(menuChoices(lang)); position++ {
-			if marker := fmt.Sprintf("%d. ", position); !strings.Contains(text, marker) {
-				t.Errorf("%s greeting does not contain option %q: %q", lang, marker, text)
+			if marker := fmt.Sprintf("%d. ", position); strings.Contains(text, marker) {
+				t.Errorf("%s greeting repeats a native choice as %q: %q", lang, marker, text)
 			}
 		}
 	}

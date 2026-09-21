@@ -159,6 +159,35 @@ func TestConfirmingBooksTheAppointment(t *testing.T) {
 	}
 }
 
+func TestShortTransliteratedYesConfirmsPreparedBookingWithoutAnotherModelGuess(t *testing.T) {
+	sender := &fakeSender{}
+	scheduling := defaultScheduling()
+	model := &scriptedAI{responses: []ai.Response{
+		prepareCall("prepare"),
+		textResponse("Haircut with Mariam at 10:00. Shall I book it?"),
+	}}
+	svc, _ := newAIService(t, model, scheduling, sender)
+
+	if err := svc.Handle(t.Context(), incoming("proposal")); err != nil {
+		t.Fatal(err)
+	}
+	confirmation := incoming("confirmation")
+	confirmation.Content.Text = "Ayo"
+	if err := svc.Handle(t.Context(), confirmation); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(scheduling.created) != 1 {
+		t.Fatalf("created %d appointments, want one", len(scheduling.created))
+	}
+	if model.calls != 2 {
+		t.Fatalf("model called %d times; explicit confirmation should be handled in code", model.calls)
+	}
+	if got := sender.sent[len(sender.sent)-1].Text; !strings.Contains(got, "998877") {
+		t.Fatalf("confirmation missing booking reference: %s", got)
+	}
+}
+
 // TestBookingWorksWhenTheServiceHasNoDuration is the bug that broke every
 // booking on a live account.
 //

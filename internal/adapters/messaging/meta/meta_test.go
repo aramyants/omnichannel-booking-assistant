@@ -307,6 +307,32 @@ func TestSendWhatsApp(t *testing.T) {
 	}
 }
 
+func TestWhatsAppFeedbackMarksReadAndShowsTyping(t *testing.T) {
+	var sent map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&sent); err != nil {
+			t.Error(err)
+		}
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer srv.Close()
+	client, err := NewClient("token", "phone-id", WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := messaging.Envelope{ExternalMessageID: "wamid.1"}
+	if err := client.BeginFeedback(t.Context(), envelope); err != nil {
+		t.Fatal(err)
+	}
+	if sent["status"] != "read" || sent["message_id"] != "wamid.1" {
+		t.Fatalf("feedback payload = %+v", sent)
+	}
+	typing := sent["typing_indicator"].(map[string]any)
+	if typing["type"] != "text" {
+		t.Fatalf("typing payload = %+v", typing)
+	}
+}
+
 // TestOutsideTheServiceWindowIsItsOwnFailure: WhatsApp refuses a free-form
 // message more than 24 hours after the customer last wrote. Retrying cannot
 // help, so it must not look like a transient fault.

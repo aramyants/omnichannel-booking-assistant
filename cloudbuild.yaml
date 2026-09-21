@@ -56,7 +56,7 @@ steps:
       - --tag=candidate-$SHORT_SHA
       # Public studio facts verified against motionconcept.rest; preserve every
       # unrelated runtime variable and all Secret Manager bindings.
-      - "--update-env-vars=^|^BUILD_VERSION=$SHORT_SHA|BUSINESS_ADDRESS_EN=Myasnikyan 1/6, Yerevan|BUSINESS_ADDRESS_RU=Мясникян 1/6, Ереван|BUSINESS_ADDRESS_HY=Մյասնիկյան 1/6, Երևան|BUSINESS_PHONE=+37494768067|BUSINESS_INSTAGRAM_URL=https://www.instagram.com/e.motion.concept/|BUSINESS_MAP_URL=https://maps.app.goo.gl/g4wRcu26itphPVcv8"
+      - "--update-env-vars=^|^BUILD_VERSION=$SHORT_SHA|BUSINESS_ADDRESS_EN=Myasnikyan 1/6, Yerevan|BUSINESS_ADDRESS_RU=Мясникян 1/6, Ереван|BUSINESS_ADDRESS_HY=Մյասնիկյան 1/6, Երևան|BUSINESS_PHONE=+37494768067|BUSINESS_INSTAGRAM_URL=https://www.instagram.com/e.motion.concept/|BUSINESS_MAP_URL=https://maps.app.goo.gl/g4wRcu26itphPVcv8|BUSINESS_YANDEX_MAP_URL=https://yandex.com/maps/?text=E-Motion%20Concept%20Studio%2C%20Myasnikyan%201%2F6%2C%20Yerevan%2C%20Armenia"
       - --quiet
 
   - id: verify-candidate

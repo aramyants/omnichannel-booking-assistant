@@ -36,10 +36,13 @@ func TestBookActionOpensRealCategoriesWithoutWaitingForTheModel(t *testing.T) {
 	if got := labelsOf(sender.sent[0].Choices); !slices.Equal(got, want) {
 		t.Fatalf("category buttons = %v, want %v", got, want)
 	}
-	for _, part := range []string{"1. Face Motion", "2. Motion Sport", "3. Motion Relax", "\n\n"} {
-		if !strings.Contains(sender.sent[0].Text, part) {
-			t.Errorf("catalogue %q does not contain %q", sender.sent[0].Text, part)
+	for _, duplicate := range []string{"1. Face Motion", "2. Motion Sport", "3. Motion Relax"} {
+		if strings.Contains(sender.sent[0].Text, duplicate) {
+			t.Errorf("native category button is redundantly repeated in text: %q", sender.sent[0].Text)
 		}
+	}
+	if strings.TrimSpace(sender.sent[0].Text) == "" {
+		t.Fatal("catalogue has no heading")
 	}
 
 	conv := openConversation(t, store)

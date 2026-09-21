@@ -66,6 +66,17 @@ func TestDirectChannelsIgnoreEchoesReceiptsAndOtherAccounts(t *testing.T) {
 	}
 }
 
+func TestDirectReactionBecomesNonConfirmingConversationContext(t *testing.T) {
+	event := `{"sender":{"id":"customer-1"},"recipient":{"id":"business-1"},"timestamp":1788868800000,"reaction":{"mid":"message-previous","action":"react","reaction":"love","emoji":"❤"}}`
+	got, err := parseDirect(directUpdate("instagram", "business-1", event), receivedAt, messaging.ProviderInstagram, "business-1")
+	if err != nil || len(got) != 1 {
+		t.Fatalf("reaction = %+v, err = %v", got, err)
+	}
+	if !strings.Contains(got[0].Content.Text, "feedback only") || !strings.Contains(got[0].Content.Text, "not confirmation") {
+		t.Fatalf("unsafe reaction context: %q", got[0].Content.Text)
+	}
+}
+
 func TestDirectChannelsSendCorrectPayloadAndHost(t *testing.T) {
 	for _, provider := range []messaging.Provider{messaging.ProviderInstagram, messaging.ProviderMessenger} {
 		t.Run(string(provider), func(t *testing.T) {
@@ -112,6 +123,86 @@ func TestDirectChannelsSendCorrectPayloadAndHost(t *testing.T) {
 				t.Fatalf("host = %s", production.client.baseURL)
 			}
 		})
+	}
+}
+
+func TestDirectConfirmationUsesNativeWebButtonsAndTypingFeedback(t *testing.T) {
+	var payloads []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		payloads = append(payloads, payload)
+		_, _ = w.Write([]byte(`{"message_id":"sent"}`))
+	}))
+	defer srv.Close()
+
+	client, err := newDirectClient("token", "business-1", messaging.ProviderInstagram, WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := messaging.Outgoing{Provider: messaging.ProviderInstagram, ExternalThreadID: "customer-1", Text: "Your appointment is confirmed."}.WithLinks([]messaging.Link{
+		{Label: "Add to calendar", URL: "https://example.com/calendar"},
+		{Label: "Yandex Maps", URL: "https://example.com/yandex"},
+		{Label: "Google Maps", URL: "https://example.com/google"},
+		{Label: "Instagram", URL: "https://example.com/instagram"},
+	})
+	if err := client.Send(t.Context(), msg); err != nil {
+		t.Fatal(err)
+	}
+	envelope := messaging.Envelope{ExternalThreadID: "customer-1"}
+	if err := client.BeginFeedback(t.Context(), envelope); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.EndFeedback(t.Context(), envelope); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(payloads) != 3 {
+		t.Fatalf("payload count = %d, want confirmation + typing on/off", len(payloads))
+	}
+	message := payloads[0]["message"].(map[string]any)
+	attachment := message["attachment"].(map[string]any)
+	template := attachment["payload"].(map[string]any)
+	buttons := template["buttons"].([]any)
+	if template["template_type"] != "button" || len(buttons) != 3 {
+		t.Fatalf("button template = %+v", template)
+	}
+	if buttons[0].(map[string]any)["url"] != "https://example.com/calendar" || buttons[1].(map[string]any)["url"] != "https://example.com/yandex" {
+		t.Fatalf("priority actions = %+v", buttons)
+	}
+	if payloads[1]["sender_action"] != "typing_on" || payloads[2]["sender_action"] != "typing_off" {
+		t.Fatalf("typing actions = %+v", payloads[1:])
+	}
+}
+
+func TestDirectProfileLookupSuppliesKnownNameAndCachesIt(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/v22.0/customer-1" || r.Header.Get("Authorization") != "Bearer token" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if !strings.Contains(r.URL.Query().Get("fields"), "first_name") {
+			t.Fatalf("fields = %q", r.URL.Query().Get("fields"))
+		}
+		_, _ = w.Write([]byte(`{"first_name":"Anna","last_name":"Petrosyan","locale":"hy_AM"}`))
+	}))
+	defer srv.Close()
+	client, err := newDirectClient("token", "business-1", messaging.ProviderMessenger, WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := messaging.Envelope{ExternalUserID: "customer-1"}
+	for i := 0; i < 2; i++ {
+		profile, err := client.ResolveProfile(t.Context(), envelope)
+		if err != nil || profile.DisplayName != "Anna Petrosyan" || profile.Language != "hy-AM" {
+			t.Fatalf("profile = %+v, err = %v", profile, err)
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("profile requested %d times, want cached after the first", requests)
 	}
 }
 

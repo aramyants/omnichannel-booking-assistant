@@ -21,13 +21,9 @@ const staffTranscriptLines = 6
 const staffMessageLimit = 3500
 
 // StaffNotifier posts handover notices into a Telegram chat the business
-// watches.
-//
-// A group chat is the right shape for this: everyone on shift sees it, whoever
-// is free picks it up, and the history is a record of what was asked for.
-// StaffThreads remembers which conversation each staff-chat notification is
-// about, so a colleague replying to one is understood without anybody copying
-// an identifier around.
+// watches. The group is deliberately a notification stream, not a second
+// customer inbox: staff use the channel link in each notice to answer from the
+// native business inbox where the full conversation and customer identity live.
 type StaffThreads interface {
 	LinkStaffThread(ctx context.Context, staffMessageID, conversationID string) error
 	ConversationForStaffThread(ctx context.Context, staffMessageID string) (string, error)
@@ -54,29 +50,18 @@ func NewStaffNotifier(client *Client, chatID string, threads StaffThreads) (*Sta
 
 // NotifyHandoff tells the staff chat that a customer needs a person.
 func (n *StaffNotifier) NotifyHandoff(ctx context.Context, notice assistant.HandoffNotice) error {
-	text, buttons := formatHandoff(notice), handoffButtons(notice.ConversationID)
+	text := formatHandoff(notice)
+	buttons := handoffButtons(notice.ConversationID)
 
-	messageID, err := n.client.sendWithMarkup(ctx, n.chat(), text, buttons)
+	_, err := n.client.sendWithMarkup(ctx, n.chat(), text, buttons)
 	if migrated := MigratedChatID(err); migrated != "" {
 		// The group was upgraded to a supergroup while this process ran. The
 		// notice is the urgent part, so it follows the group to its new id
 		// rather than being lost until somebody edits the configuration.
 		n.moveTo(migrated)
-		messageID, err = n.client.sendWithMarkup(ctx, migrated, text, buttons)
+		_, err = n.client.sendWithMarkup(ctx, migrated, text, buttons)
 	}
-	if err != nil {
-		return err
-	}
-
-	// Without this link a colleague can read the notification but replying to
-	// it does nothing. Failing to record it must not fail the notification,
-	// which has already reached the staff chat and is the urgent part.
-	if n.threads != nil && messageID != "" {
-		if linkErr := n.threads.LinkStaffThread(ctx, messageID, notice.ConversationID); linkErr != nil {
-			return fmt.Errorf("announced the handover but could not make it repliable: %w", linkErr)
-		}
-	}
-	return nil
+	return err
 }
 
 func (n *StaffNotifier) chat() string {
@@ -140,39 +125,25 @@ func formatHandoff(notice assistant.HandoffNotice) string {
 		text = text[:staffMessageLimit] + "\n[truncated]\n"
 	}
 
-	// The assistant stays quiet until somebody replies or the timeout passes,
-	// so the colleague needs to know the clock is running.
-	//
-	// Only the reply is explained in words. The two things a colleague does
-	// without writing anything are buttons underneath instead, because an
-	// instruction that has to be typed correctly, on a phone, in a busy group
-	// chat, is an instruction that gets typed onto the wrong message.
-	text += "\nThe assistant has stopped replying to this customer." +
-		"\nReply to this message and the customer receives it, signed with your name."
+	text += "\nThe assistant has paused for this customer." +
+		"\nOpen the channel link above and reply in the native business inbox." +
+		"\nThis group is notifications only; replies here are not sent to customers." +
+		"\nWhen the conversation is finished, use the button below to return it to the assistant."
 
 	return text
 }
 
-// handoffButtons are the two things a colleague does to a notification.
-//
-// The conversation travels in the callback data rather than being inferred from
-// what the press was a reply to, so a button works wherever it is tapped and
-// whatever else has been posted in the chat since.
+// handoffButtons keeps one one-shot lifecycle action. Staff answer in the
+// native inbox; when finished they return the conversation to automation. The
+// handler removes this keyboard immediately after it is pressed.
 func handoffButtons(conversationID string) *inlineKeyboardMarkup {
 	if conversationID == "" {
 		return nil
 	}
-
-	return &inlineKeyboardMarkup{Keyboard: [][]inlineKeyboardButton{{
-		{
-			Text:         "I am taking this one",
-			CallbackData: staffActionData(string(assistant.CommandTake), conversationID),
-		},
-		{
-			Text:         "Back to the assistant",
-			CallbackData: staffActionData(string(assistant.CommandResume), conversationID),
-		},
-	}}}
+	return &inlineKeyboardMarkup{Keyboard: [][]inlineKeyboardButton{{{
+		Text:         "Done — return to assistant",
+		CallbackData: staffActionData(string(assistant.CommandResume), conversationID),
+	}}}}
 }
 
 // Meta Business Suite inboxes. The Page and Instagram account are the ones the
@@ -210,7 +181,7 @@ func writeChannel(b *strings.Builder, notice assistant.HandoffNotice) {
 		// common case.
 		switch {
 		case notice.Handle != "":
-			fmt.Fprintf(b, "Telegram: @%s\n", strings.TrimPrefix(notice.Handle, "@"))
+			fmt.Fprintf(b, "Open the chat: https://t.me/%s\n", strings.TrimPrefix(notice.Handle, "@"))
 		case notice.ExternalUserID != "":
 			fmt.Fprintf(b, "Open the chat: tg://user?id=%s\n", notice.ExternalUserID)
 		default:

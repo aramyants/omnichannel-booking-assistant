@@ -91,6 +91,22 @@ func WithStaffDesk(desk StaffDesk, threads StaffThreads, client *Client, chatID 
 	}
 }
 
+// WithStaffCommands enables the one-shot "return to assistant" action without
+// turning the notification group into a relay inbox. Ordinary group messages
+// remain ignored; staff answer customers in each platform's native inbox.
+func WithStaffCommands(desk StaffDesk, client *Client, chatID string) HandlerOption {
+	return func(h *Handler) {
+		h.desk = desk
+		h.staffReplies = func(ctx context.Context, text string) error {
+			return client.Send(ctx, messaging.Outgoing{
+				Provider:         messaging.ProviderTelegram,
+				ExternalThreadID: chatID,
+				Text:             text,
+			})
+		}
+	}
+}
+
 // WithButtons lets the handler act on the inline keyboards it sends.
 //
 // Without it the buttons are still drawn and still deliver a press, but the
@@ -289,7 +305,9 @@ func (h *Handler) runStaffCommand(ctx context.Context, staff StaffMessage, conve
 func (h *Handler) handleCallback(ctx context.Context, callback Callback) bool {
 	if action, ok := parseStaffAction(callback.Data); ok {
 		h.acknowledge(ctx, callback.QueryID, "")
-		h.handleStaffAction(ctx, callback, action)
+		if h.handleStaffAction(ctx, callback, action) {
+			h.clearKeyboard(ctx, callback.ChatID, callback.MessageID)
+		}
 		return true
 	}
 
@@ -339,10 +357,10 @@ func (h *Handler) handleCallback(ctx context.Context, callback Callback) bool {
 //
 // Nothing here fails the delivery: as with anything else said in a staff group,
 // having Telegram redeliver it forever would help nobody.
-func (h *Handler) handleStaffAction(ctx context.Context, callback Callback, action staffAction) {
+func (h *Handler) handleStaffAction(ctx context.Context, callback Callback, action staffAction) bool {
 	if h.desk == nil {
 		h.logger.WarnContext(ctx, "ignored a staff button: no desk is configured")
-		return
+		return false
 	}
 
 	// The buttons carry a conversation and change who answers it, so a press
@@ -350,7 +368,11 @@ func (h *Handler) handleStaffAction(ctx context.Context, callback Callback, acti
 	if h.staffChatID == "" || callback.ChatID != h.staffChatID {
 		h.logger.WarnContext(ctx, "refused a staff button pressed outside the staff chat",
 			"chat_id", callback.ChatID)
-		return
+		return false
+	}
+	if assistant.StaffCommand(action.Command) != assistant.CommandResume {
+		h.logger.InfoContext(ctx, "ignored a retired staff action", "command", action.Command)
+		return true
 	}
 
 	answer, err := h.desk.RunStaffCommand(ctx,
@@ -359,12 +381,11 @@ func (h *Handler) handleStaffAction(ctx context.Context, callback Callback, acti
 		h.logger.ErrorContext(ctx, "could not apply a staff button",
 			"error", err, "command", action.Command, "conversation_id", action.ConversationID)
 		h.tellStaff(ctx, "That did not work: "+err.Error())
-		return
+		return false
 	}
 
-	// The keyboard stays. The two buttons are a switch rather than a question:
-	// whoever took a conversation hands it back with the other one later.
 	h.tellStaff(ctx, answer)
+	return true
 }
 
 // acknowledge answers a button press. Failure is logged and nothing else: the

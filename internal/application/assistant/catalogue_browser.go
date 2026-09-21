@@ -65,7 +65,7 @@ func catalogueSpeak(lang language) cataloguePhrases {
 // present replaces every earlier lookup option with one coherent numbered
 // list. Buttons and typed numbers therefore describe the same current prompt.
 func (s *session) present(labels ...string) {
-	s.offering = offerWhatToolsSaid
+	s.offering = offerNavigation
 	s.candidates = choicesOf(labels...)
 	s.choices = choicesOf(labels...)
 }
@@ -77,6 +77,9 @@ func (s *session) present(labels ...string) {
 func (s *session) presentedChoices(replyText string) []string {
 	if s.offering == offerMenu {
 		return labelsOfChoices(menuChoices(s.language))
+	}
+	if s.offering == offerNavigation {
+		return labelsOfChoices(s.choices)
 	}
 	return numberedCandidates(replyText, s.candidates)
 }

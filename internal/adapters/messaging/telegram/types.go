@@ -122,9 +122,10 @@ type inlineKeyboardMarkup struct {
 
 type inlineKeyboardButton struct {
 	Text string `json:"text"`
+	URL  string `json:"url,omitempty"`
 
 	// CallbackData is what Telegram sends back when the button is pressed.
-	CallbackData string `json:"callback_data"`
+	CallbackData string `json:"callback_data,omitempty"`
 }
 
 // answerCallbackQueryRequest acknowledges a button press.

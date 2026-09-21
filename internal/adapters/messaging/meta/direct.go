@@ -3,8 +3,12 @@ package meta
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
@@ -17,6 +21,7 @@ type DirectClient struct {
 	client    *Client
 	provider  messaging.Provider
 	accountID string
+	profiles  sync.Map
 }
 
 func NewMessengerClient(accessToken, pageID string, opts ...Option) (*DirectClient, error) {
@@ -48,12 +53,37 @@ func (c *DirectClient) Send(ctx context.Context, msg messaging.Outgoing) error {
 	if err := msg.Validate(); err != nil {
 		return err
 	}
-	payload := directTextRequest{Recipient: party{ID: msg.ExternalThreadID}}
+	messageType := ""
 	if c.provider == messaging.ProviderMessenger {
-		payload.MessagingType = "RESPONSE"
+		messageType = "RESPONSE"
 	}
-	chunks := textChunks(msg.Text, 1000)
+	limit := 1000
+	if len(msg.Links) > 0 {
+		// Meta's button template keeps URLs tappable in Instagram and Messenger;
+		// its text field is smaller than a plain message.
+		limit = 640
+	}
+	chunks := textChunks(msg.Text, limit)
 	for i, chunk := range chunks {
+		if i == len(chunks)-1 && len(msg.Links) > 0 {
+			payload := directButtonRequest{Recipient: party{ID: msg.ExternalThreadID}, MessagingType: messageType}
+			payload.Message.Attachment.Type = "template"
+			payload.Message.Attachment.Payload.TemplateType = "button"
+			payload.Message.Attachment.Payload.Text = chunk
+			for _, link := range msg.Links {
+				payload.Message.Attachment.Payload.Buttons = append(payload.Message.Attachment.Payload.Buttons, directWebButton{
+					Type: "web_url", URL: link.URL, Title: shortened(link.Label, 20),
+				})
+				if len(payload.Message.Attachment.Payload.Buttons) == 3 {
+					break
+				}
+			}
+			if err := c.client.post(ctx, c.accountID+"/messages", payload); err != nil {
+				return err
+			}
+			continue
+		}
+		payload := directTextRequest{Recipient: party{ID: msg.ExternalThreadID}, MessagingType: messageType}
 		payload.Message.Text = chunk
 		if i == len(chunks)-1 {
 			payload.Message.QuickReplies = quickReplies(msg)
@@ -63,6 +93,60 @@ func (c *DirectClient) Send(ctx context.Context, msg messaging.Outgoing) error {
 		}
 	}
 	return nil
+}
+
+// BeginFeedback displays Meta's native typing state while the assistant is
+// working. It is best effort at the handler boundary and never decides whether
+// the customer message itself is acknowledged.
+func (c *DirectClient) BeginFeedback(ctx context.Context, msg messaging.Envelope) error {
+	return c.sendAction(ctx, msg.ExternalThreadID, "typing_on")
+}
+
+func (c *DirectClient) EndFeedback(ctx context.Context, msg messaging.Envelope) error {
+	return c.sendAction(ctx, msg.ExternalThreadID, "typing_off")
+}
+
+// ResolveProfile retrieves the name and handle Meta exposes for the person who
+// has opened this conversation. It is cached per instance and fails open: a
+// missing permission must never stop the message itself from being answered.
+func (c *DirectClient) ResolveProfile(ctx context.Context, msg messaging.Envelope) (messaging.Sender, error) {
+	if cached, ok := c.profiles.Load(msg.ExternalUserID); ok {
+		return cached.(messaging.Sender), nil
+	}
+	fields := "name,username"
+	if c.provider == messaging.ProviderMessenger {
+		fields = "first_name,last_name,locale"
+	}
+	var profile struct {
+		Name      string `json:"name"`
+		Username  string `json:"username"`
+		FirstName string `json:"first_name"`
+		LastName  string `json:"last_name"`
+		Locale    string `json:"locale"`
+	}
+	if err := c.client.get(ctx, url.PathEscape(msg.ExternalUserID), url.Values{"fields": []string{fields}}, &profile); err != nil {
+		if errors.Is(err, ErrRejected) {
+			c.profiles.Store(msg.ExternalUserID, messaging.Sender{})
+		}
+		return messaging.Sender{}, err
+	}
+	name := strings.TrimSpace(profile.Name)
+	if name == "" {
+		name = strings.TrimSpace(strings.Join([]string{profile.FirstName, profile.LastName}, " "))
+	}
+	if name == "" {
+		name = strings.TrimSpace(profile.Username)
+	}
+	sender := messaging.Sender{DisplayName: name, Username: strings.TrimPrefix(strings.TrimSpace(profile.Username), "@"), Language: strings.ReplaceAll(profile.Locale, "_", "-")}
+	if sender.DisplayName != "" || sender.Username != "" || sender.Language != "" {
+		c.profiles.Store(msg.ExternalUserID, sender)
+	}
+	return sender, nil
+}
+
+func (c *DirectClient) sendAction(ctx context.Context, threadID, action string) error {
+	payload := directActionRequest{Recipient: party{ID: threadID}, SenderAction: action}
+	return c.client.post(ctx, c.accountID+"/messages", payload)
 }
 
 func NewMessengerHandler(webhook *Webhook, messages MessageHandler, logger *slog.Logger, pageID string) *Handler {
@@ -103,6 +187,33 @@ func parseDirect(body []byte, receivedAt time.Time, provider messaging.Provider,
 		}
 		for _, event := range entry.Messaging {
 			m := event.Message
+			if m == nil && event.Reaction != nil && event.Sender.ID != accountID && event.Recipient.ID == accountID {
+				reaction := strings.TrimSpace(event.Reaction.Emoji)
+				if reaction == "" {
+					reaction = strings.TrimSpace(event.Reaction.Reaction)
+				}
+				text := "[The customer reacted " + reaction + " to a previous message. This is feedback only, not confirmation of a booking or change.]"
+				if strings.EqualFold(event.Reaction.Action, "unreact") || strings.EqualFold(event.Reaction.Action, "remove") {
+					text = "[The customer removed a reaction from a previous message. This is feedback only, not confirmation of a booking or change.]"
+				}
+				sentAt := receivedAt
+				if event.Timestamp > 0 {
+					sentAt = time.UnixMilli(event.Timestamp).UTC()
+				}
+				envelope := messaging.Envelope{
+					Provider: provider, ExternalMessageID: fmt.Sprintf("reaction:%s:%d:%s", event.Reaction.MID, event.Timestamp, event.Reaction.Action),
+					ExternalUserID: event.Sender.ID, ExternalThreadID: event.Sender.ID,
+					SentAt: sentAt, ReceivedAt: receivedAt, Content: messaging.Content{Type: messaging.ContentTypeText, Text: text},
+				}
+				if event.Reaction.MID == "" || event.Reaction.Action == "" {
+					return nil, fmt.Errorf("%w: reaction is missing its message or action", ErrMalformedUpdate)
+				}
+				if err := envelope.Validate(); err != nil {
+					return nil, fmt.Errorf("%w: %w", ErrMalformedUpdate, err)
+				}
+				envelopes = append(envelopes, envelope)
+				continue
+			}
 			if m == nil || m.IsEcho || m.IsDeleted || event.Sender.ID == accountID || event.Recipient.ID != accountID {
 				continue
 			}
@@ -156,5 +267,31 @@ type directTextRequest struct {
 	Message       struct {
 		Text         string       `json:"text"`
 		QuickReplies []quickReply `json:"quick_replies,omitempty"`
+	} `json:"message"`
+}
+
+type directActionRequest struct {
+	Recipient    party  `json:"recipient"`
+	SenderAction string `json:"sender_action"`
+}
+
+type directWebButton struct {
+	Type  string `json:"type"`
+	URL   string `json:"url"`
+	Title string `json:"title"`
+}
+
+type directButtonRequest struct {
+	Recipient     party  `json:"recipient"`
+	MessagingType string `json:"messaging_type,omitempty"`
+	Message       struct {
+		Attachment struct {
+			Type    string `json:"type"`
+			Payload struct {
+				TemplateType string            `json:"template_type"`
+				Text         string            `json:"text"`
+				Buttons      []directWebButton `json:"buttons"`
+			} `json:"payload"`
+		} `json:"attachment"`
 	} `json:"message"`
 }

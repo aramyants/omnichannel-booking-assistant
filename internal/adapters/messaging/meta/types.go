@@ -137,6 +137,13 @@ type messagingEvent struct {
 		IsEcho    bool `json:"is_echo"`
 		IsDeleted bool `json:"is_deleted"`
 	} `json:"message"`
+
+	Reaction *struct {
+		MID      string `json:"mid"`
+		Action   string `json:"action"`
+		Reaction string `json:"reaction"`
+		Emoji    string `json:"emoji"`
+	} `json:"reaction"`
 }
 
 type party struct {

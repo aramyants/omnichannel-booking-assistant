@@ -129,20 +129,24 @@ func run() error {
 		whatsappClient = client
 		senders[messaging.ProviderWhatsApp] = client
 	}
+	var messengerClient *meta.DirectClient
 	if cfg.Messenger.Enabled() {
 		client, err := meta.NewMessengerClient(cfg.Messenger.AccessToken, cfg.Messenger.AccountID,
 			meta.WithGraphVersion(cfg.Messenger.GraphVersion))
 		if err != nil {
 			return err
 		}
+		messengerClient = client
 		senders[messaging.ProviderMessenger] = client
 	}
+	var instagramClient *meta.DirectClient
 	if cfg.Instagram.Enabled() {
 		client, err := meta.NewInstagramClient(cfg.Instagram.AccessToken, cfg.Instagram.AccountID,
 			meta.WithGraphVersion(cfg.Instagram.GraphVersion))
 		if err != nil {
 			return err
 		}
+		instagramClient = client
 		senders[messaging.ProviderInstagram] = client
 	}
 
@@ -261,9 +265,7 @@ func run() error {
 			assistantService,
 			logger,
 			telegram.WithStaffChat(cfg.Telegram.StaffChatID),
-			// Turns the staff chat from a noticeboard into a desk: replying to
-			// a notification reaches the customer it names.
-			telegram.WithStaffDesk(assistantService, store, telegramClient, cfg.Telegram.StaffChatID),
+			telegram.WithStaffCommands(assistantService, telegramClient, cfg.Telegram.StaffChatID),
 			// Lets a pressed button be acknowledged and an answered question
 			// stop being answerable.
 			telegram.WithButtons(telegramClient),
@@ -275,21 +277,21 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		gw.whatsapp = meta.NewWhatsAppHandler(webhook, assistantService, logger, cfg.WhatsApp.PhoneNumberID)
+		gw.whatsapp = meta.NewWhatsAppHandler(webhook, assistantService, logger, cfg.WhatsApp.PhoneNumberID).WithFeedback(whatsappClient)
 	}
 	if cfg.Messenger.Enabled() {
 		webhook, err := meta.NewWebhook(cfg.Messenger.AppSecret, cfg.Messenger.VerifyToken)
 		if err != nil {
 			return err
 		}
-		gw.messenger = meta.NewMessengerHandler(webhook, assistantService, logger, cfg.Messenger.AccountID)
+		gw.messenger = meta.NewMessengerHandler(webhook, assistantService, logger, cfg.Messenger.AccountID).WithFeedback(messengerClient).WithProfiles(messengerClient)
 	}
 	if cfg.Instagram.Enabled() {
 		webhook, err := meta.NewWebhook(cfg.Instagram.AppSecret, cfg.Instagram.VerifyToken)
 		if err != nil {
 			return err
 		}
-		gw.instagram = meta.NewInstagramHandler(webhook, assistantService, logger, cfg.Instagram.AccountID)
+		gw.instagram = meta.NewInstagramHandler(webhook, assistantService, logger, cfg.Instagram.AccountID).WithFeedback(instagramClient).WithProfiles(instagramClient)
 	}
 
 	srv, err := httpserver.New(ctx, cfg.Addr(), gw.routes(), logger, cfg.ShutdownTimeout)
@@ -555,6 +557,7 @@ func newAppointmentMessages(cfg config.Config) appointmentmessage.Renderer {
 		Amenities:    localized(cfg.BusinessProfile.Amenities),
 		InstagramURL: cfg.BusinessProfile.InstagramURL,
 		MapURL:       cfg.BusinessProfile.MapURL,
+		YandexMapURL: cfg.BusinessProfile.YandexMapURL,
 		ParkingURL:   cfg.BusinessProfile.ParkingURL,
 	}, cfg.Altegio.Location).WithCalendar(cfg.PublicBaseURL)
 }

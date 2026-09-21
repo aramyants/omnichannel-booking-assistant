@@ -89,6 +89,7 @@ type BusinessProfile struct {
 	Amenities    LocalizedText
 	InstagramURL string
 	MapURL       string
+	YandexMapURL string
 	ParkingURL   string
 }
 
@@ -414,11 +415,13 @@ func Load() (Config, error) {
 		},
 		InstagramURL: getenv("BUSINESS_INSTAGRAM_URL", ""),
 		MapURL:       getenv("BUSINESS_MAP_URL", ""),
+		YandexMapURL: getenv("BUSINESS_YANDEX_MAP_URL", ""),
 		ParkingURL:   getenv("BUSINESS_PARKING_URL", ""),
 	}
 	for _, setting := range []struct{ name, value string }{
 		{"BUSINESS_INSTAGRAM_URL", cfg.BusinessProfile.InstagramURL},
 		{"BUSINESS_MAP_URL", cfg.BusinessProfile.MapURL},
+		{"BUSINESS_YANDEX_MAP_URL", cfg.BusinessProfile.YandexMapURL},
 		{"BUSINESS_PARKING_URL", cfg.BusinessProfile.ParkingURL},
 	} {
 		if setting.value != "" {

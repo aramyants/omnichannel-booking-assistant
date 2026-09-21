@@ -179,9 +179,9 @@ func TestButtonPressAsksForRedeliveryWhenProcessingFails(t *testing.T) {
 	}
 }
 
-// TestStaffButtonHandsTheConversationBack is the fix for a colleague having to
-// reply to exactly the right notification and then type an instruction into it.
-// The conversation travels in the button, so the press works wherever it lands.
+// TestStaffButtonHandsTheConversationBack verifies the notification's one-shot
+// lifecycle action. The conversation travels in the button, so the press works
+// wherever it lands and the keyboard disappears immediately afterwards.
 func TestStaffButtonHandsTheConversationBack(t *testing.T) {
 	messages := &recordingHandler{}
 	desk := &fakeDesk{}
@@ -211,10 +211,27 @@ func TestStaffButtonHandsTheConversationBack(t *testing.T) {
 		t.Errorf("the staff chat was told %d things, want 1", len(*said))
 	}
 
-	// The two staff buttons are a switch rather than a question: whoever takes
-	// a conversation hands it back with the other one later.
+	if len(buttons.cleared) != 1 {
+		t.Errorf("cleared %d staff keyboards, want the return action removed", len(buttons.cleared))
+	}
+}
+
+func TestStaffReturnActionRemainsAvailableWhenResumeFails(t *testing.T) {
+	messages := &recordingHandler{}
+	desk := &fakeDesk{err: errors.New("firestore unavailable")}
+	buttons := &fakeButtons{}
+
+	handler, said := staffHandler(messages, desk, buttons)
+	rec := post(t, handler, "s3cret-token", fixture(t, "staff_button_press.json"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
 	if len(buttons.cleared) != 0 {
-		t.Errorf("the staff keyboard was taken away: %+v", buttons.cleared)
+		t.Fatalf("failed return action was removed: %+v", buttons.cleared)
+	}
+	if len(*said) != 1 {
+		t.Fatalf("staff failure messages = %d, want one", len(*said))
 	}
 }
 

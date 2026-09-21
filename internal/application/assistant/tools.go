@@ -68,6 +68,7 @@ type session struct {
 	// finalReply is set only after a state-changing tool has a definitive
 	// customer-facing result that must not be paraphrased by another model call.
 	finalReply string
+	finalLinks []messaging.Link
 
 	// handoffReason and handoffDetail record why a person was asked for during
 	// this exchange, so the notification sent afterwards can say what happened
@@ -103,6 +104,7 @@ const (
 	offerChangeConfirmation
 	offerHelp
 	offerMenu
+	offerNavigation
 )
 
 // offer records the options a tool has put in front of the customer.
@@ -169,6 +171,8 @@ func (s *session) buttons(replyText string) []messaging.Choice {
 		return helpChoices(lang)
 	case offerMenu:
 		return menuChoices(lang)
+	case offerNavigation:
+		return append([]messaging.Choice(nil), s.choices...)
 	default:
 		if asksForContactDetails(replyText) {
 			return nil
@@ -629,7 +633,7 @@ func (t *toolset) listStaff(ctx context.Context, s *session, call ai.ToolCall) (
 		s.offer()
 	}
 
-	instruction := "Only these specialists can be offered for the selected service. Ask for a choice if there is more than one."
+	instruction := "Only these specialists can be offered for the selected service. Their available dates and times may differ. If more than one is bookable, briefly explain that availability depends on the specialist, then ask whose schedule to check. If exactly one is bookable, state whose schedule you are checking and continue directly without asking a one-option question."
 	if args.ServiceID == "" {
 		instruction = "This is the general team list. Before offering a specialist for a treatment, call list_staff again with the chosen service_id."
 	}
@@ -913,22 +917,22 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 			}
 		}
 
-		s.finalReply = t.messages.Confirmation(
-			appointmentmessage.ParseLanguage(string(s.language)),
-			appointmentmessage.Appointment{
-				CalendarURL: func() string {
-					if !recorded {
-						return ""
-					}
-					return t.messages.CalendarURL(created, appointmentmessage.ParseLanguage(string(s.language)))
-				}(),
-				CustomerName: created.CustomerName,
-				StartsAt:     created.StartsAt,
-				Service:      strings.Join(created.ServiceNames, ", "),
-				Specialist:   created.StaffName,
-				Reference:    created.ExternalID,
-			},
-		)
+		messageLanguage := appointmentmessage.ParseLanguage(string(s.language))
+		appointment := appointmentmessage.Appointment{
+			CalendarURL: func() string {
+				if !recorded {
+					return ""
+				}
+				return t.messages.CalendarURL(created, appointmentmessage.ParseLanguage(string(s.language)))
+			}(),
+			CustomerName: created.CustomerName,
+			StartsAt:     created.StartsAt,
+			Service:      strings.Join(created.ServiceNames, ", "),
+			Specialist:   created.StaffName,
+			Reference:    created.ExternalID,
+		}
+		s.finalReply = t.messages.Confirmation(messageLanguage, appointment)
+		s.finalLinks = t.messages.Links(messageLanguage, appointment)
 
 		if recorded {
 			t.offerReminderConsent(s)

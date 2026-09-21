@@ -1,4 +1,4 @@
-# Booking experience — 20 September 2026
+# Booking experience — 21 September 2026
 
 ## Customer flow
 
@@ -10,15 +10,19 @@ day before the existing availability → draft → explicit confirmation flow.
 Browsing abandons only unconfirmed changes, never a confirmed appointment.
 
 Telegram uses inline keyboards. Messenger and Instagram use quick replies;
-WhatsApp uses up to three reply buttons or a list (at most ten rows). Numbered
-text is always available as a fallback for clients that do not display buttons.
-The payload preserves the full option even when the visible title is shortened.
-Old button generations cannot act on a newer prompt or confirmation.
+WhatsApp uses up to three reply buttons or a list (at most ten rows). Native
+action labels are not repeated in the message body. Informative service lists
+may keep numbered entries so typing a position remains possible. The payload
+preserves the full option even when the visible title is shortened. Old button
+generations cannot act on a newer prompt or confirmation.
 
 Altegio's `GET /book_services/{location_id}` supplies service `comment` descriptions.
 Existing multilingual copy is selected by conversation language. Reviewed aliases
 are matched to exact live service IDs and categories, so duplicate names like
 `50 min` become meaningful without changing live prices or availability.
+Owner-reviewed EN/RU/HY descriptions are used as fallbacks for the supplied
+Motion Relax, Motion Sport, Motion Sculpt and four-hands variants when Altegio's
+customer-facing comment is empty; Altegio copy remains authoritative when set.
 The staff-filtered catalogue and available slot determine bookable duration.
 
 Observed catalogue issues requiring a business decision (no Altegio writes made):
@@ -42,7 +46,9 @@ This validates structure, not ownership or reachability.
 
 Successful booking and rescheduling produce a deterministic EN/RU/HY message:
 date, local time and zone, service, therapist, reference, calendar link, address,
-phone and official links. No Body Soft address, amenities or preparation advice
+phone, Google Maps, Yandex Maps and official links. Telegram, Messenger and
+Instagram render the highest-value links as native URL buttons while retaining
+the URLs in text for universal fallback. No Body Soft address, amenities or preparation advice
 was copied. Public studio details were verified against `motionconcept.rest`:
 Myasnikyan 1/6, Yerevan; +37494768067; Instagram `e.motion.concept`.
 
@@ -118,6 +124,18 @@ Moving an appointment earlier outside the bot can therefore miss the 24-hour
 reminder. Full external-edit synchronization needs Altegio event/webhook support
 or a separately deployed reconciliation schedule. Booking/rescheduling through
 the bot immediately plans the appropriate new task.
+
+## Staff handover
+
+The Telegram managers group is a notification stream, not a relay inbox. Each
+notice contains the customer's available name, phone/handle and a channel-correct
+link to Telegram, WhatsApp or Meta Business Suite. Staff answer in that native
+inbox. The old “I am taking this one” control and group-reply relay are disabled.
+A single “Done — return to assistant” action resumes automation and removes its
+keyboard immediately, so an old control cannot be pressed repeatedly. Messenger
+and Instagram handoff state—not ambiguous message echoes—keeps the assistant quiet
+while staff work in Business Suite. WhatsApp Business-app echoes are recorded as
+transcript context and also suppress an assistant reply already in progress.
 
 ## Verification and release
 

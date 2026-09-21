@@ -155,3 +155,25 @@ func TestHandoffLinksOpenTheCustomersOwnChannel(t *testing.T) {
 		}
 	}
 }
+
+func TestHandoffUsesNativeInboxAndOnlyOneReturnAction(t *testing.T) {
+	text := formatHandoff(assistant.HandoffNotice{
+		ConversationID: "conv-1",
+		Reason:         assistant.ReasonCustomerAsked,
+		Provider:       messaging.ProviderInstagram,
+	})
+	if !strings.Contains(text, "native business inbox") || !strings.Contains(text, "notifications only") {
+		t.Fatalf("handoff does not explain the native-inbox workflow: %s", text)
+	}
+	if strings.Contains(text, "Reply to this message") || strings.Contains(text, "I am taking this one") {
+		t.Fatalf("old relay workflow remains: %s", text)
+	}
+	buttons := handoffButtons("conv-1")
+	if buttons == nil || len(buttons.Keyboard) != 1 || len(buttons.Keyboard[0]) != 1 {
+		t.Fatalf("buttons = %+v, want one return action", buttons)
+	}
+	action, ok := parseStaffAction(buttons.Keyboard[0][0].CallbackData)
+	if !ok || action.Command != string(assistant.CommandResume) {
+		t.Fatalf("action = %+v, %v", action, ok)
+	}
+}

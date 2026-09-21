@@ -41,8 +41,7 @@ func (t *toolset) listCategories(ctx context.Context, s *session) (string, error
 	for _, category := range categories {
 		names = append(names, category.Name)
 	}
-	s.offer()
-	s.offer(names...)
+	s.present(names...)
 	return encode(map[string]any{"categories": categories,
-		"instruction": "For a specific category request, map the customer's meaning to the actual category name (for example face massage / массаж лица / դեմքի մերսում to Face Motion), then call list_services with that exact category. Do not respond with every category when the customer already chose one. When offering categories, put each on its own numbered line and say the customer can tap or send the number. If ambiguous, ask which category they mean."})
+		"instruction": "For a specific category request, map the customer's meaning to the actual category name (for example face massage / массаж лица / դեմքի մերսում to Face Motion), then call list_services with that exact category. Do not respond with every category when the customer already chose one. When offering categories, write only a short heading or question and return the relevant exact category labels as native choices; do not repeat those action labels as a numbered menu in the text. If ambiguous, ask which category they mean."})
 }

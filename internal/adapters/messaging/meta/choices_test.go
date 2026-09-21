@@ -19,6 +19,9 @@ func TestNativeChoiceRoundTrip(t *testing.T) {
 	if len(replies) != 1 || utf8.RuneCountInString(replies[0].Title) > 20 {
 		t.Fatalf("replies: %+v", replies)
 	}
+	if strings.HasPrefix(replies[0].Title, "1.") {
+		t.Fatalf("native button redundantly numbered: %q", replies[0].Title)
+	}
 	for _, provider := range []messaging.Provider{messaging.ProviderMessenger, messaging.ProviderInstagram} {
 		object := "page"
 		if provider == messaging.ProviderInstagram {
@@ -82,6 +85,9 @@ func TestWhatsAppNativeChoiceLimits(t *testing.T) {
 		row := item.(map[string]any)
 		if utf8.RuneCountInString(row["title"].(string)) > 24 || len(row["id"].(string)) > 200 {
 			t.Fatal("exceeded provider limits")
+		}
+		if strings.HasPrefix(row["title"].(string), "1.") {
+			t.Fatalf("WhatsApp row redundantly numbered: %+v", row)
 		}
 	}
 	msg.Text = "Choose"

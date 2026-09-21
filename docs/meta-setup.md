@@ -40,11 +40,12 @@ history-sharing choice.
 Subscribe the webhook to `smb_message_echoes` as well as `messages`. Each echo
 is a message a colleague sent from the WhatsApp Business app on the phone. The
 service stores it in the transcript as an outbound message and hands the
-conversation to that colleague, so the assistant stops answering until `/resume`
-is sent from the staff chat. An assistant turn that was already running when the
+conversation to that colleague. The assistant stops answering until the manager
+uses the one-shot “Done — return to assistant” action on the handoff notification.
+An assistant turn that was already running when the
 echo arrived is dropped rather than sent. Echoes are deduplicated by message id,
 so Meta redelivering one changes nothing, and an echo that arrives late for a
-message sent before a `/resume` is kept as history without undoing the resume.
+message sent before the return action is kept as history without undoing the resume.
 Media echoes are recorded as a note about the attachment; the file itself is not
 fetched. Only `smb_message_echoes` has this effect: Cloud API `message_echoes`
 and delivery `statuses` are ignored. The `history` and `smb_app_state_sync`
@@ -114,7 +115,8 @@ A full booking test creates an actual appointment unless Altegio is a test accou
 All channels share booking, guided category navigation, cancellation,
 rescheduling and staff handover logic. Telegram uses inline keyboards;
 Messenger and Instagram use quick replies; WhatsApp uses reply buttons or a
-list. Numbered text remains the fallback. Audio is downloaded in memory and
+list. Native action labels are not duplicated in the text; numbered service
+entries remain available when the text itself is a catalogue. Audio is downloaded in memory and
 transcribed with the configured OpenAI key. The transcript becomes ordinary
 customer context; raw audio is not persisted and bot replies are always text.
 Files over 20 MiB and Telegram recordings reported longer than five minutes

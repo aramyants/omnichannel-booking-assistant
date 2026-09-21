@@ -58,6 +58,17 @@ func keyboardFor(choices []messaging.Choice) *inlineKeyboardMarkup {
 	return markup
 }
 
+func keyboardForMessage(msg messaging.Outgoing) *inlineKeyboardMarkup {
+	markup := keyboardFor(msg.Choices)
+	if markup == nil && len(msg.Links) > 0 {
+		markup = &inlineKeyboardMarkup{}
+	}
+	for _, link := range msg.Links {
+		markup.Keyboard = append(markup.Keyboard, []inlineKeyboardButton{{Text: link.Label, URL: link.URL}})
+	}
+	return markup
+}
+
 // buttonsPerRow picks a width the longest label still fits in. One row of three
 // truncated labels is worse than three rows of readable ones.
 func buttonsPerRow(choices []messaging.Choice) int {

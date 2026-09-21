@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -129,6 +130,34 @@ func (c *Client) post(ctx context.Context, path string, payload any) error {
 		return nil
 	}
 	return c.translate(path, resp.StatusCode, raw)
+}
+
+func (c *Client) get(ctx context.Context, path string, query url.Values, target any) error {
+	rawURL := c.baseURL + "/" + c.version + "/" + path
+	if encoded := query.Encode(); encoded != "" {
+		rawURL += "?" + encoded
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return fmt.Errorf("meta %s: build request: %w", path, err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.accessToken)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("meta %s: %w: %w", path, ErrUnavailable, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		return fmt.Errorf("meta %s: %w: read response: %w", path, ErrUnavailable, err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.translate(path, resp.StatusCode, raw)
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		return fmt.Errorf("meta %s: decode response: %w", path, err)
+	}
+	return nil
 }
 
 // translate turns a Graph failure into an error the application can act on.

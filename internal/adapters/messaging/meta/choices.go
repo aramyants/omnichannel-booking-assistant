@@ -2,7 +2,6 @@ package meta
 
 import (
 	"encoding/base64"
-	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -35,8 +34,8 @@ func shortened(text string, limit int) string {
 	return string(r[:limit-1]) + "…"
 }
 
-func choiceTitle(label string, index, limit int) string {
-	return shortened(fmt.Sprintf("%d. %s", index+1, label), limit)
+func choiceTitle(label string, limit int) string {
+	return shortened(strings.TrimSpace(label), limit)
 }
 
 type quickReply struct {
@@ -55,7 +54,7 @@ func quickReplies(msg messaging.Outgoing) []quickReply {
 		if len(payload) > 1000 {
 			continue
 		}
-		result = append(result, quickReply{"text", choiceTitle(choice.Label, i, 20), payload})
+		result = append(result, quickReply{"text", choiceTitle(choice.Label, 20), payload})
 	}
 	return result
 }
@@ -77,7 +76,7 @@ func whatsAppInteractive(msg messaging.Outgoing) any {
 		if len(payload) > 200 {
 			continue
 		}
-		rows = append(rows, row{payload, choiceTitle(choice.Label, i, 24), shortened(choice.Label, 72)})
+		rows = append(rows, row{payload, choiceTitle(choice.Label, 24), ""})
 	}
 	if len(rows) == 0 {
 		return nil

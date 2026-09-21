@@ -162,9 +162,6 @@ func (s *Service) navigateCatalogue(ctx context.Context, sess *session, input st
 		}
 		text.WriteByte('\n')
 	}
-	for i, label := range options[len(page):] {
-		fmt.Fprintf(&text, "%d. %s\n", len(page)+i+1, label)
-	}
 	text.WriteString("\n" + catalogueSpeak(sess.language).chooseService)
 	sess.present(options...)
 	return text.String(), true
@@ -189,21 +186,8 @@ func cataloguePage(labels []string, page *int, n navigationWords) ([]string, []s
 }
 
 func navigationMenu(sess *session, heading string, options []string) string {
-	var b strings.Builder
-	b.WriteString(heading + "\n\n")
-	for i, label := range options {
-		fmt.Fprintf(&b, "%d. %s\n", i+1, label)
-	}
-	hint := "Tap a button or send its number. You can also write to us."
-	if sess.language == languageRussian {
-		hint = "Нажмите кнопку или отправьте её номер. Можно также написать нам."
-	}
-	if sess.language == languageArmenian {
-		hint = "Սեղմեք կոճակը կամ ուղարկեք համարը։ Կարող եք նաև գրել մեզ։"
-	}
-	b.WriteString("\n" + hint)
 	sess.present(options...)
-	return b.String()
+	return strings.TrimSpace(heading)
 }
 
 func isGreeting(text string) bool {

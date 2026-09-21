@@ -222,7 +222,9 @@ func (t *toolset) confirmReschedule(ctx context.Context, s *session) (string, er
 		if recorded {
 			link = t.messages.CalendarURL(moved, lang)
 		}
-		s.finalReply = t.messages.Confirmation(lang, appointmentmessage.Appointment{CustomerName: moved.CustomerName, StartsAt: moved.StartsAt, Service: strings.Join(moved.ServiceNames, ", "), Specialist: moved.StaffName, Reference: moved.ExternalID, CalendarURL: link})
+		appointment := appointmentmessage.Appointment{CustomerName: moved.CustomerName, StartsAt: moved.StartsAt, Service: strings.Join(moved.ServiceNames, ", "), Specialist: moved.StaffName, Reference: moved.ExternalID, CalendarURL: link}
+		s.finalReply = t.messages.Confirmation(lang, appointment)
+		s.finalLinks = t.messages.Links(lang, appointment)
 		if recorded {
 			t.offerReminderConsent(s)
 		}

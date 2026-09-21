@@ -314,6 +314,10 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 	if err != nil {
 		return err
 	}
+	// Phone messages often arrive immediately before another short answer.
+	// Persist an unambiguous, standalone number before any model work so a
+	// coalesced follow-up does not make the assistant ask for it again.
+	s.rememberInboundPhone(ctx, &cust, msg)
 
 	conv, err := s.openConversation(ctx, msg, cust, now)
 	if err != nil {
@@ -551,10 +555,14 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 		return completeSuperseded("before_send")
 	}
 
-	// Whatever the exchange ended up offering travels with the reply. A channel
-	// with buttons draws them; one without ignores them, and the reply names
-	// the same options in words either way.
-	reply := msg.Reply(text).WithChoices(sess.buttons(text))
+	// Whatever the exchange ended up offering travels with the reply. Exact
+	// numbered copies of native actions are noise; informative catalogue lines
+	// carrying a price or duration remain untouched.
+	choices := sess.buttons(text)
+	if sess.offering != offerNavigation {
+		text = withoutRedundantChoiceLines(text, choices)
+	}
+	reply := msg.Reply(text).WithChoices(choices).WithLinks(sess.finalLinks)
 	if len(reply.Choices) > 0 {
 		reply.ChoiceToken = id.New()
 	}
@@ -624,6 +632,45 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 	return nil
 }
 
+func withoutRedundantChoiceLines(text string, choices []messaging.Choice) string {
+	if len(choices) == 0 {
+		return text
+	}
+	labels := make(map[string]bool, len(choices))
+	for _, choice := range choices {
+		labels[strings.ToLower(strings.TrimSpace(choice.Label))] = true
+	}
+	kept := make([]string, 0)
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		var candidate string
+		if _, ok := numberedLine(trimmed); ok {
+			position := strings.IndexAny(trimmed, ".)")
+			candidate = strings.TrimSpace(trimmed[position+1:])
+		} else {
+			candidate = strings.TrimSpace(strings.TrimLeft(trimmed, "•-–—"))
+		}
+		if labels[strings.ToLower(candidate)] {
+			continue
+		}
+		switch strings.ToLower(trimmed) {
+		case "tap a button or send the number.",
+			"tap a button or send its number. you can also write to us.",
+			"нажмите кнопку или отправьте номер.",
+			"нажмите кнопку или отправьте её номер. можно также написать нам.",
+			"սեղմեք կոճակը կամ ուղարկեք համարը։ Կարող եք նաև գրել մեզ։",
+			"սեղմեք կոճակը կամ ուղարկեք համարը։":
+			continue
+		}
+		kept = append(kept, line)
+	}
+	cleaned := strings.TrimSpace(strings.Join(kept, "\n"))
+	if cleaned == "" {
+		return strings.TrimSpace(text)
+	}
+	return cleaned
+}
+
 // History returns the recent transcript of a conversation, oldest first.
 func (s *Service) History(ctx context.Context, conversationID string) ([]conversation.Message, error) {
 	return s.messages.Recent(ctx, conversationID, recentMessageLimit)
@@ -652,7 +699,42 @@ func (s *Service) identify(ctx context.Context, msg messaging.Envelope, now time
 	if err != nil {
 		return customer.Customer{}, fmt.Errorf("identify the customer: %w", err)
 	}
+	if cust.Name == "" && strings.TrimSpace(msg.Sender.DisplayName) != "" {
+		name := strings.TrimSpace(msg.Sender.DisplayName)
+		if updateErr := s.customers.UpdateContact(ctx, cust.ID, name, cust.Phone); updateErr != nil {
+			s.logger.WarnContext(ctx, "could not remember the provider-visible customer name", "error", updateErr, "customer_id", cust.ID)
+		} else {
+			cust.Name = name
+		}
+	}
+	// A WhatsApp sender id is the customer's phone number. Unlike profile names
+	// on other channels, this value is an address the customer has just used and
+	// can safely prefill the booking contact instead of asking them to type it.
+	if msg.Provider == messaging.ProviderWhatsApp && cust.Phone == "" {
+		if phone, phoneErr := customer.NormalizePhone("+" + strings.TrimPrefix(msg.ExternalUserID, "+")); phoneErr == nil {
+			if updateErr := s.customers.UpdateContact(ctx, cust.ID, cust.Name, phone); updateErr != nil {
+				s.logger.WarnContext(ctx, "could not remember the WhatsApp contact number", "error", updateErr, "customer_id", cust.ID)
+			} else {
+				cust.Phone = phone
+			}
+		}
+	}
 	return cust, nil
+}
+
+func (s *Service) rememberInboundPhone(ctx context.Context, cust *customer.Customer, msg messaging.Envelope) {
+	if cust == nil || msg.Content.Type != messaging.ContentTypeText {
+		return
+	}
+	phone, err := customer.NormalizePhone(strings.TrimSpace(msg.Content.Text))
+	if err != nil || phone == cust.Phone {
+		return
+	}
+	if err := s.customers.UpdateContact(ctx, cust.ID, cust.Name, phone); err != nil {
+		s.logger.WarnContext(ctx, "could not remember a phone number from the conversation", "error", err, "customer_id", cust.ID)
+		return
+	}
+	cust.Phone = phone
 }
 
 func (s *Service) openConversation(
@@ -740,6 +822,19 @@ func (s *Service) reply(
 		return text, nil
 	}
 
+	// Confirmation is a state transition, not a language-understanding puzzle.
+	// Handle an explicit yes in code so short Armenian transliterations such as
+	// "ayo" cannot fall into a generic model response after a valid proposal.
+	var seededTurns []ai.Turn
+	if conv.Draft != nil && explicitlyConfirmsBooking(msg.Content.Text, sess.language) {
+		call := ai.ToolCall{ID: "application-confirmation", Name: toolConfirmBooking, Arguments: []byte(`{}`)}
+		result := s.tools.execute(ctx, sess, call)
+		if sess.finalReply != "" {
+			return sess.finalReply, nil
+		}
+		seededTurns = append(seededTurns, ai.Turn{Calls: []ai.ToolCall{call}, Results: []ai.ToolResult{result}})
+	}
+
 	if s.ai == nil {
 		return s.compose(msg, sess.language), nil
 	}
@@ -747,6 +842,7 @@ func (s *Service) reply(
 	req := ai.Request{
 		Instructions:    s.instructions(cust, sess.language, msg.Sender.Language),
 		Messages:        toAIMessages(history),
+		Turns:           seededTurns,
 		Tools:           s.tools.definitions(),
 		StructuredReply: true,
 	}
@@ -817,6 +913,21 @@ func (s *Service) reply(
 	s.logger.WarnContext(ctx, "gave up after too many tool rounds",
 		"conversation_id", conv.ID, "rounds", maxToolRounds)
 	return s.apologise(ctx, sess)
+}
+
+func explicitlyConfirmsBooking(text string, lang language) bool {
+	value := strings.ToLower(strings.Trim(strings.TrimSpace(text), "!.,?։"))
+	if strings.EqualFold(value, strings.ToLower(speak(lang).confirmBooking)) {
+		return true
+	}
+	switch value {
+	case "yes", "yes book it", "book it", "confirm", "confirmed",
+		"да", "да запишите", "запишите", "подтверждаю", "да подтверждаю",
+		"այո", "այո ամրագրեք", "հաստատում եմ", "ayo", "ayo amragreq", "ha", "ha amragreq":
+		return true
+	default:
+		return false
+	}
 }
 
 // repeatedLookupWithoutProgress catches a model asking for the same read-only
