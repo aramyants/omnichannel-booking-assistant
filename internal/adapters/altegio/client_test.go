@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -60,6 +61,7 @@ func newTestClient(t *testing.T, srv *httptest.Server, opts ...Option) *Client {
 		WithSleep(func(context.Context, time.Duration) error { return nil }),
 		WithLocation(yerevan(t)),
 		WithCurrency("AMD"),
+		WithClientNameRepair(false),
 	}
 
 	client, err := NewClient(
@@ -457,6 +459,67 @@ func TestCreateSendsTheIdempotencyKey(t *testing.T) {
 	}
 	if result.Duration != time.Hour {
 		t.Errorf("duration = %s, want 1h", result.Duration)
+	}
+}
+
+func TestCreateRepairsOnlyTheHistoricalDiagnosticClientName(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		storedName string
+		wantUpdate bool
+	}{
+		{name: "diagnostic placeholder", storedName: "API diagnostic please ignore", wantUpdate: true},
+		{name: "real existing name", storedName: "Mariam Petrosyan", wantUpdate: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var updateBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodPost && r.URL.Path == "/book_record/"+testCompanyID:
+					_, _ = w.Write(fixture(t, "book_record.json"))
+				case r.Method == http.MethodPost && r.URL.Path == "/company/"+testCompanyID+"/clients/search":
+					_, _ = w.Write([]byte(`{"success":true,"data":[{"id":77,"name":` + strconv.Quote(tc.storedName) + `,"phone":37411223344}],"meta":{"total_count":1}}`))
+				case r.Method == http.MethodPut && r.URL.Path == "/client/"+testCompanyID+"/77":
+					if err := json.NewDecoder(r.Body).Decode(&updateBody); err != nil {
+						t.Error(err)
+					}
+					_, _ = w.Write([]byte(`{"success":true,"data":{"id":77},"meta":[]}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+
+			client := newTestClient(t, srv, WithClientNameRepair(true))
+			if _, err := client.Create(t.Context(), validRequest()); err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantUpdate {
+				if updateBody["name"] != "Anna Petrosyan" || updateBody["phone"] != "+37411223344" {
+					t.Fatalf("update body = %+v", updateBody)
+				}
+			} else if updateBody != nil {
+				t.Fatalf("legitimate client name was overwritten: %+v", updateBody)
+			}
+		})
+	}
+}
+
+func TestClientNameCleanupCannotTurnAConfirmedBookingIntoAFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/book_record/"+testCompanyID {
+			_, _ = w.Write(fixture(t, "book_record.json"))
+			return
+		}
+		http.Error(w, `{"success":false,"meta":{"message":"temporary failure"}}`, http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv, WithClientNameRepair(true), WithMaxAttempts(1))
+	if _, err := client.Create(t.Context(), validRequest()); err != nil {
+		t.Fatalf("confirmed booking was lost because optional cleanup failed: %v", err)
 	}
 }
 

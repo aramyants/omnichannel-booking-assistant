@@ -52,7 +52,10 @@ func New(store Repository, settings Settings) *Handler {
 // the provider's management token. Rescheduling preserves this capability.
 func capability(b booking.Booking) string {
 	id, err := uuid.Parse(b.ID)
-	if err != nil || id.Version() != 4 {
+	// Records created before the switch to time-ordered IDs use UUIDv4; all
+	// current records use UUIDv7. Both are generated from secure randomness and
+	// are suitable as the unexposed key material for this signed capability.
+	if err != nil || (id.Version() != 4 && id.Version() != 7) {
 		return ""
 	}
 	mac := hmac.New(sha256.New, []byte(b.ID))

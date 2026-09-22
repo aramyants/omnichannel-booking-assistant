@@ -104,6 +104,7 @@ type Conversation struct {
 	// Catalogue navigation survives restarts and is separate from booking drafts.
 	CatalogueCategory  string
 	CatalogueServiceID string
+	CatalogueStaffID   string
 	CataloguePage      int
 	ReminderOptIn      bool
 }

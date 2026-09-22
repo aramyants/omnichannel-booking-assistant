@@ -79,6 +79,6 @@ func downloadMetaAudio(ctx context.Context, client *http.Client, rawURL, mimeTyp
 	if mimeType == "" {
 		mimeType = detected
 	}
-	name, err := mediahttp.Filename(req.URL.Path, mimeType)
+	name, err := mediahttp.Filename(req.URL.Path, mimeType, data)
 	return ai.Audio{Data: data, Filename: name}, err
 }

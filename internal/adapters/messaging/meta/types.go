@@ -138,6 +138,12 @@ type messagingEvent struct {
 		IsDeleted bool `json:"is_deleted"`
 	} `json:"message"`
 
+	Postback *struct {
+		MID     string `json:"mid"`
+		Title   string `json:"title"`
+		Payload string `json:"payload"`
+	} `json:"postback"`
+
 	Reaction *struct {
 		MID      string `json:"mid"`
 		Action   string `json:"action"`

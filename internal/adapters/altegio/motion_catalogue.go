@@ -45,10 +45,16 @@ func motionCatalogueCopy(s booking.Service) booking.Service {
 			"Extended sculpting massage with more detailed work across the body. Lymphatic drainage, lifting and contouring techniques.",
 			"Расширенный скульптурирующий формат с более детальной работой по зонам тела. Лимфодренажные, лифтинг- и моделирующие техники.",
 			"Ավելի երկար սկուլպտուրային ձևաչափ՝ մարմնի տարբեր գոտիների ավելի մանրամասն աշխատանքով։ Լիմֆոդրենաժային, լիֆտինգ և ձևավորող տեխնիկաների համադրություն։")},
-		"13815928": {"Face Motion", "Face Motion Classic · 60 min", ""},
-		"13827244": {"Face Motion", "Face Motion Gua Sha · 60 min", ""},
+		"13815928": {"Face Motion", "Face Motion Classic · 60 min", copy(
+			"A 60-minute face-focused session using classic manual massage techniques.",
+			"60-минутный массаж лица с классическими ручными техниками.",
+			"Դեմքի 60 րոպեանոց մերսում՝ դասական ձեռքի տեխնիկաներով։")},
+		"13827244": {"Face Motion", "Face Motion Gua Sha · 60 min", copy(
+			"A 60-minute face-focused session combining Gua Sha tools with manual massage techniques.",
+			"60-минутный массаж лица с сочетанием техник гуаша и ручного массажа.",
+			"Դեմքի 60 րոպեանոց մերսում՝ գուաշա գործիքների և ձեռքի մերսման տեխնիկաների համադրությամբ։")},
 		"13827261": {"Local", "Back Motion · 50 min", copy(
-			"",
+			"Targeted work focused only on the back. For guests who want to concentrate on one area.",
 			"Точечная работа только со спиной. Формат для тех, кто хочет сосредоточиться на одной зоне.",
 			"Թիրախային աշխատանք միայն մեջքի հատվածի հետ։ Հարմար է նրանց համար, ովքեր ցանկանում են կենտրոնանալ մեկ գոտու վրա։")},
 		"13827262": {"Local", "Body Boost · 50 min", ""},

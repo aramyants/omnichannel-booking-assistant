@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
@@ -87,11 +88,67 @@ func TestCategoryServiceNavigationAndBack(t *testing.T) {
 		}
 	}
 	conv := openConversation(t, store)
-	if conv.CatalogueCategory != "" || conv.CatalogueServiceID != "" {
+	if conv.CatalogueCategory != "" || conv.CatalogueServiceID != "" || conv.CatalogueStaffID != "" {
 		t.Fatalf("back did not reach root: %+v", conv)
 	}
 	if len(sender.sent[4].Choices) != 3 {
 		t.Fatal("back did not restore category services")
+	}
+}
+
+func TestTreatmentSelectionOffersAllSpecialistsThenQualifiedDates(t *testing.T) {
+	base := describedCategoryCalendar()
+	calendar := &serviceCalendar{
+		stubScheduling: base,
+		qualifiedStaff: []booking.Staff{
+			{ID: "501", Name: "Galina", Bookable: true},
+			{ID: "502", Name: "Yaroslava", Bookable: true},
+			{ID: "503", Name: "Elvira", Bookable: true},
+			{ID: "504", Name: "Garik", Bookable: true},
+		},
+		serviceSlots: []booking.Slot{{Start: bookingStart(), Duration: time.Hour, StaffID: "504"}},
+	}
+	model := &scriptedAI{responses: []ai.Response{
+		toolResponse("times", toolAvailableSlots, `{"staff_id":"504","service_id":"face","date":"`+bookingDay()+`"}`),
+		{Text: "Would 10:00 suit you?", Choices: []string{"10:00"}},
+	}}
+	sender := &fakeSender{}
+	svc, store := newAIService(t, model, calendar, sender)
+	n := navigationSpeak(languageArmenian)
+
+	steps := []string{"/services", "Face Motion", "Face motion", n.book}
+	for i, input := range steps {
+		if err := svc.Handle(t.Context(), incomingText(fmt.Sprintf("staff-%d", i), input)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wantStaff := []string{"Galina", "Yaroslava", "Elvira", "Garik", n.back, n.categories}
+	if got := labelsOf(sender.sent[3].Choices); !slices.Equal(got, wantStaff) {
+		t.Fatalf("specialist buttons = %v, want %v", got, wantStaff)
+	}
+	if !strings.Contains(sender.sent[3].Text, n.chooseStaff) || model.calls != 0 {
+		t.Fatalf("specialist step was not deterministic: %q, calls=%d", sender.sent[3].Text, model.calls)
+	}
+
+	if err := svc.Handle(t.Context(), incomingText("staff-choice", "Garik")); err != nil {
+		t.Fatal(err)
+	}
+	date := bookingStart().Format(buttonDateLayout)
+	if got := labelsOf(sender.sent[4].Choices); !slices.Equal(got, []string{date, n.back, n.categories}) {
+		t.Fatalf("date buttons = %v", got)
+	}
+	if conv := openConversation(t, store); conv.CatalogueStaffID != "504" {
+		t.Fatalf("selected specialist was not stored: %+v", conv)
+	}
+
+	if err := svc.Handle(t.Context(), incomingText("date-choice", date)); err != nil {
+		t.Fatal(err)
+	}
+	if model.calls != 2 || !strings.Contains(model.requests[0].Instructions, "service_id face") || !strings.Contains(model.requests[0].Instructions, "staff_id 504") {
+		t.Fatalf("validated selection missing from availability turn: calls=%d instructions=%q", model.calls, model.requests[0].Instructions)
+	}
+	if got := labelsOf(sender.sent[5].Choices); !slices.Equal(got, []string{"10:00"}) {
+		t.Fatalf("time buttons = %v", got)
 	}
 }
 

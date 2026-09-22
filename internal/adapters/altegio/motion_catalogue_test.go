@@ -42,3 +42,18 @@ func TestMotionCatalogueAliasRequiresBothServiceIDAndCategory(t *testing.T) {
 		t.Fatalf("service with reused id but different category was renamed: %q", service.Name)
 	}
 }
+
+func TestFaceMotionServicesHaveCustomerFacingDescriptions(t *testing.T) {
+	for _, tc := range []struct {
+		id   string
+		want string
+	}{
+		{id: "13815928", want: "classic manual massage techniques"},
+		{id: "13827244", want: "Gua Sha tools"},
+	} {
+		service := motionCatalogueCopy(booking.Service{ID: tc.id, Category: "Face Motion"})
+		if !strings.Contains(service.Description, tc.want) || strings.Count(service.Description, "\n") != 2 {
+			t.Fatalf("service %s description = %q", tc.id, service.Description)
+		}
+	}
+}

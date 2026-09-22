@@ -2,6 +2,7 @@
 package mediahttp
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -41,7 +42,7 @@ func Download(client *http.Client, req *http.Request, limit int64) ([]byte, stri
 	return data, resp.Header.Get("Content-Type"), nil
 }
 
-func Filename(name, contentType string) (string, error) {
+func Filename(name, contentType string, data ...[]byte) (string, error) {
 	ext := strings.ToLower(path.Ext(name))
 	// Telegram commonly stores Ogg/Opus voice notes with .oga or .opus file
 	// paths. The metadata and download may both omit a useful Content-Type.
@@ -54,11 +55,56 @@ func Filename(name, contentType string) (string, error) {
 		}
 	}
 	mimeType, _, _ := mime.ParseMediaType(contentType)
-	ext = map[string]string{"audio/ogg": ".ogg", "audio/opus": ".ogg", "audio/mpeg": ".mp3", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a", "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/webm": ".webm", "video/webm": ".webm", "audio/flac": ".flac"}[mimeType]
+	ext = map[string]string{
+		"application/ogg": ".ogg",
+		"audio/flac":      ".flac",
+		"audio/mp4":       ".m4a",
+		"audio/mpeg":      ".mp3",
+		"audio/ogg":       ".ogg",
+		"audio/opus":      ".ogg",
+		"audio/wav":       ".wav",
+		"audio/webm":      ".webm",
+		"audio/x-m4a":     ".m4a",
+		"audio/x-wav":     ".wav",
+		"video/mp4":       ".mp4",
+		"video/webm":      ".webm",
+	}[mimeType]
+	if ext == "" && len(data) > 0 {
+		ext = audioExtension(data[0])
+	}
 	if ext == "" {
 		return "", errors.New("unsupported audio format")
 	}
 	return "voice" + ext, nil
+}
+
+// audioExtension recognises the containers used by voice notes when a signed
+// provider CDN URL has no extension and responds with application/octet-stream.
+// It deliberately accepts only well-known signatures; arbitrary downloaded
+// bytes must not be relabelled and sent to the transcription provider.
+func audioExtension(data []byte) string {
+	switch {
+	case len(data) >= 4 && bytes.Equal(data[:4], []byte("OggS")):
+		return ".ogg"
+	case len(data) >= 4 && bytes.Equal(data[:4], []byte("fLaC")):
+		return ".flac"
+	case len(data) >= 12 && bytes.Equal(data[:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WAVE")):
+		return ".wav"
+	case len(data) >= 4 && bytes.Equal(data[:4], []byte{0x1a, 0x45, 0xdf, 0xa3}):
+		return ".webm"
+	case len(data) >= 3 && bytes.Equal(data[:3], []byte("ID3")):
+		return ".mp3"
+	case len(data) >= 2 && data[0] == 0xff && data[1]&0xf6 == 0xf0:
+		// ADTS is raw AAC, not an M4A/MP4 container accepted by the
+		// transcription endpoint. Renaming it would only postpone the error.
+		return ""
+	case len(data) >= 2 && data[0] == 0xff && data[1]&0xe0 == 0xe0:
+		return ".mp3"
+	case len(data) >= 12 && bytes.Equal(data[4:8], []byte("ftyp")):
+		return ".m4a"
+	default:
+		return ""
+	}
 }
 
 func Validate(audio messaging.Audio) error {

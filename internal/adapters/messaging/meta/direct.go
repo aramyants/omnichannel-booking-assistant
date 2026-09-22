@@ -58,7 +58,7 @@ func (c *DirectClient) Send(ctx context.Context, msg messaging.Outgoing) error {
 		messageType = "RESPONSE"
 	}
 	limit := 1000
-	if len(msg.Links) > 0 {
+	if len(msg.Links) > 0 || len(msg.Choices) > 0 {
 		// Meta's button template keeps URLs tappable in Instagram and Messenger;
 		// its text field is smaller than a plain message.
 		limit = 640
@@ -71,7 +71,7 @@ func (c *DirectClient) Send(ctx context.Context, msg messaging.Outgoing) error {
 			payload.Message.Attachment.Payload.TemplateType = "button"
 			payload.Message.Attachment.Payload.Text = chunk
 			for _, link := range msg.Links {
-				payload.Message.Attachment.Payload.Buttons = append(payload.Message.Attachment.Payload.Buttons, directWebButton{
+				payload.Message.Attachment.Payload.Buttons = append(payload.Message.Attachment.Payload.Buttons, directButton{
 					Type: "web_url", URL: link.URL, Title: shortened(link.Label, 20),
 				})
 				if len(payload.Message.Attachment.Payload.Buttons) == 3 {
@@ -83,9 +83,29 @@ func (c *DirectClient) Send(ctx context.Context, msg messaging.Outgoing) error {
 			}
 			continue
 		}
+		if i == len(chunks)-1 && len(msg.Choices) > 0 {
+			buttons := directChoiceButtons(msg)
+			for start := 0; start < len(buttons); start += 3 {
+				end := min(start+3, len(buttons))
+				payload := directButtonRequest{Recipient: party{ID: msg.ExternalThreadID}, MessagingType: messageType}
+				payload.Message.Attachment.Type = "template"
+				payload.Message.Attachment.Payload.TemplateType = "button"
+				payload.Message.Attachment.Payload.Text = "\u21b3"
+				if start == 0 {
+					payload.Message.Attachment.Payload.Text = chunk
+				}
+				payload.Message.Attachment.Payload.Buttons = buttons[start:end]
+				if err := c.client.post(ctx, c.accountID+"/messages", payload); err != nil {
+					return err
+				}
+			}
+			if len(buttons) > 0 {
+				continue
+			}
+		}
 		payload := directTextRequest{Recipient: party{ID: msg.ExternalThreadID}, MessagingType: messageType}
 		payload.Message.Text = chunk
-		if i == len(chunks)-1 {
+		if i == len(chunks)-1 && len(msg.Choices) > 0 {
 			payload.Message.QuickReplies = quickReplies(msg)
 		}
 		if err := c.client.post(ctx, c.accountID+"/messages", payload); err != nil {
@@ -187,6 +207,28 @@ func parseDirect(body []byte, receivedAt time.Time, provider messaging.Provider,
 		}
 		for _, event := range entry.Messaging {
 			m := event.Message
+			if event.Postback != nil && event.Sender.ID != accountID && event.Recipient.ID == accountID {
+				token, label := decodeChoice(event.Postback.Payload)
+				sentAt := receivedAt
+				if event.Timestamp > 0 {
+					sentAt = time.UnixMilli(event.Timestamp).UTC()
+				}
+				messageID := event.Postback.MID
+				if messageID == "" {
+					messageID = fmt.Sprintf("postback:%s:%d", event.Sender.ID, event.Timestamp)
+				}
+				envelope := messaging.Envelope{
+					Provider: provider, ExternalMessageID: messageID,
+					ExternalUserID: event.Sender.ID, ExternalThreadID: event.Sender.ID,
+					ChoiceMessageID: token, SentAt: sentAt, ReceivedAt: receivedAt,
+					Content: messaging.Content{Type: messaging.ContentTypeText, Text: label},
+				}
+				if err := envelope.Validate(); err != nil {
+					return nil, fmt.Errorf("%w: %w", ErrMalformedUpdate, err)
+				}
+				envelopes = append(envelopes, envelope)
+				continue
+			}
 			if m == nil && event.Reaction != nil && event.Sender.ID != accountID && event.Recipient.ID == accountID {
 				reaction := strings.TrimSpace(event.Reaction.Emoji)
 				if reaction == "" {
@@ -275,10 +317,25 @@ type directActionRequest struct {
 	SenderAction string `json:"sender_action"`
 }
 
-type directWebButton struct {
-	Type  string `json:"type"`
-	URL   string `json:"url"`
-	Title string `json:"title"`
+type directButton struct {
+	Type    string `json:"type"`
+	URL     string `json:"url,omitempty"`
+	Title   string `json:"title"`
+	Payload string `json:"payload,omitempty"`
+}
+
+func directChoiceButtons(msg messaging.Outgoing) []directButton {
+	buttons := make([]directButton, 0, len(msg.Choices))
+	for _, choice := range msg.Choices {
+		payload := choicePayload(msg.ChoiceToken, choice.Label)
+		if len(payload) > 1000 {
+			continue
+		}
+		buttons = append(buttons, directButton{
+			Type: "postback", Title: choiceTitle(choice.Label, 20), Payload: payload,
+		})
+	}
+	return buttons
 }
 
 type directButtonRequest struct {
@@ -288,9 +345,9 @@ type directButtonRequest struct {
 		Attachment struct {
 			Type    string `json:"type"`
 			Payload struct {
-				TemplateType string            `json:"template_type"`
-				Text         string            `json:"text"`
-				Buttons      []directWebButton `json:"buttons"`
+				TemplateType string         `json:"template_type"`
+				Text         string         `json:"text"`
+				Buttons      []directButton `json:"buttons"`
 			} `json:"payload"`
 		} `json:"attachment"`
 	} `json:"message"`

@@ -105,6 +105,7 @@ const (
 	offerHelp
 	offerMenu
 	offerNavigation
+	offerWorkflow
 )
 
 // offer records the options a tool has put in front of the customer.
@@ -119,13 +120,32 @@ func (s *session) offer(labels ...string) {
 		s.candidates = nil
 		return
 	}
+	s.offering = offerWhatToolsSaid
+	s.choices = nil
 	s.candidates = append(s.candidates, choicesOf(labels...)...)
+}
+
+// offerAll makes a live workflow choice application-owned rather than
+// model-selected. Specialist and date lists must be complete: silently losing
+// the fourth specialist because the structured reply is capped at three is a
+// broken booking flow, not a presentation preference.
+func (s *session) offerAll(labels ...string) {
+	if len(labels) == 0 {
+		s.offer()
+		return
+	}
+	s.offering = offerWorkflow
+	s.candidates = choicesOf(labels...)
+	s.choices = choicesOf(labels...)
 }
 
 // selectChoices admits only labels returned by tools, in the order the reply
 // offers them. Phone/name questions use an empty list. Three options keep the
 // next action visible on a phone instead of filling it with a stale time grid.
 func (s *session) selectChoices(labels []string) {
+	if s.offering == offerWorkflow {
+		return
+	}
 	s.choices = nil
 	allowed := make(map[string]bool, len(s.candidates))
 	for _, candidate := range s.candidates {
@@ -171,7 +191,7 @@ func (s *session) buttons(replyText string) []messaging.Choice {
 		return helpChoices(lang)
 	case offerMenu:
 		return menuChoices(lang)
-	case offerNavigation:
+	case offerNavigation, offerWorkflow:
 		return append([]messaging.Choice(nil), s.choices...)
 	default:
 		if asksForContactDetails(replyText) {
@@ -628,7 +648,7 @@ func (t *toolset) listStaff(ctx context.Context, s *session, call ai.ToolCall) (
 	// One specialist is not a choice, and a button asking a customer to pick
 	// them reads as a system going through the motions.
 	if len(names) > 1 {
-		s.offer(names...)
+		s.offerAll(names...)
 	} else {
 		s.offer()
 	}
@@ -668,7 +688,7 @@ func (t *toolset) availableDates(ctx context.Context, s *session, call ai.ToolCa
 		labels = append(labels, day.Format(buttonDateLayout))
 	}
 
-	s.offer(labels...)
+	s.offerAll(labels...)
 
 	return encode(map[string]any{"dates": formatted, "service_id": args.ServiceID,
 		"instruction": "These dates fit the selected service. If none are available, call list_staff for this service to check other qualified specialists; do not offer unfiltered dates."})
@@ -886,6 +906,7 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 		// Only now, with a confirmed appointment in hand, may the customer be
 		// told they have one.
 		s.conv.Draft = nil
+		s.conv.CatalogueCategory, s.conv.CatalogueServiceID, s.conv.CatalogueStaffID, s.conv.CataloguePage = "", "", "", 0
 
 		// Preserve the human-readable catalogue snapshot. Provider responses
 		// carry identifiers, but a reminder saying only "service 123" is not a

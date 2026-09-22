@@ -3,6 +3,7 @@ package meta
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -174,6 +175,64 @@ func TestDirectConfirmationUsesNativeWebButtonsAndTypingFeedback(t *testing.T) {
 	}
 	if payloads[1]["sender_action"] != "typing_on" || payloads[2]["sender_action"] != "typing_off" {
 		t.Fatalf("typing actions = %+v", payloads[1:])
+	}
+}
+
+func TestDirectChoicesUsePersistentPostbackButtonsWithoutRepeatingThePrompt(t *testing.T) {
+	var payloads []directButtonRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload directButtonRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		payloads = append(payloads, payload)
+		_, _ = w.Write([]byte(`{"message_id":"sent"}`))
+	}))
+	defer srv.Close()
+
+	client, err := newDirectClient("token", "business-1", messaging.ProviderInstagram, WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := messaging.Outgoing{
+		Provider: messaging.ProviderInstagram, ExternalThreadID: "customer-1",
+		ChoiceToken: "choice-token", Text: "Which specialist works for you?",
+		Choices: []messaging.Choice{{Label: "Galina"}, {Label: "Yaroslava"}, {Label: "Elvira"}, {Label: "Garik"}},
+	}
+	if err := client.Send(t.Context(), msg); err != nil {
+		t.Fatal(err)
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("payload count = %d, want two button templates", len(payloads))
+	}
+	first := payloads[0].Message.Attachment.Payload
+	second := payloads[1].Message.Attachment.Payload
+	if first.Text != msg.Text || second.Text != "\u21b3" {
+		t.Fatalf("template text = %q, %q", first.Text, second.Text)
+	}
+	if len(first.Buttons) != 3 || len(second.Buttons) != 1 {
+		t.Fatalf("button groups = %d, %d", len(first.Buttons), len(second.Buttons))
+	}
+	for _, button := range append(first.Buttons, second.Buttons...) {
+		if button.Type != "postback" || button.URL != "" {
+			t.Fatalf("button = %+v", button)
+		}
+		token, label := decodeChoice(button.Payload)
+		if token != msg.ChoiceToken || label == "" {
+			t.Fatalf("invalid button payload: %+v", button)
+		}
+	}
+}
+
+func TestDirectPostbackBecomesAValidatedChoice(t *testing.T) {
+	payload := choicePayload("choice-token", "Garik")
+	event := fmt.Sprintf(`{"sender":{"id":"customer-1"},"recipient":{"id":"business-1"},"timestamp":1788868800000,"postback":{"mid":"postback-1","title":"Garik","payload":%q}}`, payload)
+	got, err := parseDirect(directUpdate("instagram", "business-1", event), receivedAt, messaging.ProviderInstagram, "business-1")
+	if err != nil || len(got) != 1 {
+		t.Fatalf("postback = %+v, err = %v", got, err)
+	}
+	if got[0].Content.Text != "Garik" || got[0].ChoiceMessageID != "choice-token" || got[0].ExternalMessageID != "postback-1" {
+		t.Fatalf("postback normalization = %+v", got[0])
 	}
 }
 

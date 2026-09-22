@@ -78,7 +78,7 @@ func (s *session) presentedChoices(replyText string) []string {
 	if s.offering == offerMenu {
 		return labelsOfChoices(menuChoices(s.language))
 	}
-	if s.offering == offerNavigation {
+	if s.offering == offerNavigation || s.offering == offerWorkflow {
 		return labelsOfChoices(s.choices)
 	}
 	return numberedCandidates(replyText, s.candidates)

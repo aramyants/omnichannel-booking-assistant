@@ -25,6 +25,22 @@ func labelsOf(choices []messaging.Choice) []string {
 	return labels
 }
 
+func TestWorkflowChoicesKeepEverySpecialistAndSupportTypedNumbers(t *testing.T) {
+	sess := &session{}
+	want := []string{"Galina", "Yaroslava", "Elvira", "Garik"}
+	sess.offerAll(want...)
+
+	// Structured model replies are intentionally limited to three suggestions,
+	// but a live specialist list is application-owned and must remain complete.
+	sess.selectChoices(want[:3])
+	if got := labelsOf(sess.buttons("Whose schedule should I check?")); !slices.Equal(got, want) {
+		t.Fatalf("buttons = %v, want %v", got, want)
+	}
+	if got := sess.presentedChoices("Whose schedule should I check?"); !slices.Equal(got, want) {
+		t.Fatalf("numbered choices = %v, want %v", got, want)
+	}
+}
+
 // TestFreeTimesAreOfferedAsButtons: a time is the one thing in this exchange
 // that is genuinely easier to tap than to type, and the labels are the calendar
 // times themselves, so tapping one is the same as typing it.

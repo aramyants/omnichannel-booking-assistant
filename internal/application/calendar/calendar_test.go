@@ -92,6 +92,14 @@ func TestPrivateCalendarLinksAndExports(t *testing.T) {
 	}
 }
 
+func TestCurrentUUIDv7BookingsGetCalendarLinks(t *testing.T) {
+	b := calendarBooking()
+	b.ID = "01995e17-7568-7c31-a7c6-7ca3e90a55d8"
+	if got := Link("https://example.test", b, "en"); got == "" {
+		t.Fatal("UUIDv7 booking did not receive an add-to-calendar link")
+	}
+}
+
 func TestCalendarRefreshFailsClosed(t *testing.T) {
 	b := calendarBooking()
 	h := New(&testStore{b: b}, Settings{})

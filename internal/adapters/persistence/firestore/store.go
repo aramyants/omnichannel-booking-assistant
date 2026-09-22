@@ -209,6 +209,7 @@ type conversationDoc struct {
 	ReminderOptIn          bool            `firestore:"reminder_opt_in"`
 	CatalogueCategory      string          `firestore:"catalogue_category,omitempty"`
 	CatalogueServiceID     string          `firestore:"catalogue_service_id,omitempty"`
+	CatalogueStaffID       string          `firestore:"catalogue_staff_id,omitempty"`
 	CataloguePage          int             `firestore:"catalogue_page,omitempty"`
 	ID                     string          `firestore:"id"`
 	CustomerID             string          `firestore:"customer_id"`
@@ -232,7 +233,7 @@ type conversationDoc struct {
 func toConversationDoc(conv conversation.Conversation) conversationDoc {
 	doc := conversationDoc{
 		ReminderOptIn:     conv.ReminderOptIn,
-		CatalogueCategory: conv.CatalogueCategory, CatalogueServiceID: conv.CatalogueServiceID, CataloguePage: conv.CataloguePage,
+		CatalogueCategory: conv.CatalogueCategory, CatalogueServiceID: conv.CatalogueServiceID, CatalogueStaffID: conv.CatalogueStaffID, CataloguePage: conv.CataloguePage,
 		ID:                     conv.ID,
 		CustomerID:             conv.CustomerID,
 		Provider:               string(conv.Provider),
@@ -280,7 +281,7 @@ func toConversationDoc(conv conversation.Conversation) conversationDoc {
 func fromConversationDoc(doc conversationDoc) conversation.Conversation {
 	conv := conversation.Conversation{
 		ReminderOptIn:     doc.ReminderOptIn,
-		CatalogueCategory: doc.CatalogueCategory, CatalogueServiceID: doc.CatalogueServiceID, CataloguePage: doc.CataloguePage,
+		CatalogueCategory: doc.CatalogueCategory, CatalogueServiceID: doc.CatalogueServiceID, CatalogueStaffID: doc.CatalogueStaffID, CataloguePage: doc.CataloguePage,
 		ID:                     doc.ID,
 		CustomerID:             doc.CustomerID,
 		Provider:               messaging.Provider(doc.Provider),

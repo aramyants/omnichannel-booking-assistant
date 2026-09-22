@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -138,7 +139,7 @@ func (s *stubScheduling) ListStaff(context.Context) ([]booking.Staff, error) {
 }
 
 func (s *stubScheduling) AvailableDates(context.Context, string) ([]time.Time, error) {
-	return nil, s.err
+	return []time.Time{bookingStart()}, s.err
 }
 
 func (s *stubScheduling) AvailableSlots(context.Context, string, time.Time) ([]booking.Slot, error) {
@@ -311,6 +312,34 @@ func TestToolResultsAreFedBackToTheModel(t *testing.T) {
 
 	if sender.sent[0].Text != "A haircut is 8000-12000 AMD and takes an hour." {
 		t.Errorf("sent = %q", sender.sent[0].Text)
+	}
+}
+
+func TestToolRoundLimitStillPresentsSuccessfulResults(t *testing.T) {
+	sender := &fakeSender{}
+	responses := make([]ai.Response, 0, maxToolRounds+1)
+	for i := 0; i < maxToolRounds; i++ {
+		responses = append(responses, toolResponse(
+			fmt.Sprintf("call_%d", i),
+			fmt.Sprintf("unknown_read_%d", i),
+			`{}`,
+		))
+	}
+	responses = append(responses, textResponse("I found the available options. Which one works for you?"))
+	model := &scriptedAI{responses: responses}
+	svc, _ := newAIService(t, model, defaultScheduling(), sender)
+
+	if err := svc.Handle(t.Context(), incoming("round-limit")); err != nil {
+		t.Fatal(err)
+	}
+	if model.calls != maxToolRounds+1 {
+		t.Fatalf("model calls = %d, want %d", model.calls, maxToolRounds+1)
+	}
+	if len(model.requests[len(model.requests)-1].Tools) != 0 {
+		t.Fatal("final completion still exposed tools")
+	}
+	if len(sender.sent) != 1 || sender.sent[0].Text != responses[len(responses)-1].Text {
+		t.Fatalf("reply = %+v", sender.sent)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
@@ -104,7 +105,7 @@ func (c *Client) Create(ctx context.Context, req booking.Request) (booking.Booki
 	}
 
 	record := records[0]
-	return booking.Booking{
+	created := booking.Booking{
 		ID:              id.New(),
 		ExternalID:      strconv.FormatInt(record.RecordID, 10),
 		ManagementToken: record.RecordHash,
@@ -115,7 +116,102 @@ func (c *Client) Create(ctx context.Context, req booking.Request) (booking.Booki
 		Duration:        req.Duration,
 		Status:          booking.StatusConfirmed,
 		CreatedAt:       time.Now().UTC(),
-	}, nil
+	}
+
+	// The public booking endpoint attaches an existing client by phone but does
+	// not replace that client's old profile name. Historical API diagnostics can
+	// therefore leak into the front desk even though the customer supplied their
+	// real name. Repair only that unmistakable placeholder, after confirmation,
+	// and never let this optional cleanup turn a real booking into a failure.
+	if c.repairClientNames && c.userToken != "" && strings.TrimSpace(req.CustomerName) != "" {
+		cleanupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		if err := c.repairDiagnosticClientName(cleanupCtx, phone, req.CustomerName); err != nil {
+			c.logger.WarnContext(ctx, "could not repair an altegio diagnostic client name", "error", err)
+		}
+		cancel()
+	}
+	return created, nil
+}
+
+type clientSearchRequest struct {
+	Page      int                  `json:"page"`
+	PageSize  int                  `json:"page_size"`
+	Fields    []string             `json:"fields"`
+	Operation string               `json:"operation"`
+	Filters   []clientSearchFilter `json:"filters"`
+}
+
+type clientSearchFilter struct {
+	Type  string `json:"type"`
+	State struct {
+		Value string `json:"value"`
+	} `json:"state"`
+}
+
+type clientSearchResult struct {
+	ID    int64           `json:"id"`
+	Name  string          `json:"name"`
+	Phone json.RawMessage `json:"phone"`
+}
+
+func (c *Client) repairDiagnosticClientName(ctx context.Context, phone, desiredName string) error {
+	search := clientSearchRequest{
+		Page: 1, PageSize: 10,
+		Fields: []string{"id", "name", "phone"}, Operation: "AND",
+		Filters: []clientSearchFilter{{Type: "quick_search"}},
+	}
+	search.Filters[0].State.Value = phone
+	clients, err := call[[]clientSearchResult](ctx, c, request{
+		method: http.MethodPost, path: "/company/" + c.companyID + "/clients/search",
+		body: search, repeatable: true,
+	})
+	if err != nil {
+		return fmt.Errorf("search client: %w", err)
+	}
+
+	var match *clientSearchResult
+	for i := range clients {
+		candidate := &clients[i]
+		candidatePhone, err := clientPhone(candidate.Phone)
+		if err != nil || candidatePhone != phone || !isDiagnosticClientName(candidate.Name) {
+			continue
+		}
+		if match != nil {
+			return errors.New("more than one diagnostic client matched the booking phone")
+		}
+		match = candidate
+	}
+	if match == nil {
+		return nil
+	}
+
+	_, err = call[json.RawMessage](ctx, c, request{
+		method: http.MethodPut,
+		path:   "/client/" + c.companyID + "/" + strconv.FormatInt(match.ID, 10),
+		body: struct {
+			Name  string `json:"name"`
+			Phone string `json:"phone"`
+		}{Name: strings.TrimSpace(desiredName), Phone: phone},
+		repeatable: true,
+	})
+	if err != nil {
+		return fmt.Errorf("update client: %w", err)
+	}
+	return nil
+}
+
+func isDiagnosticClientName(name string) bool {
+	return strings.Contains(strings.ToLower(strings.Join(strings.Fields(name), " ")), "api diagnostic")
+}
+
+func clientPhone(raw json.RawMessage) (string, error) {
+	value := strings.TrimSpace(string(raw))
+	if len(value) > 1 && value[0] == '"' {
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return "", err
+		}
+	}
+	return customer.NormalizePhone(value)
 }
 
 // toAppointment converts a domain request into Altegio's shape.

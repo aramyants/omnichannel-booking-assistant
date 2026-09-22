@@ -235,10 +235,10 @@ func NewService(deps Deps) (*Service, error) {
 // Without a limit a model that keeps asking for the same lookup would spend
 // money and the customer's patience indefinitely.
 //
-// Six is sized for the longest legitimate exchange: a customer who states
-// everything at once needs the catalogue, the specialists, the free times, a
-// prepared booking and a confirmation before there is anything to say. Most
-// messages need one round or none.
+// Six is sized for the longest ordinary exchange. If a legitimate request uses
+// every round, the service performs one final completion with tools disabled so
+// the model must present the facts it already gathered instead of discarding
+// successful availability work and showing the customer a technical apology.
 const maxToolRounds = 6
 
 // recentMessageLimit bounds how much transcript is read back. The AI context
@@ -839,8 +839,15 @@ func (s *Service) reply(
 		return s.compose(msg, sess.language), nil
 	}
 
+	instructions := s.instructions(cust, sess.language, msg.Sender.Language)
+	if conv.CatalogueServiceID != "" {
+		instructions += "\n\nThe customer selected service_id " + conv.CatalogueServiceID + " through the validated catalogue buttons. Use that exact service for availability and booking; do not ask them to choose it again."
+	}
+	if conv.CatalogueStaffID != "" {
+		instructions += "\nThe customer selected staff_id " + conv.CatalogueStaffID + " through a validated specialist button. Use that exact specialist and do not ask them to choose a specialist again unless they request a change."
+	}
 	req := ai.Request{
-		Instructions:    s.instructions(cust, sess.language, msg.Sender.Language),
+		Instructions:    instructions,
 		Messages:        toAIMessages(history),
 		Turns:           seededTurns,
 		Tools:           s.tools.definitions(),
@@ -908,10 +915,26 @@ func (s *Service) reply(
 		req.Turns = append(req.Turns, turn)
 	}
 
-	// Out of rounds. Something is wrong with the conversation rather than with
-	// the customer, so a colleague takes it rather than the loop continuing.
-	s.logger.WarnContext(ctx, "gave up after too many tool rounds",
-		"conversation_id", conv.ID, "rounds", maxToolRounds)
+	// The tool budget is exhausted, but the transcript may contain a completely
+	// valid last result (for example a prepared booking after several catalogue
+	// and availability lookups). Give the model one bounded, tool-free turn to
+	// present that result. It cannot start another lookup loop.
+	finalReq := req
+	finalReq.Tools = nil
+	resp, err := s.ai.Complete(ctx, finalReq)
+	if err == nil && !resp.WantsTools() && resp.Text != "" {
+		s.logger.InfoContext(ctx, "completed a final ai turn without tools",
+			"conversation_id", conv.ID,
+			"model", s.ai.Model(),
+			"rounds", maxToolRounds,
+			"input_tokens", resp.Usage.InputTokens,
+			"output_tokens", resp.Usage.OutputTokens,
+		)
+		sess.selectChoices(resp.Choices)
+		return resp.Text, nil
+	}
+	s.logger.WarnContext(ctx, "could not complete after the tool-round limit",
+		"conversation_id", conv.ID, "rounds", maxToolRounds, "error", err)
 	return s.apologise(ctx, sess)
 }
 

@@ -98,7 +98,7 @@ func (t *toolset) offerQualifiedStaff(ctx context.Context, s *session, service b
 			names = append(names, person.Name)
 		}
 	}
-	s.offer(names...)
+	s.offerAll(names...)
 	return encode(map[string]any{
 		"prepared":              false,
 		"reason":                "specialist_does_not_offer_service",

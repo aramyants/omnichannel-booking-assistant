@@ -62,15 +62,16 @@ var errRequestInvalid = errors.New("altegio rejected the request as malformed")
 // all callers, which is the point: the limit Altegio enforces is per IP, not
 // per goroutine.
 type Client struct {
-	httpClient   *http.Client
-	baseURL      string
-	partnerToken string
-	userToken    string
-	companyID    string
-	limiter      *rate.Limiter
-	logger       *slog.Logger
-	maxAttempts  int
-	sleep        func(context.Context, time.Duration) error
+	httpClient        *http.Client
+	baseURL           string
+	partnerToken      string
+	userToken         string
+	companyID         string
+	limiter           *rate.Limiter
+	logger            *slog.Logger
+	maxAttempts       int
+	repairClientNames bool
+	sleep             func(context.Context, time.Duration) error
 
 	// location is the business's timezone. Appointment times are stored and
 	// compared in UTC everywhere else in the system, but a customer saying
@@ -128,6 +129,13 @@ func WithCurrency(currency string) Option {
 	return func(c *Client) { c.currency = currency }
 }
 
+// WithClientNameRepair controls the narrow post-booking cleanup for historical
+// API test names. It is enabled by default in production and exposed mainly so
+// fixtures that model a single endpoint do not need to emulate client search.
+func WithClientNameRepair(enabled bool) Option {
+	return func(c *Client) { c.repairClientNames = enabled }
+}
+
 // NewClient returns a client for one Altegio location.
 //
 // partnerToken identifies the integration and userToken the business account.
@@ -143,16 +151,17 @@ func NewClient(partnerToken, userToken, companyID string, logger *slog.Logger, o
 	}
 
 	c := &Client{
-		httpClient:   &http.Client{Timeout: defaultTimeout},
-		baseURL:      defaultBaseURL,
-		partnerToken: partnerToken,
-		userToken:    userToken,
-		companyID:    companyID,
-		limiter:      rate.NewLimiter(rate.Limit(requestsPerSecond), requestBurst),
-		logger:       logger,
-		maxAttempts:  defaultMaxAttempts,
-		sleep:        sleepContext,
-		location:     time.UTC,
+		httpClient:        &http.Client{Timeout: defaultTimeout},
+		baseURL:           defaultBaseURL,
+		partnerToken:      partnerToken,
+		userToken:         userToken,
+		companyID:         companyID,
+		limiter:           rate.NewLimiter(rate.Limit(requestsPerSecond), requestBurst),
+		logger:            logger,
+		maxAttempts:       defaultMaxAttempts,
+		repairClientNames: true,
+		sleep:             sleepContext,
+		location:          time.UTC,
 	}
 	for _, opt := range opts {
 		opt(c)
