@@ -106,6 +106,8 @@ type Conversation struct {
 	CatalogueServiceID string
 	CatalogueStaffID   string
 	CataloguePage      int
+	CataloguePhase     string
+	CatalogueDate      string
 	ReminderOptIn      bool
 }
 

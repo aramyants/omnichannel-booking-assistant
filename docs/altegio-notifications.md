@@ -166,17 +166,29 @@ the Marketplace app can inject arbitrary HTML into Altegio's hosted form.
 
 Chrome inspection corrected the earlier app identification: **2397** is
 Altegio Pro MCP, not the studio bot application. The working backend's legacy
-developer credentials must be identified separately; no ownership transfer has
-been completed and no working credentials have been replaced.
+developer credentials belong to the legacy integration. The replacement app
+does not change appointment or customer IDs; it restores access independently
+of the inaccessible developer registration.
 
 A new developer account **2830**, E-Motion Concept, was registered under
 Garik's accessible login on 5 October 2026. Private app **2554**,
 E-Motion Concept Notifications (`emotionconceptnotifications`), was created
 in the SMS aggregators category with SMS, WhatsApp and Telegram metadata.
-It is unpublished and not activated as a branch notification provider. API
-permissions and connection endpoints remain unset until the implementation
-and provider contract are ready. Native SMS and WhatsApp channels are currently
-not connected; email and the administrator app are active.
+It remains unpublished publicly but is installed and **active** in branch
+1389810. Its system user has booking, client contact, surname, catalogue and
+message-detail permissions. Finance, payroll, inventory and user administration
+are excluded. New credentials passed `companies?my=1`, private `records`,
+`book_services` and `book_staff` checks. The old cloud credentials returned 403
+for private records. Cloud Build switches the pair together using separate,
+pinned version-1 Secret Manager entries for app 2554; prior revisions retain
+their original bindings for rollback.
+
+This API connection does not activate message delivery. SMS provider credentials,
+sender selection and provider endpoints remain unset. Native SMS and WhatsApp
+delivery are not connected; email and the administrator app remain active.
+The form now displays truthful country-code guidance without claiming that
+messenger/SMS verification is already running. Altegio support ticket
+**141720495** covers the provider contract and native field order/localization.
 
 Request restoration of the legacy developer registration if needed. Test the
 replacement branch authorization and notifications before switching. Keep the
@@ -185,7 +197,7 @@ reconcile native records. Do not change appointment identities during migration.
 
 ## Remaining implementation and acceptance gates
 
-- Identify legacy credential ownership and complete the new private app installation.
+- Complete and verify the backend cutover to active replacement app 2554.
 - Obtain the exact Altegio SMS-provider contract and callback credentials.
 - Implement authenticated webhook ingestion, Firestore outbox, worker leases,
   provider adapters, reconciliation, callbacks and self-booking deduplication.

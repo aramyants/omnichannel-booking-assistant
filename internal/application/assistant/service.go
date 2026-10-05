@@ -413,6 +413,13 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 	// A colleague handling the conversation must not be talked over, and a
 	// customer waiting for a person must not be answered by the bot again.
 	if !conv.AssistantMayReply() {
+		if notifier, ok := s.staff.(StaffInboundNotifier); ok && conv.Provider == messaging.ProviderTelegram {
+			if err := notifier.NotifyInbound(ctx, HandoffNotice{ConversationID: conv.ID,
+				Provider: conv.Provider, Customer: cust, ExternalUserID: msg.ExternalUserID,
+				RequestedAt: now}, originalText); err != nil {
+				s.logger.ErrorContext(ctx, "could not notify staff of a customer reply", "error", err, "conversation_id", conv.ID)
+			}
+		}
 		// Consent withdrawal remains effective during handover. Do not send an
 		// automated reply over the colleague or interpret STOP as cancellation.
 		if conv.Provider == messaging.ProviderWhatsApp && stopsReminders(msg.Content.Text) {
@@ -567,6 +574,9 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 	// numbered copies of native actions are noise; informative catalogue lines
 	// carrying a price or duration remain untouched.
 	choices := sess.buttons(text)
+	if sess.offering == offerNavigation && conv.CatalogueCategory == "" && conv.CataloguePhase == "" {
+		sess.finalLinks = append(sess.finalLinks, s.publicLinks(sess.language)...)
+	}
 	if sess.offering != offerNavigation {
 		text = withoutRedundantChoiceLines(text, choices)
 	}
@@ -822,6 +832,9 @@ func (s *Service) reply(
 	selectedPresentedChoice bool,
 ) (string, error) {
 	conv, cust := sess.conv, sess.customer
+	if text, ok := s.publicLinkReply(sess, msg.Content.Text); ok {
+		return text, nil
+	}
 
 	// Some menu entries are answered here rather than by the model: they say
 	// the same thing every time, and answering them from a table means they
@@ -853,6 +866,9 @@ func (s *Service) reply(
 	}
 	if conv.CatalogueStaffID != "" {
 		instructions += "\nThe customer selected staff_id " + conv.CatalogueStaffID + " through a validated specialist button. Use that exact specialist and do not ask them to choose a specialist again unless they request a change."
+	}
+	if conv.CatalogueDate != "" {
+		instructions += "\nThe customer selected calendar date " + conv.CatalogueDate + ". Use that exact year, month and day. Do not ask them to choose the date again unless they request a change."
 	}
 	req := ai.Request{
 		Instructions:    instructions,

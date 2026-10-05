@@ -1,4 +1,4 @@
-# Booking experience — 21 September 2026
+# Booking experience — 5 October 2026
 
 ## Customer flow
 
@@ -6,10 +6,14 @@ Greetings and `/start` open the live Altegio service categories immediately.
 Categories lead to short, paginated service lists with live prices, then one
 treatment's description. Back, categories, next/previous and human help are
 deterministic; free-text requests still work. Choosing a treatment asks for a
-day before the existing availability → draft → explicit confirmation flow.
+qualified specialist, then a date and the complete available time grid before
+the existing draft → explicit confirmation flow.
 Browsing abandons only unconfirmed changes, never a confirmed appointment.
 
-Telegram uses inline keyboards. Messenger and Instagram use quick replies;
+Telegram uses inline keyboards with up to 40 catalogue entries per page.
+Every returned category, specialist, date and time remains reachable; model
+suggestions cannot reduce an application-owned menu to three buttons.
+Messenger and Instagram use persistent postback buttons in groups of three;
 WhatsApp uses up to three reply buttons or a list (at most ten rows). Native
 action labels are not repeated in the message body. Informative service lists
 may keep numbered entries so typing a position remains possible. The payload
@@ -127,15 +131,30 @@ the bot immediately plans the appropriate new task.
 
 ## Staff handover
 
-The Telegram managers group is a notification stream, not a relay inbox. Each
-notice contains the customer's available name, phone/handle and a channel-correct
-link to Telegram, WhatsApp or Meta Business Suite. Staff answer in that native
-inbox. The old “I am taking this one” control and group-reply relay are disabled.
-A single “Done — return to assistant” action resumes automation and removes its
-keyboard immediately, so an old control cannot be pressed repeatedly. Messenger
-and Instagram handoff state—not ambiguous message echoes—keeps the assistant quiet
-while staff work in Business Suite. WhatsApp Business-app echoes are recorded as
-transcript context and also suppress an assistant reply already in progress.
+In the configured Telegram staff group, `/inbox` lists client conversations
+with recent activity, customer names and handover status. Staff can open the
+latest messages, page through older history, take over and resume the assistant.
+Replying to any history message sends the response through the studio bot and
+pauses automation for that client. New client messages during handover are
+forwarded to the group. Other group chat messages and bot messages are ignored.
+Callback access is checked before every private read or action; no customer
+chat can open this inbox. Histories are bounded and paginated without cutting
+Armenian text or dropping longer messages. Staff deliveries have event dedupe;
+an uncertain send is not automatically repeated.
+
+WhatsApp, Messenger and Instagram staff replies continue through their native
+business inboxes. Their Telegram notices link to the correct provider. Meta
+handoff state keeps the assistant quiet while staff work in Business Suite;
+WhatsApp Business-app echoes also suppress a reply already in progress.
+
+## Website, booking and social destinations
+
+Welcome category menus keep online booking and the studio website available.
+The localized **Contact & socials** entry groups Instagram, Facebook, Telegram,
+WhatsApp, the website and branch-specific online booking. `/book_online` and
+`/website` answer directly without a model. Category and time selections remain
+on their own grids, and social links do not replace interactive choices.
+Configure destinations with the `BUSINESS_*_URL` settings in `.env.example`.
 
 ## Verification and release
 

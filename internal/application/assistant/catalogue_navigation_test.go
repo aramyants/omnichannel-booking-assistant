@@ -76,7 +76,7 @@ func TestCategoryServiceNavigationAndBack(t *testing.T) {
 	sender := &fakeSender{}
 	svc, store := newAIService(t, nil, describedCategoryCalendar(), sender)
 	n := navigationSpeak(languageArmenian)
-	for i, text := range []string{"/start", "1", "1", n.book, n.back, n.back} {
+	for i, text := range []string{"/start", "1", "1", n.book, n.back, n.back, n.back} {
 		if err := svc.Handle(t.Context(), incomingText(fmt.Sprint("nav-", i), text)); err != nil {
 			t.Fatal(err)
 		}
@@ -91,7 +91,7 @@ func TestCategoryServiceNavigationAndBack(t *testing.T) {
 	if conv.CatalogueCategory != "" || conv.CatalogueServiceID != "" || conv.CatalogueStaffID != "" {
 		t.Fatalf("back did not reach root: %+v", conv)
 	}
-	if len(sender.sent[4].Choices) != 3 {
+	if len(sender.sent[5].Choices) != 3 {
 		t.Fatal("back did not restore category services")
 	}
 }
@@ -144,10 +144,10 @@ func TestTreatmentSelectionOffersAllSpecialistsThenQualifiedDates(t *testing.T) 
 	if err := svc.Handle(t.Context(), incomingText("date-choice", date)); err != nil {
 		t.Fatal(err)
 	}
-	if model.calls != 2 || !strings.Contains(model.requests[0].Instructions, "service_id face") || !strings.Contains(model.requests[0].Instructions, "staff_id 504") {
-		t.Fatalf("validated selection missing from availability turn: calls=%d instructions=%q", model.calls, model.requests[0].Instructions)
+	if model.calls != 0 {
+		t.Fatalf("calendar menu unexpectedly needed a model: calls=%d", model.calls)
 	}
-	if got := labelsOf(sender.sent[5].Choices); !slices.Equal(got, []string{"10:00"}) {
+	if got := labelsOf(sender.sent[5].Choices); !slices.Equal(got, []string{"10:00", n.back, n.categories}) {
 		t.Fatalf("time buttons = %v", got)
 	}
 }
@@ -160,10 +160,13 @@ func TestCataloguePaginationKeepsAllItemsReachable(t *testing.T) {
 	}
 	sender := &fakeSender{}
 	svc, _ := newAIService(t, nil, calendar, sender)
+	svc.senders[messaging.ProviderWhatsApp] = sender
 	n := navigationSpeak(languageArmenian)
 	sequence := []string{"/services", "1", n.next, n.next, n.next, n.previous}
 	for i, text := range sequence {
-		if err := svc.Handle(t.Context(), incomingText(fmt.Sprint("page-", i), text)); err != nil {
+		msg := incomingText(fmt.Sprint("page-", i), text)
+		msg.Provider = messaging.ProviderWhatsApp
+		if err := svc.Handle(t.Context(), msg); err != nil {
 			t.Fatal(err)
 		}
 	}

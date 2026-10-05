@@ -163,6 +163,12 @@ func (c *Client) SendWhatsApp(ctx context.Context, msg messaging.Outgoing) error
 	if c.phoneNumberID == "" {
 		return fmt.Errorf("whatsapp: no phone number id is configured")
 	}
+	// Plain HTTPS links remain tappable beside list/reply controls. Do not drop
+	// them when this channel uses its native interactive choice list.
+	for _, link := range msg.Links {
+		msg.Text += "\n\n" + link.Label + ": " + link.URL
+	}
+	msg.Links = nil
 
 	if len(msg.Choices) > 0 {
 		chunks := textChunks(msg.Text, 1024)

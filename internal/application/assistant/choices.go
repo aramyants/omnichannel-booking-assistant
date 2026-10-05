@@ -238,5 +238,5 @@ func helpChoices(lang language) []messaging.Choice {
 // menuChoices are what a customer is shown when they open the chat.
 func menuChoices(lang language) []messaging.Choice {
 	p := speak(lang)
-	return choicesOf(p.bookAVisit, p.servicesPrices, p.myAppointments, p.talkToAPerson)
+	return choicesOf(p.bookAVisit, p.servicesPrices, p.myAppointments, p.talkToAPerson, contactLabel(lang))
 }

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/staffinbox"
+
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
@@ -64,6 +66,7 @@ type Store struct {
 	// staffThreads maps a message posted in the staff chat to the conversation
 	// it announced, so a colleague replying to it is understood.
 	staffThreads map[string]string
+	inboxPages   map[string]staffinbox.Page
 
 	processedTTL time.Duration
 	claimTTL     time.Duration

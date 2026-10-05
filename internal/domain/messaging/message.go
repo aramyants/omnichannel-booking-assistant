@@ -155,9 +155,9 @@ type Link struct {
 	URL   string
 }
 
-// maxChoices bounds how many options one reply may carry. More than this is a
-// wall rather than a choice, and no phone shows it without scrolling.
-const maxChoices = 12
+// maxChoices is a resource bound, not a presentation preference. Workflows
+// paginate for each channel before reaching this shared transport model.
+const maxChoices = 100
 
 // Outgoing is a message the assistant wants to deliver back to a customer.
 type Outgoing struct {
@@ -178,7 +178,7 @@ type Outgoing struct {
 }
 
 // WithChoices returns a copy of o offering choices, dropping the empty and the
-// repeated and keeping no more than a customer can be shown at once.
+// repeated. Channel-specific page sizes belong to the workflow, not here.
 //
 // Repeats are dropped because two identical buttons are indistinguishable once
 // tapped, so the second one can only ever confuse.

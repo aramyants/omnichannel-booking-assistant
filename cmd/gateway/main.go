@@ -32,6 +32,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/assistant"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/calendar"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/reminders"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/staffinbox"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/platform/config"
@@ -250,9 +251,15 @@ func run() error {
 		Reminders:           reminderService,
 		AppointmentMessages: appointmentMessages,
 		Business: assistant.Business{
-			Name:        cfg.BusinessName,
-			Description: cfg.BusinessDescription,
-			Location:    cfg.Altegio.Location,
+			WebsiteURL:   cfg.BusinessProfile.WebsiteURL,
+			BookingURL:   cfg.BusinessProfile.BookingURL,
+			InstagramURL: cfg.BusinessProfile.InstagramURL,
+			FacebookURL:  cfg.BusinessProfile.FacebookURL,
+			TelegramURL:  cfg.BusinessProfile.TelegramURL,
+			WhatsAppURL:  cfg.BusinessProfile.WhatsAppURL,
+			Name:         cfg.BusinessName,
+			Description:  cfg.BusinessDescription,
+			Location:     cfg.Altegio.Location,
 		},
 	})
 	if err != nil {
@@ -265,7 +272,8 @@ func run() error {
 			assistantService,
 			logger,
 			telegram.WithStaffChat(cfg.Telegram.StaffChatID),
-			telegram.WithStaffCommands(assistantService, telegramClient, cfg.Telegram.StaffChatID),
+			telegram.WithStaffDesk(assistantService, store, telegramClient, cfg.Telegram.StaffChatID),
+			telegram.WithStaffInbox(store, telegramClient, cfg.Telegram.StaffChatID, cfg.Altegio.Location),
 			// Lets a pressed button be acknowledged and an answered question
 			// stop being answerable.
 			telegram.WithButtons(telegramClient),
@@ -402,12 +410,13 @@ func publishTelegramMenu(ctx context.Context, client *telegram.Client, cfg confi
 		published++
 	}
 
-	// The staff group gets no menu at all. Everything a colleague does there is
-	// a button on the notification it belongs to, and a customer menu offering
-	// to book them an appointment would only be in the way.
+	// The staff group's scope is separate from client menus. Authorization is
+	// still enforced by the webhook handler, not by menu visibility.
 	if cfg.Telegram.StaffChatID != "" {
-		if err := client.SetCommands(ctx, cfg.Telegram.StaffChatID, "", nil); err != nil {
-			logger.Warn("could not clear the command menu in the staff chat", "error", err)
+		for _, language := range []string{"", "en", "ru", "hy"} {
+			if err := client.SetCommands(ctx, cfg.Telegram.StaffChatID, language, []telegram.Command{{Name: "inbox", Description: "Հաճախորդների Telegram զրույցները"}}); err != nil {
+				logger.Warn("could not publish the staff inbox menu", "error", err, "language", language)
+			}
 		}
 	}
 
@@ -424,6 +433,7 @@ type appStore interface {
 	assistant.ProcessedEvents
 	assistant.ConversationTurns
 	assistant.BookingRepository
+	staffinbox.Repository
 	calendar.Repository
 
 	// Staff notifications are linked to the conversation they announce, so a

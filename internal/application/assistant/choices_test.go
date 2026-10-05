@@ -30,8 +30,7 @@ func TestWorkflowChoicesKeepEverySpecialistAndSupportTypedNumbers(t *testing.T) 
 	want := []string{"Galina", "Yaroslava", "Elvira", "Garik"}
 	sess.offerAll(want...)
 
-	// Structured model replies are intentionally limited to three suggestions,
-	// but a live specialist list is application-owned and must remain complete.
+	// A model suggesting fewer entries must not replace the complete live list.
 	sess.selectChoices(want[:3])
 	if got := labelsOf(sess.buttons("Whose schedule should I check?")); !slices.Equal(got, want) {
 		t.Fatalf("buttons = %v, want %v", got, want)
@@ -62,7 +61,8 @@ func TestFreeTimesAreOfferedAsButtons(t *testing.T) {
 	}
 
 	got := labelsOf(sender.sent[0].Choices)
-	want := []string{"10:00", "10:30"}
+	n := navigationSpeak(languageArmenian)
+	want := []string{"10:00", "10:30", n.back, n.categories}
 	if len(got) != len(want) {
 		t.Fatalf("choices = %v, want %v", got, want)
 	}
@@ -149,8 +149,8 @@ func TestOpeningTheChatIsAnsweredWithoutAModel(t *testing.T) {
 		t.Errorf("reply = %q, want it to name the business", sender.sent[0].Text)
 	}
 
-	if got, want := len(sender.sent[0].Choices), 3; got != want {
-		t.Errorf("offered %d choices, want category, appointments and person (%d)", got, want)
+	if got, want := len(sender.sent[0].Choices), 4; got != want {
+		t.Errorf("offered %d choices, want category, appointments, person and contact (%d)", got, want)
 	}
 }
 
@@ -292,6 +292,10 @@ func TestTheMenuAndItsButtonsAgree(t *testing.T) {
 		labels := map[string]bool{}
 		for _, choice := range menuChoices(lang) {
 			labels[choice.Label] = true
+		}
+		svc := &Service{business: Business{WebsiteURL: "https://example.org/", BookingURL: "https://example.org/book"}}
+		for _, link := range svc.publicLinks(lang) {
+			labels[link.Label] = true
 		}
 
 		for _, command := range menuIn(lang) {
