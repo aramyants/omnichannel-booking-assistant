@@ -90,6 +90,10 @@ type Renderer struct {
 	location *time.Location
 }
 
+// Business returns the same trusted public profile used in confirmations, so
+// the assistant can answer ordinary visit questions before a booking exists.
+func (r Renderer) Business() Business { return r.business }
+
 func (r Renderer) WithCalendar(baseURL string) Renderer { r.baseURL = baseURL; return r }
 func (r Renderer) CalendarURL(b booking.Booking, lang Language) string {
 	return calendar.Link(r.baseURL, b, string(lang))

@@ -514,6 +514,14 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 		return err
 	}
 
+	text = withoutHearts(text)
+	if strings.TrimSpace(text) == "" {
+		text, err = s.apologise(turnCtx, sess)
+		if err != nil {
+			return err
+		}
+	}
+
 	// A tool may have handed the conversation to a colleague, and that state
 	// change has to survive whatever happens next.
 	if err := s.conversations.Save(ctx, conv); err != nil {

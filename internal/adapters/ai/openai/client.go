@@ -23,10 +23,9 @@ const (
 	// change faster than deployments, so it is overridable: a wrong one is a
 	// configuration fix rather than a release.
 	//
-	// Luna is the tier OpenAI sizes for high-volume chat and simple tool calls,
-	// which is exactly this workload, and it costs about a tenth of the
-	// balanced tier. Set OPENAI_MODEL to gpt-5.6-terra if replies need more
-	// reasoning than it gives.
+	// Keep the deployed baseline until an evaluation shows a quality gain
+	// within the studio's latency and cost requirements. OPENAI_MODEL selects
+	// a candidate; docs/bot-quality.md describes the synthetic evaluation.
 	DefaultModel = "gpt-5.6-luna"
 
 	// defaultTimeout is generous because a customer is waiting on the reply,

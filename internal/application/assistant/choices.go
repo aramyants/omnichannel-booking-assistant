@@ -79,16 +79,16 @@ var phrasebook = map[language]phrases{
 		myAppointments: "My appointments",
 		servicesPrices: "Services and prices",
 		startAgain:     "Start again",
-		whatICanDo:     "What I can do",
-		welcome: "Hello! 👋\n\nI’m the booking assistant at %s.\n\n" +
-			"I can show services and prices, find a free time, and book your visit.\n\n" +
-			"What would you like?",
-		apology: "Sorry, I could not check that just now. Please try again in a moment, " +
+		whatICanDo:     "How we can help",
+		welcome: "Hello. This is the booking assistant at %s.\n\n" +
+			"We can help with services, prices and appointments.\n\n" +
+			"How can we help?",
+		apology: "Sorry, we could not check that just now. Please try again in a moment, " +
 			"or tap the button and a colleague will take over.",
 		handedOver: "Of course. A colleague will reply here shortly.",
-		noModel: "Thanks, I have your message. " +
+		noModel: "Thank you, we have received your message. " +
 			"A colleague will follow up with you shortly.",
-		noModelUnsupported: "Thanks. I can only read text messages at the moment, so I could not " +
+		noModelUnsupported: "Thank you. We can only read text messages at the moment, so we could not " +
 			"open what you sent. Could you describe what you need in a message?",
 	},
 	languageArmenian: {
@@ -101,18 +101,18 @@ var phrasebook = map[language]phrases{
 		myAppointments: "Իմ այցերը",
 		servicesPrices: "Ծառայություններ և գներ",
 		startAgain:     "Սկսել նորից",
-		whatICanDo:     "Ինչ կարող եմ անել",
-		welcome: "Բարև Ձեզ 👋\n\nԵս %s-ի ամրագրման օգնականն եմ։\n\n" +
-			"Կարող եմ ցույց տալ ծառայություններն ու գները, գտնել ազատ ժամ և ամրագրել Ձեր այցը։\n\n" +
-			"Ինչո՞վ կարող եմ օգնել։",
-		apology: "Ներողություն, հիմա չկարողացա ստուգել: Խնդրում եմ փորձեք մի փոքր ուշ, " +
-			"կամ սեղմեք կոճակը՝ աշխատակցի հետ կապվելու համար:",
-		handedOver: "Իհարկե: Աշխատակիցը շուտով կպատասխանի այստեղ:",
-		noModel: "Շնորհակալություն, ստացա Ձեր հաղորդագրությունը: " +
-			"Աշխատակիցը շուտով կկապվի Ձեզ հետ:",
-		noModelUnsupported: "Շնորհակալություն: Այս պահին կարող եմ կարդալ միայն տեքստային " +
-			"հաղորդագրություններ, ուստի չկարողացա բացել ուղարկածը: " +
-			"Կարո՞ղ եք գրել, թե ինչ է Ձեզ պետք:",
+		whatICanDo:     "Ինչով կարող ենք օգնել",
+		welcome: "Բարև Ձեզ։ Սա %s-ի ամրագրման օգնականն է։\n\n" +
+			"Կարող ենք ներկայացնել ծառայություններն ու գները և օգնել ամրագրել այցը։\n\n" +
+			"Ինչո՞վ կարող ենք օգնել Ձեզ։",
+		apology: "Ներողություն, այս պահին չկարողացանք ստուգել։ Խնդրում ենք փորձել մի փոքր ուշ " +
+			"կամ սեղմել կոճակը՝ աշխատակցի հետ կապվելու համար։",
+		handedOver: "Ձեր հարցը փոխանցել ենք մեր թիմին։ Աշխատակիցը կպատասխանի այստեղ։",
+		noModel: "Շնորհակալություն, ստացել ենք Ձեր հաղորդագրությունը։ " +
+			"Աշխատակիցը կկապվի Ձեզ հետ։",
+		noModelUnsupported: "Շնորհակալություն։ Այս պահին կարող ենք կարդալ միայն տեքստային " +
+			"հաղորդագրություններ, ուստի չկարողացանք բացել ուղարկածը։ " +
+			"Խնդրում ենք գրել Ձեր հարցը։",
 	},
 	languageRussian: {
 		confirmBooking: "Да, запишите",
@@ -124,17 +124,17 @@ var phrasebook = map[language]phrases{
 		myAppointments: "Мои записи",
 		servicesPrices: "Услуги и цены",
 		startAgain:     "Начать заново",
-		whatICanDo:     "Что я умею",
-		welcome: "Здравствуйте! 👋\n\nЯ помощник по записи в %s.\n\n" +
-			"Могу показать услуги и цены, найти свободное время и записать вас.\n\n" +
-			"Чем могу помочь?",
+		whatICanDo:     "Как мы можем помочь",
+		welcome: "Здравствуйте! Это помощник по записи в %s.\n\n" +
+			"Поможем с услугами, ценами и записью на визит.\n\n" +
+			"Чем можем помочь?",
 		apology: "Извините, сейчас не получилось проверить. Попробуйте, пожалуйста, чуть позже " +
 			"или нажмите кнопку, и с вами свяжется сотрудник.",
 		handedOver: "Конечно. Сотрудник ответит здесь в ближайшее время.",
-		noModel: "Спасибо, я получил ваше сообщение. " +
+		noModel: "Спасибо, мы получили ваше сообщение. " +
 			"Сотрудник свяжется с вами в ближайшее время.",
-		noModelUnsupported: "Спасибо. Сейчас я могу читать только текстовые сообщения, " +
-			"поэтому не смог открыть то, что вы прислали. " +
+		noModelUnsupported: "Спасибо. Сейчас мы можем читать только текстовые сообщения, " +
+			"поэтому не смогли открыть то, что вы прислали. " +
 			"Опишите, пожалуйста, что вам нужно.",
 	},
 }

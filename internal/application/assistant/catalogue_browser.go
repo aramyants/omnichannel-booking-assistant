@@ -32,7 +32,7 @@ var cataloguePhrasebook = map[language]cataloguePhrases{
 		categoryIncludes: "Includes",
 		chooseCategory:   "Choose a category — tap a button or send its number.",
 		chooseService:    "Choose a service — tap a button or send its number.",
-		unavailable:      "I couldn’t load the services just now. Please try again in a moment or choose “Talk to a person”.",
+		unavailable:      "We couldn’t load the services just now. Please try again in a moment or choose “Talk to a person”.",
 		duration:         func(minutes int) string { return fmt.Sprintf("%d min", minutes) },
 	},
 	languageRussian: {

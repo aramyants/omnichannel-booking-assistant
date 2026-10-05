@@ -1201,7 +1201,7 @@ func (t *toolset) requestHandoff(s *session, call ai.ToolCall) (string, error) {
 
 	return encode(map[string]any{
 		"handed_over": true,
-		"instruction": "Tell the customer a colleague will reply shortly. Do not promise a time.",
+		"instruction": "Tell the customer we have passed their question to our team. Do not promise a response time or specific information from a colleague.",
 	})
 }
 
