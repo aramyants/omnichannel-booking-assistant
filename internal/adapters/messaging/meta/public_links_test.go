@@ -25,7 +25,7 @@ func TestSocialDestinationsAndChoicesAreBothDelivered(t *testing.T) {
 			}))
 			defer server.Close()
 			msg := messaging.Outgoing{Provider: provider, ExternalThreadID: "client", Text: "Contact & socials", ChoiceToken: "test", Choices: []messaging.Choice{{Label: "Book a visit"}, {Label: "Services"}, {Label: "My appointments"}, {Label: "Talk to a person"}}}
-			for i := 0; i < 6; i++ {
+			for i := 0; i < 10; i++ {
 				msg.Links = append(msg.Links, messaging.Link{Label: fmt.Sprint("Destination ", i), URL: fmt.Sprintf("https://example.org/%d", i)})
 			}
 			if provider == messaging.ProviderWhatsApp {

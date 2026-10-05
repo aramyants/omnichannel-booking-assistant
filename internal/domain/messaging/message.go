@@ -221,7 +221,9 @@ func (o Outgoing) WithLinks(links []Link) Outgoing {
 		}
 		seen[rawURL] = true
 		kept = append(kept, Link{Label: label, URL: rawURL})
-		if len(kept) == 6 {
+		// A resource bound, not a catalogue or social-destination selection.
+		// Channel adapters arrange all configured contact/direction actions.
+		if len(kept) == 100 {
 			break
 		}
 	}

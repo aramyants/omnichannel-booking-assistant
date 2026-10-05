@@ -33,6 +33,8 @@ type Business struct {
 	FacebookURL  string
 	TelegramURL  string
 	WhatsAppURL  string
+	TikTokURL    string
+	YouTubeURL   string
 }
 
 // instructions builds the standing guidance sent with every completion.

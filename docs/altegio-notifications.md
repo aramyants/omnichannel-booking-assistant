@@ -18,7 +18,8 @@ WhatsApp and SMS targets. `internal/adapters/messaging/smsgate` sends one
 transactional SMS and queries its status using the documented SMSGate API.
 Both are tested foundations. **Neither is wired into gateway routes or the
 production notification worker yet. No native form OTP or SMS is activated by
-this change.** There is no new admin interface in this repository.
+this change.** The Telegram staff conversation inbox is available; browser
+administration of notification routing/delivery is still to be implemented.
 
 ## Architecture decision
 
@@ -197,7 +198,9 @@ reconcile native records. Do not change appointment identities during migration.
 
 ## Remaining implementation and acceptance gates
 
-- Complete and verify the backend cutover to active replacement app 2554.
+- Backend credential cutover to app 2554 is complete: the deployed pair was
+  compared privately and company, private record, service and staff reads passed
+  on 5 October 2026. Retain prior revision bindings for rollback.
 - Obtain the exact Altegio SMS-provider contract and callback credentials.
 - Implement authenticated webhook ingestion, Firestore outbox, worker leases,
   provider adapters, reconciliation, callbacks and self-booking deduplication.

@@ -1,5 +1,23 @@
 # Meta setup status
 
+## Runtime and profile recheck — 5 October 2026
+
+The production WhatsApp API phone now matches the work number +37494768067;
+it is no longer the Meta test phone described below. WhatsApp Manager shows
+the studio number connected with high quality. Its profile lists the studio
+website and one connected Facebook Page. Chrome's profile fields are disabled,
+and the business-profile API returns 403 with the current token.
+
+WhatsApp Manager reports no valid payment method and says only clients can
+initiate conversations on the current free plan. Billing and approved/configured
+utility templates are required before proactive booking notices. No billing or
+security permissions were changed during this check. These observations do not
+establish every outstanding review permission or template approval.
+
+Customer menus now include website, branch booking, Instagram, Facebook,
+Telegram, WhatsApp, TikTok, YouTube and both map links. The Telegram staff inbox
+is restricted to the configured staff chat. Historical setup notes follow.
+
 ## Runtime recheck — 20 September 2026
 
 Cloud Run is healthy at `d25bc15` before the booking-experience release.
