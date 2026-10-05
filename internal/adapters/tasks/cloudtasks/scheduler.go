@@ -113,17 +113,32 @@ func (s *Scheduler) Schedule(ctx context.Context, task reminders.Task) error {
 	if err != nil {
 		return fmt.Errorf("cloud tasks: encode reminder payload: %w", err)
 	}
-	scheduleTime := timestamppb.New(task.RunAt)
+	return s.scheduleBody(ctx, task.ID, task.RunAt, body)
+}
+
+// ScheduleNotification uses the same queue identity with a separate task route.
+func (s *Scheduler) ScheduleNotification(ctx context.Context, id, eventID string, runAt time.Time) error {
+	if id == "" || eventID == "" || runAt.IsZero() {
+		return errors.New("cloud tasks: notification is incomplete")
+	}
+	body, err := json.Marshal(map[string]string{"event_id": eventID})
+	if err != nil {
+		return err
+	}
+	return s.scheduleBody(ctx, id, runAt, body)
+}
+func (s *Scheduler) scheduleBody(ctx context.Context, id string, runAt time.Time, body []byte) error {
+	scheduleTime := timestamppb.New(runAt)
 	if err := scheduleTime.CheckValid(); err != nil {
 		return fmt.Errorf("cloud tasks: invalid run time: %w", err)
 	}
 
 	createCtx, cancel := context.WithTimeout(ctx, createTaskTimeout)
 	defer cancel()
-	_, err = s.client.CreateTask(createCtx, &cloudtaskspb.CreateTaskRequest{
+	_, err := s.client.CreateTask(createCtx, &cloudtaskspb.CreateTaskRequest{
 		Parent: s.parent,
 		Task: &cloudtaskspb.Task{
-			Name: s.parent + "/tasks/" + task.ID,
+			Name: s.parent + "/tasks/" + id,
 			MessageType: &cloudtaskspb.Task_HttpRequest{HttpRequest: &cloudtaskspb.HttpRequest{
 				Url:        s.targetURL,
 				HttpMethod: cloudtaskspb.HttpMethod_POST,

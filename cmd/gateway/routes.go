@@ -36,14 +36,16 @@ const (
 // nil when that channel is not configured, and their routes are then not
 // served at all rather than served and failing.
 type gateway struct {
-	logger    *slog.Logger
-	version   string
-	telegram  http.Handler
-	whatsapp  http.Handler
-	messenger http.Handler
-	instagram http.Handler
-	reminder  http.Handler
-	calendar  http.Handler
+	logger        *slog.Logger
+	version       string
+	telegram      http.Handler
+	whatsapp      http.Handler
+	messenger     http.Handler
+	instagram     http.Handler
+	reminder      http.Handler
+	calendar      http.Handler
+	altegio       http.Handler
+	notifications http.Handler
 }
 
 func (g *gateway) routes() http.Handler {
@@ -73,6 +75,12 @@ func (g *gateway) routes() http.Handler {
 	}
 	if g.reminder != nil {
 		mux.Handle("POST "+ReminderTaskPath, g.reminder)
+	}
+	if g.altegio != nil {
+		mux.Handle("POST /webhooks/altegio", g.altegio)
+	}
+	if g.notifications != nil {
+		mux.Handle("POST /tasks/notifications", g.notifications)
 	}
 
 	// Outermost first. RequestID runs before the logger so every entry carries

@@ -99,6 +99,7 @@ type location struct {
 
 type contact struct {
 	PhoneNumber string `json:"phone_number"`
+	UserID      int64  `json:"user_id"`
 }
 
 // sendMessageRequest is the body of a sendMessage call.
