@@ -16,10 +16,12 @@ availability is not evidence of experience or training.
 `internal/application/notifications.Plan` calculates eligible Telegram,
 WhatsApp and SMS targets. `internal/adapters/messaging/smsgate` sends one
 transactional SMS and queries its status using the documented SMSGate API.
-Both are tested foundations. **Neither is wired into gateway routes or the
-production notification worker yet. No native form OTP or SMS is activated by
-this change.** The Telegram staff conversation inbox is available; browser
-administration of notification routing/delivery is still to be implemented.
+The native booking event worker, verified Telegram contact linking and staff
+routing controls are now deployed. See [the release setup and guarantees](native-notifications.md).
+SMSGate remains an unwired foundation: SMS and native form OTP are disabled.
+WhatsApp is gated on approved utility templates and billing readiness. The
+future architecture below includes SMS and delivery callbacks, which are not
+claims about the current messenger release.
 
 ## Architecture decision
 

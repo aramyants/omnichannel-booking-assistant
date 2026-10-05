@@ -15,6 +15,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/meta"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/telegram"
 	cloudtasksadapter "github.com/aramyants/omnichannel-booking-assistant/internal/adapters/tasks/cloudtasks"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/notifications"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
@@ -36,7 +37,7 @@ func openNotifications(ctx context.Context, cfg config.Config, store appStore, r
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	service := &notifications.Service{Repo: repo, Scheduler: scheduler, Reader: reader, Owned: store, Sender: nativeNotificationSender{tg: tg, wa: wa, store: store, logger: logger, location: cfg.Altegio.Location, bookingURL: cfg.BusinessProfile.BookingURL, websiteURL: cfg.BusinessProfile.WebsiteURL}, ActivatedAt: cfg.Notifications.ActivatedAt, WhatsAppTemplates: cfg.Notifications.WhatsAppTemplates}
+	service := &notifications.Service{Repo: repo, Scheduler: scheduler, Reader: reader, Owned: store, Sender: nativeNotificationSender{tg: tg, wa: wa, store: store, logger: logger, location: cfg.Altegio.Location, renderer: newAppointmentMessages(cfg), bookingURL: cfg.BusinessProfile.BookingURL, websiteURL: cfg.BusinessProfile.WebsiteURL}, ActivatedAt: cfg.Notifications.ActivatedAt, WhatsAppTemplates: cfg.Notifications.WhatsAppTemplates}
 	authorizer, err := cloudtasksadapter.NewAuthorizer(cfg.Reminders.Audience, cfg.Reminders.ServiceAccountEmail)
 	if err != nil {
 		_ = scheduler.Close()
@@ -164,10 +165,12 @@ type nativeNotificationSender struct {
 	store                  appStore
 	logger                 *slog.Logger
 	location               *time.Location
+	renderer               appointmentmessage.Renderer
 	bookingURL, websiteURL string
 }
 
 func (s nativeNotificationSender) SendNotification(ctx context.Context, target notifications.Target, notice notifications.Notice, lang string) (bool, error) {
+	lang = string(appointmentmessage.ParseLanguage(lang))
 	b := notice.Snapshot.Booking
 	local := b.StartsAt.In(s.location)
 	title := map[string]map[notifications.Purpose]string{
@@ -187,10 +190,20 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 		err := s.wa.SendBookingTemplate(ctx, target.Address, target.TemplateID, lang, []string{title, when, details})
 		return errors.Is(err, meta.ErrRejected), err
 	}
-	text := title + "\n" + when + "\n" + details + "\nE-Motion Concept · Myasnikyan 1/6, Yerevan\n+374 94 768067"
+	appointment := appointmentmessage.Appointment{CustomerName: b.CustomerName, StartsAt: b.StartsAt, Service: strings.Join(b.ServiceNames, ", "), Specialist: b.StaffName}
+	render := s.renderer.Confirmation
+	switch notice.Purpose {
+	case notifications.BookingChanged:
+		render = s.renderer.Changed
+	case notifications.BookingCancelled:
+		render = s.renderer.Cancelled
+	}
+	text := render(appointmentmessage.Language(lang), appointment)
 	msg := messaging.Outgoing{Provider: messaging.ProviderTelegram, ExternalThreadID: target.Address, Text: text}
 	labels := map[string][]string{"hy": {"Առցանց ամրագրում", "Կայք և հասցե"}, "ru": {"Онлайн-запись", "Сайт и адрес"}, "en": {"Book online", "Website & directions"}}[lang]
-	msg = msg.WithLinks([]messaging.Link{{Label: labels[0], URL: s.bookingURL}, {Label: labels[1], URL: s.websiteURL}})
+	links := []messaging.Link{{Label: labels[0], URL: s.bookingURL}, {Label: labels[1], URL: s.websiteURL}}
+	links = append(links, s.renderer.Links(appointmentmessage.Language(lang), appointment)...)
+	msg = msg.WithLinks(links)
 	err := s.tg.Send(ctx, msg)
 	if err == nil && s.store != nil {
 		if historyErr := s.recordTranscript(ctx, msg, notice, lang); historyErr != nil {

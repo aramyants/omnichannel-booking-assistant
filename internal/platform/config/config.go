@@ -165,6 +165,8 @@ type AI struct {
 	// change rather than a release. Empty uses the adapter's default.
 	Model              string
 	TranscriptionModel string
+	ReasoningEffort    string
+	MaxOutputTokens    int
 
 	// BaseURL overrides the API host, for exercising the assistant locally
 	// against a stub and for routing through a proxy. Empty means the real API.
@@ -465,6 +467,16 @@ func Load() (Config, error) {
 		Model:              getenv("OPENAI_MODEL", ""),
 		TranscriptionModel: getenv("OPENAI_TRANSCRIPTION_MODEL", ""),
 		BaseURL:            strings.TrimSuffix(getenv("OPENAI_BASE_URL", ""), "/"),
+		ReasoningEffort:    getenv("OPENAI_REASONING_EFFORT", "high"),
+	}
+	switch cfg.AI.ReasoningEffort {
+	case "none", "low", "medium", "high", "xhigh", "max":
+	default:
+		errs = append(errs, errors.New("OPENAI_REASONING_EFFORT is invalid"))
+	}
+	cfg.AI.MaxOutputTokens, err = strconv.Atoi(getenv("OPENAI_MAX_OUTPUT_TOKENS", "8192"))
+	if err != nil || cfg.AI.MaxOutputTokens < 512 || cfg.AI.MaxOutputTokens > 32768 {
+		errs = append(errs, errors.New("OPENAI_MAX_OUTPUT_TOKENS must be between 512 and 32768"))
 	}
 	if !cfg.AI.Enabled() && cfg.AI.Model != "" {
 		errs = append(errs, errors.New("OPENAI_MODEL is set but OPENAI_API_KEY is not"))

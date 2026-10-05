@@ -111,3 +111,24 @@ func TestMissingTranslationIsOmitted(t *testing.T) {
 		t.Fatalf("another language leaked into Armenian confirmation:\n%s", got)
 	}
 }
+
+func TestCancelledVisitDoesNotInviteArrivalOrAddToCalendar(t *testing.T) {
+	renderer := New(Business{
+		Name:        "E-Motion Concept",
+		Preparation: LocalizedText{Armenian: "ARRIVAL_INSTRUCTIONS"},
+		Amenities:   LocalizedText{Armenian: "STUDIO_FACILITIES"},
+		Phone:       "+37494768067",
+	}, time.UTC)
+	appointment := Appointment{StartsAt: time.Date(2026, 10, 6, 10, 0, 0, 0, time.UTC), Service: "Motion Relax", CalendarURL: "https://example.test/calendar"}
+	got := renderer.Cancelled(Armenian, appointment)
+	for _, absent := range []string{"ARRIVAL_INSTRUCTIONS", "STUDIO_FACILITIES", "https://example.test/calendar", "սպասում ենք"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("cancelled visit still contains %q", absent)
+		}
+	}
+	for _, want := range []string{"❌ Ձեր ամրագրումը չեղարկված է", "📅 Ամսաթիվ:", "🌿 Ծառայություն: Motion Relax", "☎️ +37494768067", "գրել մեզ այստեղ"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("cancelled visit missing %q", want)
+		}
+	}
+}

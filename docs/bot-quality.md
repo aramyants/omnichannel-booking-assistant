@@ -24,7 +24,7 @@ evaluation with an API key supplied securely in the environment:
 
 ```powershell
 $env:LIVE_VOICE_EVAL = '1'
-$env:VOICE_EVAL_MODELS = 'gpt-5.6-luna,gpt-6-luna'
+$env:VOICE_EVAL_MODELS = 'gpt-6.1-sol'
 $env:VOICE_EVAL_REPORT = 'C:/private-work/voice-eval.json'
 go test ./internal/application/assistant -run '^TestLiveArmenianVoiceEval$' -count=1 -timeout=8m -v
 ```
@@ -42,10 +42,19 @@ pressure. Expand the set with anonymized failure cases from real conversations,
 with held-out cases and booking/tool safety checks before changing models.
 Never commit raw client transcripts or credentials to this public repository.
 
-The initial small comparison did not establish a quality advantage for the
-newer Luna model. Keep the deployed model until a larger review demonstrates
-an improvement within the studio's reply-time and cost requirements. A model
-upgrade alone cannot supply missing staff biographies or studio information.
+The business requested an upgrade from GPT-5.6 Luna to GPT-6.1 Sol. The new
+configuration explicitly uses high reasoning and an 8192-token budget shared
+by reasoning and the concise customer reply. Opaque encrypted reasoning and
+assistant phase are replayed in order during tool calls, held only in memory
+for that reply, and never shown to clients or saved to their transcript.
+
+The expanded synthetic evaluation covers 13 Armenian cases, including a
+conversation correction, transliteration, surname questions, reschedule safety
+and a request for a human. A focused check supplies all seven live categories
+and requires every category in the rendered choices. Review replies alongside
+the lexical screens; these are not a complete Armenian grammar grade.
+The stronger model costs more than the previous Luna model and can take longer.
+It still cannot supply missing biographies or studio information.
 
 References: [OpenAI evaluation guidance](https://developers.openai.com/api/docs/guides/evaluation-best-practices),
 [model selection](https://developers.openai.com/api/docs/guides/model-selection).

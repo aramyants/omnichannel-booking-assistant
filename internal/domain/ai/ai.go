@@ -85,6 +85,9 @@ type Tool struct {
 type Turn struct {
 	Calls   []ToolCall
 	Results []ToolResult
+	// Continuation is opaque provider state within this reply's tool loop.
+	// It is never persisted, logged or shown to the customer.
+	Continuation []json.RawMessage `json:"-"`
 }
 
 // Request is one completion.
@@ -109,6 +112,7 @@ type Request struct {
 
 // Response is what the model produced.
 type Response struct {
+	Continuation []json.RawMessage `json:"-"`
 	// Text is the reply to show the customer. It is empty when the model asked
 	// for tools instead of answering.
 	Text string
