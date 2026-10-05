@@ -14,6 +14,7 @@ import (
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/meta"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/telegram"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/telegramaccount"
 	cloudtasksadapter "github.com/aramyants/omnichannel-booking-assistant/internal/adapters/tasks/cloudtasks"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/notifications"
@@ -37,7 +38,16 @@ func openNotifications(ctx context.Context, cfg config.Config, store appStore, r
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	service := &notifications.Service{Repo: repo, Scheduler: scheduler, Reader: reader, Owned: store, Sender: nativeNotificationSender{tg: tg, wa: wa, store: store, logger: logger, location: cfg.Altegio.Location, renderer: newAppointmentMessages(cfg), bookingURL: cfg.BusinessProfile.BookingURL, websiteURL: cfg.BusinessProfile.WebsiteURL}, ActivatedAt: cfg.Notifications.ActivatedAt, WhatsAppTemplates: cfg.Notifications.WhatsAppTemplates}
+	var account *telegramaccount.Client
+	if cfg.Notifications.TelegramAccount.Enabled {
+		credentials := cfg.Notifications.TelegramAccount
+		account, err = telegramaccount.New(telegramaccount.Config{AppID: credentials.AppID, AppHash: credentials.AppHash, Phone: credentials.Phone, Username: credentials.Username, EncryptionKey: credentials.EncryptionKey}, repo)
+		if err != nil {
+			_ = scheduler.Close()
+			return nil, nil, nil, nil, err
+		}
+	}
+	service := &notifications.Service{Repo: repo, Scheduler: scheduler, Reader: reader, Owned: store, Sender: nativeNotificationSender{tg: tg, wa: wa, account: account, store: store, logger: logger, location: cfg.Altegio.Location, renderer: newAppointmentMessages(cfg), bookingURL: cfg.BusinessProfile.BookingURL, websiteURL: cfg.BusinessProfile.WebsiteURL}, ActivatedAt: cfg.Notifications.ActivatedAt, WhatsAppTemplates: cfg.Notifications.WhatsAppTemplates, TelegramAccount: account != nil, BookingPermissionSince: cfg.Notifications.BookingPermissionSince, NativeLanguage: cfg.Notifications.NativeLanguage}
 	authorizer, err := cloudtasksadapter.NewAuthorizer(cfg.Reminders.Audience, cfg.Reminders.ServiceAccountEmail)
 	if err != nil {
 		_ = scheduler.Close()
@@ -162,6 +172,7 @@ func notificationTaskHandler(auth notificationAuthorizer, service notificationDe
 type nativeNotificationSender struct {
 	tg                     *telegram.Client
 	wa                     *meta.Client
+	account                *telegramaccount.Client
 	store                  appStore
 	logger                 *slog.Logger
 	location               *time.Location
@@ -204,6 +215,19 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 	links := []messaging.Link{{Label: labels[0], URL: s.bookingURL}, {Label: labels[1], URL: s.websiteURL}}
 	links = append(links, s.renderer.Links(appointmentmessage.Language(lang), appointment)...)
 	msg = msg.WithLinks(links)
+	if target.StudioAccount {
+		if s.account == nil {
+			return true, errors.New("studio Telegram account unavailable")
+		}
+		// User accounts cannot send bot inline keyboards; expose the same useful
+		// destinations as plain links. Replies remain in the studio Telegram app.
+		for _, link := range links {
+			if link.URL != "" {
+				text += "\n" + link.Label + ": " + link.URL
+			}
+		}
+		return s.account.Send(ctx, target.Address, text, notice.ID)
+	}
 	err := s.tg.Send(ctx, msg)
 	if err == nil && s.store != nil {
 		if historyErr := s.recordTranscript(ctx, msg, notice, lang); historyErr != nil {
@@ -249,7 +273,13 @@ func (h notificationMessages) Handle(ctx context.Context, msg messaging.Envelope
 	if msg.Provider != messaging.ProviderWhatsApp || !handled {
 		return h.next.Handle(ctx, msg)
 	}
-	if err := h.service.LinkWhatsApp(ctx, msg.ExternalUserID, lang, enabled); err != nil {
+	setPreference := func() error {
+		if strings.EqualFold(strings.TrimSpace(msg.Content.Text), "STOP") {
+			return h.service.BlockPhone(ctx, msg.ExternalUserID)
+		}
+		return h.service.LinkWhatsApp(ctx, msg.ExternalUserID, lang, enabled)
+	}
+	if err := setPreference(); err != nil {
 		return err
 	}
 	text := map[string]string{
@@ -277,7 +307,7 @@ func (h notificationMessages) Handle(ctx context.Context, msg messaging.Envelope
 func whatsappNotificationPreference(text, language string) (enabled bool, lang string, handled bool) {
 	lang = string(appointmentmessage.ParseLanguage(language))
 	parts := strings.Fields(text)
-	if len(parts) == 1 && parts[0] == "/notifications_off" {
+	if len(parts) == 1 && (parts[0] == "/notifications_off" || strings.EqualFold(parts[0], "STOP")) {
 		return false, lang, true
 	}
 	if len(parts) < 1 || len(parts) > 2 || parts[0] != "/notifications" {

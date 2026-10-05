@@ -72,3 +72,30 @@ func TestTelegramContactCannotLinkSomeoneElsesPhoneOrGroup(t *testing.T) {
 		})
 	}
 }
+
+func TestOnlyStaffCanRecordANativeNotificationRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		chat int
+		want bool
+	}{{"client", 123, false}, {"staff", 999, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &contactRepository{rows: map[string]notifications.Entry{}}
+			service := &notifications.Service{Repo: repo}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":1}}`))
+			}))
+			defer server.Close()
+			handler := NativeNotifications{Service: service, Client: NewClient("fixture", WithBaseURL(server.URL)), StaffChatID: "999"}
+			body, _ := json.Marshal(map[string]any{"message": map[string]any{"chat": map[string]any{"id": tc.chat, "type": "private"}, "from": map[string]any{"id": tc.chat}, "text": "/notification_allow +37491123456 hy"}})
+			_, err := handler.HandleTelegram(t.Context(), body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row, _ := repo.GetNotification(t.Context(), notifications.Key("booking_phone", "+37491123456"))
+			if row.Contact.ExpiresAt.After(time.Now()) != tc.want {
+				t.Fatal("staff permission boundary failed")
+			}
+		})
+	}
+}

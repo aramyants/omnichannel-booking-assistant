@@ -31,11 +31,13 @@ const (
 // Recipient is a snapshot from trusted contact storage, never model arguments.
 // TelegramPhone is populated only after verified phone-to-chat association.
 type Recipient struct {
-	Phone              string
-	TelegramChat       string
-	TelegramPhone      string
-	WhatsAppOptedIn    bool
-	WhatsAppOptInPhone string
+	Phone                   string
+	TelegramChat            string
+	TelegramPhone           string
+	WhatsAppOptedIn         bool
+	WhatsAppOptInPhone      string
+	TelegramOptedOut        bool
+	BookingUpdatesRequested bool
 }
 
 type Policy struct {
@@ -45,13 +47,16 @@ type Policy struct {
 	Enabled        map[Channel]bool
 	// Templates are approved transactional templates for this purpose and
 	// language. Availability must be checked before building this policy.
-	Templates map[Purpose]string
+	Templates       map[Purpose]string
+	TelegramAccount bool
 }
 
 type Target struct {
 	Channel    Channel
 	Address    string
 	TemplateID string
+	// StudioAccount uses the user API; empty preserves the existing bot route.
+	StudioAccount bool
 }
 
 func Plan(policy Policy, recipient Recipient, purpose Purpose) ([]Target, error) {
@@ -86,8 +91,13 @@ func Plan(policy Policy, recipient Recipient, purpose Purpose) ([]Target, error)
 			}
 			switch channel {
 			case Telegram:
+				if recipient.TelegramOptedOut {
+					continue
+				}
 				if strings.TrimSpace(recipient.TelegramChat) != "" && recipient.TelegramPhone == phone {
 					targets = append(targets, Target{Channel: Telegram, Address: recipient.TelegramChat})
+				} else if policy.TelegramAccount && recipient.BookingUpdatesRequested {
+					targets = append(targets, Target{Channel: Telegram, Address: phone, StudioAccount: true})
 				}
 			case WhatsApp:
 				template := strings.TrimSpace(policy.Templates[purpose])

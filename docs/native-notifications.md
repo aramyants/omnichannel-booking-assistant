@@ -2,82 +2,130 @@
 
 Altegio form and administrator bookings enter `POST /webhooks/altegio` and are
 queued in Cloud Tasks. The worker reads the current record with private Altegio
-credentials scoped to the configured studio. It never trusts a phone or booking
-details from the webhook body. Native login/verification codes are a separate
-Altegio provider contract; this integration sends post-booking confirmations,
-meaningful changes and cancellations.
+credentials scoped to the studio. Webhook bodies cannot supply recipients or
+appointment details. This integration sends confirmations, meaningful changes
+and cancellations. Altegio login/verification codes remain a separate provider
+contract. SMS is disabled while the work Android phone is not ready.
 
-## Current release
+## Customer flow and sender identity
 
-The business-owned AI assistant app is 2555 under developer 2830. Cloud Run pins
-its partner/user credential pair to Secret Manager version 1. Old revisions keep
-their prior bindings for rollback. The native notification receiver requires a
-separate random capability, provided as the URL's `key` parameter. Altegio's
-shared Authorization value cannot authenticate an individual destination. The
-capability is never logged; a narrow Cloud Logging exclusion prevents automatic
-request URL logs for this route. Sanitized application audit logs remain enabled.
+The native form explains that submitting a booking requests E-Motion appointment
+updates through Telegram or WhatsApp. No bot command or separate contact-sharing
+step is required for this flow. The on-screen booking result remains available.
 
-Set `NATIVE_NOTIFICATIONS_ENABLED=true`, bind `ALTEGIO_WEBHOOK_SECRET`, and keep
-`NATIVE_NOTIFICATIONS_ACTIVATED_AT` fixed. Use the installed app's developer
-webhook settings and enable record events without replacing unrelated URLs.
-Cloud Scheduler must invoke `/tasks/notifications` every five minutes with body
-`{"reconcile":true}`, using the existing Cloud Tasks OIDC audience and identity.
-This recovers persisted work after queue creation failures and task exhaustion.
+Default order is Telegram, then WhatsApp. A valid verified bot link keeps delivery
+from `@emotion_concept_bot`. Otherwise, an eligible booking request can use the
+authorized studio user account `@emotion_concept` to resolve the customer's phone
+through Telegram and send the same appointment copy. User-account notices include
+ordinary links because bot inline keyboards cannot be sent by user accounts.
 
-SMS is disabled. The owner completed WhatsApp payment setup and the English and
-Russian utility templates `emotion_booking_update` and `emotion_booking_update_ru`
-are approved. The deployment now sets `NATIVE_WHATSAPP_READY=true` and
-map `purpose:language` to actual approved template names in
+Telegram's phone lookup is privacy-limited: an unavailable result does not prove
+that the client has no Telegram account. The adapter does not import contacts,
+enumerate account histories, bypass recipient restrictions, or pay for contact.
+It reserves one lookup per three seconds across instances and honors flood-wait
+cooldowns. A definitively unavailable Telegram route can fall back to WhatsApp.
+An ambiguous send outcome never triggers another channel or automatic resend.
+
+Studio-account replies appear in the studio's normal Telegram app. They are not
+imported into the bot inbox and do not receive AI replies through this adapter.
+The existing bot conversations and staff inbox remain separate. The shared AI
+assistant continues to handle customer-initiated WhatsApp conversations.
+
+## Booking request and withdrawal
+
+`NATIVE_BOOKING_PERMISSION_SINCE` is the fixed time the booking-update request
+became visible in the public form: `2026-10-05T19:21:45Z`. The worker records that
+request only on the first observed `create` event for a new `online=true` record
+with an empty external API ID, created after that timestamp. This is an inference
+from native form submission with the printed request, not a separately captured
+checkbox. Never apply it retroactively to imported, historical or staff bookings.
+The request stays bound to the original phone; editing the booking phone cannot
+transfer permission to another person.
+
+For a staff-created booking, the configured staff chat can record a client's
+documented request once with `/notification_allow +374… hy|ru|en`. This request
+expires after 180 days and does not establish a verified bot identity. Staff must
+use it only after the client has requested appointment messages. It is not an AI
+tool and ordinary clients cannot invoke it. `/notification_block +374…` withdraws
+all automatic notification routes. Staff should use it when a client asks the
+studio account to stop. The account adapter does not read incoming STOP messages.
+Standalone STOP in the signed WhatsApp channel withdraws all automatic routes.
+
+Optional bot linking remains available through
+`https://t.me/emotion_concept_bot?start=notifications` or `/notifications`.
+Only the contact button with a matching Telegram user ID proves the association;
+a typed phone does not. Links expire after 180 days. `/notifications_off` withdraws
+that channel and a new online booking cannot silently override the withdrawal.
+WhatsApp `/notifications en|ru` preferences also remain available, with
+`/notifications_off` for channel withdrawal. Explicit renewal can restore a
+withdrawn channel.
+
+`/notification_status` shows the policy and account readiness flag.
+`/notification_order telegram` or `/notification_order whatsapp` changes the first
+eligible messenger. Native Telegram notices default to Armenian unless a saved
+bot or staff preference exists. WhatsApp uses its own saved template language,
+defaulting to English. There is no approved Armenian template in this release.
+
+## Account commissioning and release
+
+Altegio AI assistant app 2555 belongs to developer 2830 under the owner's current
+account. Cloud Run pins its partner/user credential pair to Secret Manager version
+1. Previous revisions retain their original bindings for rollback.
+
+Create the private Telegram application in the studio's own developer portal.
+Run `cmd/telegram-connect` locally with a private config path and private session
+output path. The studio owner scans its loopback QR in Telegram Settings → Devices.
+The tool verifies the exact phone, username and non-bot identity before saving.
+The session grants Telegram account access and can be revoked in Devices; the
+implemented worker uses it only for transactional appointment notices.
+
+Store the session encrypted with AES-256-GCM in
+`native_booking_notifications/telegram_studio_account`. Bind authenticated data
+to the studio phone. Store the 32-byte encryption key and private application
+credentials in Secret Manager, never in the repository or logs. The release binds
+`TELEGRAM_ACCOUNT_CREDENTIALS_JSON=telegram-studio-notifications-credentials:1`
+and enables `NATIVE_TELEGRAM_ACCOUNT_READY=true`. A durable account lease prevents
+simultaneous use of its authorization key by multiple Cloud Run instances;
+expired workers cannot overwrite newer session state.
+
+`cmd/telegram-check` verifies the encrypted cloud session and exact studio identity
+without resolving a customer phone, reading chat history or sending messages.
+Disabling the readiness flag turns off studio-account delivery while preserving
+existing bot delivery. Revoking the session makes this route unavailable and
+permits an otherwise eligible WhatsApp fallback.
+
+The owner completed WhatsApp billing. At this release, the styled English utility
+template `emotion_booking_update` is APPROVED; the styled Russian
+`emotion_booking_update_ru` is PENDING and is deliberately absent from the
+deployment mapping. Enable only approved `purpose:language` entries in
 `WHATSAPP_BOOKING_TEMPLATES_JSON`. Supported purposes are `booking_created`,
-`booking_changed`, `booking_cancelled`; supported languages are `en`, `ru`, `hy`.
-Each template has three body parameters: event title, local appointment time,
-and service/specialist details. Do not enable WhatsApp merely because the phone
-number or access token exists.
+`booking_changed`, `booking_cancelled`; each template receives three parameters:
+status, local date/time, and service/specialist. General appointment messaging
+permission is still required. Native booking requests can supply it as above;
+merely possessing a phone number cannot.
 
-## Customer and staff controls
+The receiver requires a separate random capability in the URL's `key` parameter.
+Altegio's shared Authorization value does not authenticate an individual receiver.
+The capability is never logged; a narrow Cloud Logging exclusion removes automatic
+request URL logs for this route. Sanitized application audit logs remain enabled.
+Keep `NATIVE_NOTIFICATIONS_ACTIVATED_AT` fixed. Cloud Scheduler invokes the
+authenticated `/tasks/notifications` recovery action every five minutes.
 
-Telegram clients open `https://t.me/emotion_concept_bot?start=notifications` or
-use `/notifications` and share their own contact using Telegram's contact button.
-A typed phone number does not prove ownership. Only private chats with a matching
-contact user ID can link. Linking expires after 180 days and can be withdrawn
-with `/notifications_off`. Never merge customers solely by a phone match.
-
-WhatsApp clients explicitly opt in using `/notifications` in a signed,
-customer-initiated chat; `/notifications en` or `/notifications ru` selects an
-approved notification language. `/notifications_off` withdraws consent. There is
-no approved Armenian WhatsApp template in this deployment; Armenian conversation
-replies and Telegram notices remain available. Each messenger uses its own saved
-language, so Armenian Telegram preferences do not suppress English WhatsApp fallback.
-Sender identity
-comes from the signed provider update. Approved template messaging is required
-outside the customer service window.
-
-The configured staff chat uses `/notification_status` and
-`/notification_order telegram` or `/notification_order whatsapp`. The setting is
-durable and controls the first eligible messenger. An unavailable channel is
-skipped. A definitive rejection can fall back; an ambiguous timeout never causes
-a duplicate retry or a message on another channel. Accepted Telegram notices
-appear in the existing staff conversation inbox with updated activity time.
-
-## Delivery guarantees and limits
+## Delivery guarantees and verification
 
 Transport retries use `X-Hook-Id`; semantic duplicates are suppressed per record.
-Only changes to time, service, specialist, cancellation or recipient phone cause
-a notice. Comments, attendance and payments do not. Workers re-read the current
-record before sending, ignore older snapshots, skip historical records on first
-observation, and skip assistant bookings that already receive confirmations.
-Delivery intent is durable before the provider call. A crash or timeout after
-intent is recorded remains uncertain and is never automatically resent. Provider
-acceptance is not proof that the client read the message.
+Only time, service, specialist, cancellation or recipient changes produce notices.
+Workers re-read immediately before sending, ignore older snapshots, skip historical
+records on first observation, and skip assistant bookings with existing confirmations.
+Delivery intent is durable before a provider call. A crash or timeout after intent
+remains uncertain and is never automatically resent. Acceptance is not proof of
+delivery or reading. Account outcomes are identified as `telegram_account`;
+bot outcomes retain `telegram`. Accepted bot notices appear in its staff inbox.
 
-Firestore collection `native_booking_notifications` stores private contact
-links, policy, per-record version state, event work and delivery outcomes. Pending
-work is bounded to batches of 100 per recovery pass. Public HTTP routes reject
-missing capabilities and unauthenticated task tokens before touching work.
-
-Validation covers concurrent duplicates, changes/cancellation, A→B→A schedule
-reversions, stale/historical records, forged Telegram contacts, opt-in expiry,
-channel ordering, known rejection, uncertain sends and receipt write failures.
-Before claiming a customer-facing end-to-end test, link a consenting test user's
-actual Telegram contact and use a clearly identified test appointment. Never seed
-a real client's identity or consent to make a test pass.
+Validation covers duplicates, schedule reversions, stale records, forged contacts,
+permission cutoff/source/phone changes, channel withdrawals, authenticated staff
+controls, encryption identity binding and lease fencing. The commissioning check
+verifies the actual cloud session, but it does not test customer delivery. Before
+claiming a live end-to-end test, obtain an explicit consenting test recipient and
+use a clearly identified test message or booking. Never seed a real client's
+identity or permission just to make a test pass.

@@ -73,10 +73,22 @@ type Config struct {
 }
 
 type Notifications struct {
-	Enabled           bool
-	WebhookSecret     string
-	ActivatedAt       time.Time
-	WhatsAppTemplates map[string]string
+	Enabled                bool
+	WebhookSecret          string
+	ActivatedAt            time.Time
+	WhatsAppTemplates      map[string]string
+	TelegramAccount        TelegramAccount
+	BookingPermissionSince time.Time
+	NativeLanguage         string
+}
+
+type TelegramAccount struct {
+	Enabled       bool   `json:"-"`
+	AppID         int    `json:"app_id"`
+	AppHash       string `json:"app_hash"`
+	Phone         string `json:"phone"`
+	Username      string `json:"username"`
+	EncryptionKey []byte `json:"encryption_key"`
 }
 
 // LocalizedText is business-authored copy in each supported language. The
@@ -492,6 +504,27 @@ func Load() (Config, error) {
 	cfg.Notifications.Enabled = getenv("NATIVE_NOTIFICATIONS_ENABLED", "false") == "true"
 	cfg.Notifications.WebhookSecret = getenv("ALTEGIO_WEBHOOK_SECRET", "")
 	cfg.Notifications.WhatsAppTemplates = map[string]string{}
+	cfg.Notifications.NativeLanguage = getenv("NATIVE_NOTIFICATION_LANGUAGE", "en")
+	if cfg.Notifications.NativeLanguage != "en" && cfg.Notifications.NativeLanguage != "ru" && cfg.Notifications.NativeLanguage != "hy" {
+		errs = append(errs, errors.New("NATIVE_NOTIFICATION_LANGUAGE must be en, ru or hy"))
+	}
+	if permissionSince := getenv("NATIVE_BOOKING_PERMISSION_SINCE", ""); permissionSince != "" {
+		parsed, err := time.Parse(time.RFC3339, permissionSince)
+		if err != nil {
+			errs = append(errs, errors.New("NATIVE_BOOKING_PERMISSION_SINCE must be the fixed time booking update requests became visible in the form"))
+		}
+		cfg.Notifications.BookingPermissionSince = parsed
+	}
+	if getenv("NATIVE_TELEGRAM_ACCOUNT_READY", "false") == "true" {
+		if err := json.Unmarshal([]byte(getenv("TELEGRAM_ACCOUNT_CREDENTIALS_JSON", "")), &cfg.Notifications.TelegramAccount); err != nil {
+			errs = append(errs, errors.New("studio Telegram account credentials unavailable"))
+		}
+		cfg.Notifications.TelegramAccount.Enabled = true
+		account := cfg.Notifications.TelegramAccount
+		if !cfg.Notifications.Enabled || account.AppID <= 0 || len(account.AppHash) != 32 || account.Phone == "" || account.Username == "" || len(account.EncryptionKey) != 32 {
+			errs = append(errs, errors.New("studio account notifications require enabled native notifications and complete private account credentials"))
+		}
+	}
 	if getenv("NATIVE_WHATSAPP_READY", "false") == "true" {
 		if err := json.Unmarshal([]byte(getenv("WHATSAPP_BOOKING_TEMPLATES_JSON", "{}")), &cfg.Notifications.WhatsAppTemplates); err != nil {
 			errs = append(errs, errors.New("WHATSAPP_BOOKING_TEMPLATES_JSON must map purpose:language to approved template names"))
