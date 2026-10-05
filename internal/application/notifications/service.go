@@ -259,11 +259,8 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	lang := tg.Contact.Language
-	if lang == "" {
-		lang = wa.Contact.Language
-	}
-	lang = string(appointmentmessage.ParseLanguage(lang))
+	telegramLanguage := string(appointmentmessage.ParseLanguage(tg.Contact.Language))
+	whatsappLanguage := string(appointmentmessage.ParseLanguage(wa.Contact.Language))
 	recipient := Recipient{Phone: phone}
 	if tg.Contact.ExpiresAt.After(now) {
 		recipient.TelegramChat = tg.Contact.Chat
@@ -277,7 +274,7 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 	if policyRow.Order == "whatsapp" {
 		order = []Channel{WhatsApp, Telegram}
 	}
-	template := s.WhatsAppTemplates[string(row.Notice.Purpose)+":"+lang]
+	template := s.WhatsAppTemplates[string(row.Notice.Purpose)+":"+whatsappLanguage]
 	targets, err := Plan(Policy{MessengerOrder: order, Enabled: map[Channel]bool{Telegram: true, WhatsApp: template != "", SMS: false}, Templates: map[Purpose]string{row.Notice.Purpose: template}}, recipient, row.Notice.Purpose)
 	if err != nil {
 		return err
@@ -287,6 +284,10 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 	}
 	deliveryKey := Key("delivery", row.Event.RecordID+":"+row.Event.ID)
 	for i, target := range targets {
+		lang := telegramLanguage
+		if target.Channel == WhatsApp {
+			lang = whatsappLanguage
+		}
 		send := false
 		alreadyRejected := false
 		priorOutcome := ""

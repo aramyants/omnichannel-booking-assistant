@@ -81,14 +81,16 @@ func (o testOwned) FindBooking(context.Context, string) (booking.Booking, error)
 type testSender struct {
 	mu        sync.Mutex
 	channels  []Channel
+	languages []string
 	reject    bool
 	uncertain bool
 }
 
-func (s *testSender) SendNotification(_ context.Context, t Target, _ Notice, _ string) (bool, error) {
+func (s *testSender) SendNotification(_ context.Context, t Target, _ Notice, language string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.channels = append(s.channels, t.Channel)
+	s.languages = append(s.languages, language)
 	if s.uncertain {
 		return false, errors.New("timeout after send")
 	}
@@ -291,5 +293,29 @@ func TestNativeBookingWhatsAppFirstUsesApprovedOptIn(t *testing.T) {
 	ingestAndDeliver(t, s, "create")
 	if len(sender.channels) != 0 {
 		t.Fatal("unapproved WhatsApp template sent")
+	}
+}
+
+func TestFallbackUsesEachMessengersOwnLanguage(t *testing.T) {
+	for _, order := range []string{"telegram", "whatsapp"} {
+		t.Run(order, func(t *testing.T) {
+			s, repo, reader, sender := notificationFixture(t)
+			keys := []string{"policy", Key("telegram_phone", reader.snapshot.Phone)}
+			if err := repo.TransactNotifications(t.Context(), keys, func(rows map[string]*Entry) error {
+				rows["policy"].Order = order
+				rows[keys[1]].Contact.Language = "hy"
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			sender.reject = true
+			ingestAndDeliver(t, s, "create")
+			if len(sender.languages) == 0 || sender.languages[len(sender.languages)-1] != "en" || sender.channels[len(sender.channels)-1] != WhatsApp {
+				t.Fatal("Telegram language prevented approved English WhatsApp delivery")
+			}
+			if order == "telegram" && (len(sender.languages) != 2 || sender.languages[0] != "hy") {
+				t.Fatal("Telegram did not retain Armenian on fallback")
+			}
+		})
 	}
 }
