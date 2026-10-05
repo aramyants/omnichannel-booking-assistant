@@ -83,6 +83,11 @@ type LocalizedText struct {
 // intentionally separate from BusinessDescription: these values are rendered
 // verbatim after a real booking and must never be inferred from marketing copy.
 type BusinessProfile struct {
+	WebsiteURL   string
+	BookingURL   string
+	FacebookURL  string
+	TelegramURL  string
+	WhatsAppURL  string
 	Address      LocalizedText
 	Phone        string
 	Preparation  LocalizedText
@@ -397,6 +402,11 @@ func Load() (Config, error) {
 	cfg.BusinessName = getenv("BUSINESS_NAME", "")
 	cfg.BusinessDescription = getenv("BUSINESS_DESCRIPTION", "")
 	cfg.BusinessProfile = BusinessProfile{
+		WebsiteURL:  getenv("BUSINESS_WEBSITE_URL", ""),
+		BookingURL:  getenv("BUSINESS_BOOKING_URL", ""),
+		FacebookURL: getenv("BUSINESS_FACEBOOK_URL", ""),
+		TelegramURL: getenv("BUSINESS_TELEGRAM_URL", ""),
+		WhatsAppURL: getenv("BUSINESS_WHATSAPP_URL", ""),
 		Address: LocalizedText{
 			English:  getenv("BUSINESS_ADDRESS_EN", ""),
 			Armenian: getenv("BUSINESS_ADDRESS_HY", ""),
@@ -419,6 +429,11 @@ func Load() (Config, error) {
 		ParkingURL:   getenv("BUSINESS_PARKING_URL", ""),
 	}
 	for _, setting := range []struct{ name, value string }{
+		{"BUSINESS_WEBSITE_URL", cfg.BusinessProfile.WebsiteURL},
+		{"BUSINESS_BOOKING_URL", cfg.BusinessProfile.BookingURL},
+		{"BUSINESS_FACEBOOK_URL", cfg.BusinessProfile.FacebookURL},
+		{"BUSINESS_TELEGRAM_URL", cfg.BusinessProfile.TelegramURL},
+		{"BUSINESS_WHATSAPP_URL", cfg.BusinessProfile.WhatsAppURL},
 		{"BUSINESS_INSTAGRAM_URL", cfg.BusinessProfile.InstagramURL},
 		{"BUSINESS_MAP_URL", cfg.BusinessProfile.MapURL},
 		{"BUSINESS_YANDEX_MAP_URL", cfg.BusinessProfile.YandexMapURL},

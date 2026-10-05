@@ -41,7 +41,10 @@ func (t *toolset) listCategories(ctx context.Context, s *session) (string, error
 	for _, category := range categories {
 		names = append(names, category.Name)
 	}
-	s.present(names...)
+	s.conv.CatalogueCategory, s.conv.CatalogueServiceID, s.conv.CatalogueStaffID = "", "", ""
+	s.conv.CataloguePhase, s.conv.CatalogueDate, s.conv.CataloguePage = "", "", 0
+	page, controls := catalogueRootPage(names, &s.conv.CataloguePage, navigationSpeak(s.language), s.conv.Provider)
+	s.present(append(append(page, controls...), contactLabel(s.language))...)
 	return encode(map[string]any{"categories": categories,
 		"instruction": "For a specific category request, map the customer's meaning to the actual category name (for example face massage / массаж лица / դեմքի մերսում to Face Motion), then call list_services with that exact category. Do not respond with every category when the customer already chose one. When offering categories, write only a short heading or question and return the relevant exact category labels as native choices; do not repeat those action labels as a numbered menu in the text. If ambiguous, ask which category they mean."})
 }

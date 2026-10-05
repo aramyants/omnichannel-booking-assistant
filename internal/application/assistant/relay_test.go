@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -8,6 +9,41 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 )
+
+func TestRepeatedStaffReplyIsNotSentAgain(t *testing.T) {
+	svc, _, sender, conv := handedOver(t)
+	before := len(sender.sent)
+	reply := StaffReply{ConversationID: conv.ID, AuthorName: "Garik", Text: "We will check that for you.", EventID: "staff:123"}
+	for range 2 {
+		if err := svc.RelayStaffReply(t.Context(), reply); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(sender.sent) != before+1 {
+		t.Fatal("duplicate staff reply reached the customer")
+	}
+}
+
+func TestUnknownStaffSendIsNotAutomaticallyRepeated(t *testing.T) {
+	svc, store, sender, conv := handedOver(t)
+	sender.err = errors.New("provider timeout after POST")
+	reply := StaffReply{ConversationID: conv.ID, Text: "We will check that for you.", EventID: "staff:124"}
+	if err := svc.RelayStaffReply(t.Context(), reply); err == nil {
+		t.Fatal("uncertain send reported success")
+	}
+	sender.err = nil
+	before := len(sender.sent)
+	if err := svc.RelayStaffReply(t.Context(), reply); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.sent) != before {
+		t.Fatal("uncertain send was repeated")
+	}
+	stored, err := store.FindByID(t.Context(), conv.ID)
+	if err != nil || stored.State != conversation.StateHumanActive {
+		t.Fatal("assistant not paused after uncertain staff send")
+	}
+}
 
 // handedOver drives a conversation to the state a colleague finds it in.
 func handedOver(t *testing.T) (*Service, *memory.Store, *fakeSender, conversation.Conversation) {

@@ -32,7 +32,7 @@ func TestBookActionOpensRealCategoriesWithoutWaitingForTheModel(t *testing.T) {
 	if len(sender.sent) != 1 {
 		t.Fatalf("sent %d messages, want one", len(sender.sent))
 	}
-	want := []string{"Face Motion", "Motion Sport", "Motion Relax", speak(languageArmenian).myAppointments, speak(languageArmenian).talkToAPerson}
+	want := []string{"Face Motion", "Motion Sport", "Motion Relax", speak(languageArmenian).myAppointments, speak(languageArmenian).talkToAPerson, contactLabel(languageArmenian)}
 	if got := labelsOf(sender.sent[0].Choices); !slices.Equal(got, want) {
 		t.Fatalf("category buttons = %v, want %v", got, want)
 	}

@@ -140,10 +140,10 @@ func (s *session) offerAll(labels ...string) {
 }
 
 // selectChoices admits only labels returned by tools, in the order the reply
-// offers them. Phone/name questions use an empty list. Three options keep the
-// next action visible on a phone instead of filling it with a stale time grid.
+// offers them. Phone/name questions use an empty list. Application-owned
+// navigation remains complete even when the model suggests a smaller subset.
 func (s *session) selectChoices(labels []string) {
-	if s.offering == offerWorkflow {
+	if s.offering == offerWorkflow || s.offering == offerNavigation {
 		return
 	}
 	s.choices = nil
@@ -158,9 +158,6 @@ func (s *session) selectChoices(labels []string) {
 		}
 		s.choices = append(s.choices, messaging.Choice{Label: label})
 		delete(allowed, label)
-		if len(s.choices) == 3 {
-			break
-		}
 	}
 }
 
@@ -191,7 +188,12 @@ func (s *session) buttons(replyText string) []messaging.Choice {
 		return helpChoices(lang)
 	case offerMenu:
 		return menuChoices(lang)
-	case offerNavigation, offerWorkflow:
+	case offerNavigation:
+		return append([]messaging.Choice(nil), s.choices...)
+	case offerWorkflow:
+		if asksForContactDetails(replyText) {
+			return nil
+		}
 		return append([]messaging.Choice(nil), s.choices...)
 	default:
 		if asksForContactDetails(replyText) {
@@ -261,7 +263,7 @@ func asksForContactDetails(reply string) bool {
 		"your name", "name should", "name to book", "book under", "full name",
 		"first name", "last name", "phone number", "your phone", "contact number",
 		"ваше имя", "имя и фамил", "какое имя", "как вас зовут",
-		"номер телефона", "телефон", "вашу фамил", "ваше фамил",
+		"номер телефона", "телефон", "вашу фамил", "ваше фамил", "какую фамил",
 		"ձեր անուն", "անունը", "ազգանուն", "հեռախոսահամար", "հեռախոս",
 	} {
 		if strings.Contains(text, phrase) {
@@ -301,8 +303,8 @@ const dateLayout = "2006-01-02"
 // It covers a whole day at the finest grid a calendar uses, so no free time is
 // ever cut off. A limit of 12 once ended a 30-minute grid at mid-afternoon, and
 // the model then told customers a specialist had nothing in the evening when the
-// evening was free. Only the few times a reply names become buttons, so the
-// longer list costs context, not screen space.
+// evening was free. The application pages the complete list of buttons for
+// each channel so that later times remain reachable.
 const maxSlotsReturned = 96
 
 // buttonDateLayout is how a day is written on a button: digits only, so that it
@@ -607,7 +609,7 @@ func (t *toolset) listServices(ctx context.Context, s *session, call ai.ToolCall
 	s.offer(names...)
 
 	return encode(map[string]any{"services": items, "category": category,
-		"instruction": "List only these matching services. Format each as a numbered, scan-friendly block: name, duration and price on one line, then a concise description in the customer's current language when description contains one. Never dump translations in other languages and never invent missing copy. Do not add services from other categories or silently start a booking. List every match in text; buttons may show up to three and the customer may type the number or name of any other service."})
+		"instruction": "List only these matching services. Format each as a numbered, scan-friendly block: name, duration and price on one line, then a concise description in the customer's current language when description contains one. Never dump translations in other languages and never invent missing copy. Do not add services from other categories or silently start a booking. Offer every matching option as a button; never arbitrarily reduce the result to three suggestions."})
 }
 
 func (t *toolset) listStaff(ctx context.Context, s *session, call ai.ToolCall) (string, error) {
@@ -688,7 +690,10 @@ func (t *toolset) availableDates(ctx context.Context, s *session, call ai.ToolCa
 		labels = append(labels, day.Format(buttonDateLayout))
 	}
 
-	s.offerAll(labels...)
+	s.conv.CatalogueStaffID, s.conv.CatalogueServiceID = args.StaffID, args.ServiceID
+	s.conv.CatalogueDate, s.conv.CataloguePhase, s.conv.CataloguePage = "", "dates", 0
+	page, controls := cataloguePageFor(labels, &s.conv.CataloguePage, navigationSpeak(s.language), s.conv.Provider)
+	s.offerAll(append(append(page, controls...), navigationSpeak(s.language).back, navigationSpeak(s.language).categories)...)
 
 	return encode(map[string]any{"dates": formatted, "service_id": args.ServiceID,
 		"instruction": "These dates fit the selected service. If none are available, call list_staff for this service to check other qualified specialists; do not offer unfiltered dates."})
@@ -727,23 +732,18 @@ func (t *toolset) availableSlots(ctx context.Context, s *session, call ai.ToolCa
 		return "", err
 	}
 
-	times := make([]string, 0, len(slots))
-	for _, slot := range slots {
-		// Slots already gone by are dropped: offering a customer a time that
-		// has passed reads as the assistant not knowing what day it is.
-		if slot.Start.Before(t.now()) {
-			continue
-		}
-		if len(times) == maxSlotsReturned {
-			break
-		}
-		times = append(times, slot.Start.In(t.location).Format("15:04"))
+	times := remainingTimes(slots, t.now(), t.location)
+	if len(times) > maxSlotsReturned {
+		times = times[:maxSlotsReturned]
 	}
 
 	// Offered as buttons as well as named in the answer. A time is short enough
 	// that they sit three abreast, and it is the one part of this exchange that
 	// is genuinely easier to tap than to type.
-	s.offer(times...)
+	s.conv.CatalogueStaffID, s.conv.CatalogueServiceID = args.StaffID, args.ServiceID
+	s.conv.CatalogueDate, s.conv.CataloguePhase, s.conv.CataloguePage = args.Date, "times", 0
+	page, controls := cataloguePageFor(times, &s.conv.CataloguePage, navigationSpeak(s.language), s.conv.Provider)
+	s.offerAll(append(append(page, controls...), navigationSpeak(s.language).back, navigationSpeak(s.language).categories)...)
 
 	return encode(map[string]any{
 		"date":       args.Date,

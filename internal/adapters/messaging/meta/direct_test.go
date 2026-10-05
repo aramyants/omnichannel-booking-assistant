@@ -160,8 +160,8 @@ func TestDirectConfirmationUsesNativeWebButtonsAndTypingFeedback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(payloads) != 3 {
-		t.Fatalf("payload count = %d, want confirmation + typing on/off", len(payloads))
+	if len(payloads) != 4 {
+		t.Fatalf("payload count = %d, want all confirmation links + typing on/off", len(payloads))
 	}
 	message := payloads[0]["message"].(map[string]any)
 	attachment := message["attachment"].(map[string]any)
@@ -173,8 +173,12 @@ func TestDirectConfirmationUsesNativeWebButtonsAndTypingFeedback(t *testing.T) {
 	if buttons[0].(map[string]any)["url"] != "https://example.com/calendar" || buttons[1].(map[string]any)["url"] != "https://example.com/yandex" {
 		t.Fatalf("priority actions = %+v", buttons)
 	}
-	if payloads[1]["sender_action"] != "typing_on" || payloads[2]["sender_action"] != "typing_off" {
-		t.Fatalf("typing actions = %+v", payloads[1:])
+	second := payloads[1]["message"].(map[string]any)["attachment"].(map[string]any)["payload"].(map[string]any)["buttons"].([]any)
+	if len(second) != 1 || second[0].(map[string]any)["url"] != "https://example.com/instagram" {
+		t.Fatalf("later link dropped: %+v", second)
+	}
+	if payloads[2]["sender_action"] != "typing_on" || payloads[3]["sender_action"] != "typing_off" {
+		t.Fatalf("typing actions = %+v", payloads[2:])
 	}
 }
 

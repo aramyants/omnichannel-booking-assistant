@@ -53,6 +53,21 @@ func (c *DirectClient) Send(ctx context.Context, msg messaging.Outgoing) error {
 	if err := msg.Validate(); err != nil {
 		return err
 	}
+	if len(msg.Links) > 0 && len(msg.Choices) > 0 {
+		// Meta separates URL buttons from postback choices. Send both controls;
+		// taking the URL branch used to silently discard all service choices.
+		linkMessage := msg
+		linkMessage.Choices = nil
+		var labels []string
+		for _, link := range msg.Links {
+			labels = append(labels, link.Label)
+		}
+		linkMessage.Text = strings.Join(labels, " · ")
+		if err := c.Send(ctx, linkMessage); err != nil {
+			return err
+		}
+		msg.Links = nil
+	}
 	messageType := ""
 	if c.provider == messaging.ProviderMessenger {
 		messageType = "RESPONSE"
@@ -66,20 +81,22 @@ func (c *DirectClient) Send(ctx context.Context, msg messaging.Outgoing) error {
 	chunks := textChunks(msg.Text, limit)
 	for i, chunk := range chunks {
 		if i == len(chunks)-1 && len(msg.Links) > 0 {
-			payload := directButtonRequest{Recipient: party{ID: msg.ExternalThreadID}, MessagingType: messageType}
-			payload.Message.Attachment.Type = "template"
-			payload.Message.Attachment.Payload.TemplateType = "button"
-			payload.Message.Attachment.Payload.Text = chunk
-			for _, link := range msg.Links {
-				payload.Message.Attachment.Payload.Buttons = append(payload.Message.Attachment.Payload.Buttons, directButton{
-					Type: "web_url", URL: link.URL, Title: shortened(link.Label, 20),
-				})
-				if len(payload.Message.Attachment.Payload.Buttons) == 3 {
-					break
+			for start := 0; start < len(msg.Links); start += 3 {
+				payload := directButtonRequest{Recipient: party{ID: msg.ExternalThreadID}, MessagingType: messageType}
+				payload.Message.Attachment.Type = "template"
+				payload.Message.Attachment.Payload.TemplateType = "button"
+				payload.Message.Attachment.Payload.Text = chunk
+				if start > 0 {
+					payload.Message.Attachment.Payload.Text = "↳"
 				}
-			}
-			if err := c.client.post(ctx, c.accountID+"/messages", payload); err != nil {
-				return err
+				for _, link := range msg.Links[start:min(start+3, len(msg.Links))] {
+					payload.Message.Attachment.Payload.Buttons = append(payload.Message.Attachment.Payload.Buttons, directButton{
+						Type: "web_url", URL: link.URL, Title: shortened(link.Label, 20),
+					})
+				}
+				if err := c.client.post(ctx, c.accountID+"/messages", payload); err != nil {
+					return err
+				}
 			}
 			continue
 		}

@@ -219,6 +219,20 @@ gcloud run services update-traffic omnichannel-booking-assistant \
 
 ## Rotating a credential
 
+The studio's Altegio replacement uses `altegio-app2554-partner-token:1` and
+`altegio-app2554-user-token:1` as a pinned pair in `cloudbuild.yaml`. The Cloud
+Run runtime identity has Secret Accessor on those two resources. Prepare and
+verify both new versions before updating the deployment pair; keep older
+versions and revision bindings for rollback.
+
+The Telegram inbox needs a Firestore COLLECTION composite index for
+`conversations`: `provider ASCENDING`, `last_message_at DESCENDING`,
+`__name__ DESCENDING`. It was created and verified READY in production. Enable
+TTL on `staff_inbox_pages.expires_at`; each navigation reference expires after
+30 days and expiry is enforced on read even before asynchronous TTL deletion.
+Production read-only checks verified the first page, stable next-page cursor,
+five-message history and older-history cursor without printing client data.
+
 Secrets are read at startup, so a new version needs a new revision:
 
 ```sh

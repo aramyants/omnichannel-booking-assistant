@@ -77,6 +77,12 @@ type StaffNotifier interface {
 	NotifyHandoff(ctx context.Context, notice HandoffNotice) error
 }
 
+// StaffInboundNotifier keeps an active human conversation visible to staff.
+// The stored transcript remains the source of history if notification fails.
+type StaffInboundNotifier interface {
+	NotifyInbound(ctx context.Context, notice HandoffNotice, text string) error
+}
+
 // notifyStaff reports a conversation that needs a person.
 //
 // Failure is logged rather than returned. The customer has already been told a

@@ -53,15 +53,54 @@ func (n *StaffNotifier) NotifyHandoff(ctx context.Context, notice assistant.Hand
 	text := formatHandoff(notice)
 	buttons := handoffButtons(notice.ConversationID)
 
-	_, err := n.client.sendWithMarkup(ctx, n.chat(), text, buttons)
+	if notice.Provider == messaging.ProviderTelegram {
+		buttons.Keyboard = append([][]inlineKeyboardButton{{
+			{Text: "Բացել զրույցը", CallbackData: inboxData("open", notice.ConversationID)},
+		}}, buttons.Keyboard...)
+	}
+	messageID, err := n.client.sendWithMarkup(ctx, n.chat(), text, buttons)
 	if migrated := MigratedChatID(err); migrated != "" {
 		// The group was upgraded to a supergroup while this process ran. The
 		// notice is the urgent part, so it follows the group to its new id
 		// rather than being lost until somebody edits the configuration.
 		n.moveTo(migrated)
-		_, err = n.client.sendWithMarkup(ctx, migrated, text, buttons)
+		messageID, err = n.client.sendWithMarkup(ctx, migrated, text, buttons)
+	}
+	if err == nil && notice.Provider == messaging.ProviderTelegram && n.threads != nil && messageID != "" {
+		return n.threads.LinkStaffThread(ctx, messageID, notice.ConversationID)
 	}
 	return err
+}
+
+// NotifyInbound forwards new messages while the bot is paused for a person.
+func (n *StaffNotifier) NotifyInbound(ctx context.Context, notice assistant.HandoffNotice, text string) error {
+	if notice.Provider != messaging.ProviderTelegram {
+		return nil
+	}
+	name := strings.TrimSpace(notice.Customer.Name)
+	if name == "" {
+		name = notice.ExternalUserID
+	}
+	if strings.TrimSpace(text) == "" {
+		text = "[Հաճախորդն ուղարկել է կցորդ։ Բացեք զրույցի պատմությունը։]"
+	}
+	chunks := splitInboxText("Հաճախորդի նոր հաղորդագրություն\n"+name+"\n\n"+text, 3500)
+	for index, chunk := range chunks {
+		var keyboard *inlineKeyboardMarkup
+		if index == len(chunks)-1 {
+			keyboard = &inlineKeyboardMarkup{Keyboard: [][]inlineKeyboardButton{{{Text: "Բացել զրույցը", CallbackData: inboxData("open", notice.ConversationID)}}}}
+		}
+		messageID, err := n.client.sendWithMarkup(ctx, n.chat(), chunk, keyboard)
+		if err != nil {
+			return err
+		}
+		if n.threads != nil && messageID != "" {
+			if err := n.threads.LinkStaffThread(ctx, messageID, notice.ConversationID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (n *StaffNotifier) chat() string {
@@ -121,8 +160,11 @@ func formatHandoff(notice assistant.HandoffNotice) string {
 	}
 
 	text := b.String()
-	if len(text) > staffMessageLimit {
-		text = text[:staffMessageLimit] + "\n[truncated]\n"
+	if chunks := splitInboxText(text, staffMessageLimit); len(chunks) > 1 {
+		text = chunks[0] + "\n[truncated]\n"
+	}
+	if notice.Provider == messaging.ProviderTelegram {
+		return text + "\nՕգնականը դադարեցված է այս զրույցում։ Բացեք զրույցը՝ պատմությունը կարդալու համար, կամ օգտագործեք Reply այս հաղորդագրության վրա՝ հաճախորդին պատասխանելու համար։"
 	}
 
 	text += "\nThe assistant has paused for this customer." +

@@ -61,6 +61,7 @@ type Handler struct {
 
 	// buttons is set when the handler may answer and retire inline keyboards.
 	buttons Buttons
+	inbox   *staffInbox
 }
 
 // HandlerOption customises a Handler.
@@ -227,13 +228,19 @@ func (h *Handler) handleStaffMessage(ctx context.Context, body []byte) {
 	if !ok {
 		return
 	}
+	if h.inbox != nil && staff.Command == "inbox" {
+		if err := h.inbox.list(ctx, nil); err != nil {
+			h.logger.ErrorContext(ctx, "could not list staff conversations", "error", err)
+			h.tellStaff(ctx, "Չհաջողվեց բացել զրույցները։ Խնդրում ենք կրկին ուղարկել /inbox։")
+		}
+		return
+	}
 
 	// Only a reply names a conversation. Colleagues talking among themselves
 	// are left alone.
 	if staff.ReplyToMessageID == "" {
 		if staff.IsCommand() {
-			h.tellStaff(ctx, "Use the buttons under the customer's notification. "+
-				"To answer them instead, reply to that notification and write your message.")
+			h.tellStaff(ctx, "Ուղարկեք /inbox՝ Telegram զրույցները կարդալու համար։ Հաճախորդին պատասխանելու համար օգտագործեք Reply նրա զրույցի հաղորդագրության վրա։")
 		}
 		return
 	}
@@ -249,6 +256,15 @@ func (h *Handler) handleStaffMessage(ctx context.Context, body []byte) {
 		// A reply to something that was never a customer notification.
 		return
 	}
+	// Only Telegram clients are answered here. Other channels retain their
+	// native business inbox and existing handoff lifecycle.
+	if h.inbox != nil {
+		conv, err := h.inbox.repository.FindByID(ctx, conversationID)
+		if err != nil || conv.Provider != messaging.ProviderTelegram {
+			h.tellStaff(ctx, "Այս հաճախորդին պատասխանեք իր հարթակի բիզնես հաղորդագրությունների բաժնից։")
+			return
+		}
+	}
 
 	if staff.IsCommand() {
 		h.runStaffCommand(ctx, staff, conversationID)
@@ -259,10 +275,13 @@ func (h *Handler) handleStaffMessage(ctx context.Context, body []byte) {
 		ConversationID: conversationID,
 		AuthorName:     staff.AuthorName,
 		Text:           staff.Text,
+		EventID:        staff.EventID,
 	}); err != nil {
 		h.logger.ErrorContext(ctx, "could not relay a colleague's reply to the customer",
 			"error", err, "conversation_id", conversationID)
-		h.tellStaff(ctx, "That did not reach the customer. Please try again.")
+		h.tellStaff(ctx, "Չհաջողվեց հաստատել պատասխանի ուղարկումը։ Կրկին ուղարկելուց առաջ ստուգեք հաճախորդի զրույցը։")
+	} else {
+		h.tellStaff(ctx, "Պատասխանը մշակված է։ Օգնականը դադարեցված է այս զրույցում։ Վերջին հաղորդագրությունները՝ /inbox։")
 	}
 }
 
@@ -285,6 +304,7 @@ func (h *Handler) runStaffCommand(ctx context.Context, staff StaffMessage, conve
 				ConversationID: conversationID,
 				AuthorName:     staff.AuthorName,
 				Text:           text,
+				EventID:        staff.EventID,
 			}); err != nil {
 				h.logger.ErrorContext(ctx, "could not relay the message sent with a command",
 					"error", err, "conversation_id", conversationID)
@@ -303,6 +323,9 @@ func (h *Handler) runStaffCommand(ctx context.Context, staff StaffMessage, conve
 // the button until that arrives and then shows the customer a failure, and the
 // work below can easily outlast its patience.
 func (h *Handler) handleCallback(ctx context.Context, callback Callback) bool {
+	if h.handleInboxCallback(ctx, callback) {
+		return true
+	}
 	if action, ok := parseStaffAction(callback.Data); ok {
 		h.acknowledge(ctx, callback.QueryID, "")
 		if h.handleStaffAction(ctx, callback, action) {

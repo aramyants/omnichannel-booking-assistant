@@ -41,10 +41,14 @@ type LocalisedMenu struct {
 // a button is meant to understand that these are the same thing.
 func menuIn(lang language) []MenuCommand {
 	p := speak(lang)
+	website, booking, _ := publicLinkLabels(lang)
 	return []MenuCommand{
 		{Name: "start", Description: p.startAgain},
 		{Name: "book", Description: p.bookAVisit},
 		{Name: "services", Description: p.servicesPrices},
+		{Name: "book_online", Description: booking},
+		{Name: "website", Description: website},
+		{Name: "contact", Description: contactLabel(lang)},
 		{Name: "appointments", Description: p.myAppointments},
 		{Name: "person", Description: p.talkToAPerson},
 		{Name: "help", Description: p.whatICanDo},
@@ -92,6 +96,9 @@ var menuIntents = map[string]string{
 	"appointments": "see their own appointments",
 	"cancel":       "cancel an appointment",
 	"person":       "talk to a person",
+	"contact":      "see the studio's contact details and social channels",
+	"book_online":  "open the studio's online booking form",
+	"website":      "open the studio's website",
 }
 
 // commandIn returns the slash command a message carries, without its slash and
@@ -134,6 +141,9 @@ func menuAction(text string) string {
 
 	written := strings.TrimSpace(text)
 	for _, lang := range languages {
+		if written == contactLabel(lang) {
+			return "contact"
+		}
 		p := speak(lang)
 		switch written {
 		case p.bookAVisit:

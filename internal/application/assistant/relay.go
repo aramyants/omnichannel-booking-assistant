@@ -26,6 +26,10 @@ type StaffReply struct {
 	AuthorName string
 
 	Text string
+
+	// EventID prevents a repeated staff webhook from sending the same reply
+	// again. An uncertain provider outcome is kept claimed for reconciliation.
+	EventID string
 }
 
 // Validate reports whether the reply can be delivered.
@@ -47,6 +51,31 @@ func (s *Service) RelayStaffReply(ctx context.Context, reply StaffReply) error {
 	if err := reply.Validate(); err != nil {
 		return err
 	}
+	claimID := id.New()
+	if reply.EventID != "" {
+		claimed, err := s.processed.Claim(ctx, reply.EventID, claimID, s.now())
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			return nil
+		}
+	}
+	attempted := false
+	defer func() {
+		if reply.EventID == "" {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if attempted {
+			// Telegram has no send idempotency key. Never automatically repeat
+			// a POST after a timeout or an acknowledgement/store failure.
+			s.completeDelivery(cleanupCtx, reply.EventID, claimID, s.now())
+		} else if err := s.processed.Release(cleanupCtx, reply.EventID, claimID); err != nil {
+			s.logger.WarnContext(cleanupCtx, "could not release a staff reply claim", "error", err)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -64,6 +93,16 @@ func (s *Service) RelayStaffReply(ctx context.Context, reply StaffReply) error {
 	conv.LastChoiceMessageID = ""
 	conv.PendingChoiceMessageID, conv.PendingChoiceEventID = "", ""
 	conv.PresentedChoices = nil
+	// Persist takeover before attempting the external send. A slow or unknown
+	// send result must not leave the assistant answering over staff.
+	if conv.State != conversation.StateHumanActive {
+		if err := conv.TransitionTo(conversation.StateHumanActive, s.now()); err != nil {
+			return err
+		}
+	}
+	if err := s.conversations.Save(ctx, conv); err != nil {
+		return fmt.Errorf("pause the assistant before a staff reply: %w", err)
+	}
 
 	text := reply.Text
 	if name := strings.TrimSpace(reply.AuthorName); name != "" {
@@ -72,6 +111,7 @@ func (s *Service) RelayStaffReply(ctx context.Context, reply StaffReply) error {
 		text = name + ": " + reply.Text
 	}
 
+	attempted = true
 	if err := sender.Send(ctx, messaging.Outgoing{
 		Provider:         conv.Provider,
 		ExternalThreadID: conv.ExternalThreadID,
@@ -105,6 +145,7 @@ func (s *Service) RelayStaffReply(ctx context.Context, reply StaffReply) error {
 		}
 	}
 	conv.UpdatedAt = now
+	conv.LastMessageAt = now
 
 	if err := s.conversations.Save(ctx, conv); err != nil {
 		return fmt.Errorf("save the conversation after a colleague replied: %w", err)

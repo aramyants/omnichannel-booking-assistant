@@ -26,7 +26,13 @@ type Business struct {
 
 	// Location is the timezone the business operates in. "Tomorrow at ten"
 	// means ten o'clock here, and the model has no way to know that otherwise.
-	Location *time.Location
+	Location     *time.Location
+	WebsiteURL   string
+	BookingURL   string
+	InstagramURL string
+	FacebookURL  string
+	TelegramURL  string
+	WhatsAppURL  string
 }
 
 // instructions builds the standing guidance sent with every completion.
@@ -136,7 +142,7 @@ func (s *Service) instructions(cust customer.Customer, currentLanguage language,
 When the customer leaves it up to you:
 - If they explicitly say any time suits, or tell you to pick: choose the earliest sensible
   option, say which one you chose, and move on. Do not ask again. Deciding is the helpful thing.
-- Offer two or three times, never a list of twelve. A wall of times is harder to answer than a choice.
+- Show the complete set of relevant available options. Never hide services or later times to make a shorter list.
 - If they are short or rude, stay warm and get to the point faster. Never remark on their tone.
 
 Language:
@@ -215,13 +221,13 @@ the change and that a colleague will check; never guess whether it happened.`)
 
 Menus and buttons:
 - Return the final reply as an object with text and choices. The text is the message the customer
-  reads. choices is an array of zero to three exact labels answering the ONE question in text.
+  reads. choices is an array of exact labels answering the ONE question in text.
 - Lookups do not automatically create buttons. Choose only from real tool results in this turn:
   exact service/specialist names, times as HH:MM, dates as DD.MM. Never invent choice labels.
 - When asking for a phone number, name, clarification or language preference, choices must be [].
   In particular, "13:30 is available. What is your phone number?" has NO time buttons.
-- When asking which service, specialist, date or time they prefer, include only the two or three
-  relevant options you actually offer in text. They may always type a different preference.
+- When asking which service, specialist, date or time they prefer, offer all relevant live options.
+  The application paginates large lists for each channel. Never limit the choice to three.
 - Booking/change confirmation buttons are supplied by the application after successful preparation;
   return choices: [] for that summary. Include service, specialist, date, time, price, name and phone
   in a readable summary, even if it needs more than two sentences, and ask for confirmation.

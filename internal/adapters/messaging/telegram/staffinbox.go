@@ -23,6 +23,7 @@ type StaffMessage struct {
 	// Command is the instruction the message carries, without its slash, when
 	// it is one.
 	Command string
+	EventID string
 }
 
 // IsCommand reports whether the colleague issued an instruction rather than
@@ -40,6 +41,9 @@ func ParseStaffMessage(body []byte) (StaffMessage, bool) {
 	}
 
 	m := u.Message
+	if m.From == nil || m.From.IsBot {
+		return StaffMessage{}, false
+	}
 	text := strings.TrimSpace(m.Text)
 	if text == "" {
 		text = strings.TrimSpace(m.Caption)
@@ -48,7 +52,7 @@ func ParseStaffMessage(body []byte) (StaffMessage, bool) {
 		return StaffMessage{}, false
 	}
 
-	staff := StaffMessage{Text: text}
+	staff := StaffMessage{Text: text, EventID: fmt.Sprintf("staff:%d", u.UpdateID)}
 	if m.From != nil {
 		staff.AuthorName = displayName(m.From)
 	}
