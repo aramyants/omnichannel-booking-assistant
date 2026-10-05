@@ -155,6 +155,6 @@ func expiredChoice(lang language) string {
 	case languageRussian:
 		return "Этот вариант уже устарел. Используйте последнее сообщение или напишите, что хотите изменить."
 	default:
-		return "That choice has expired. Use the latest message, or tell me what you would like to change."
+		return "That choice has expired. Use the latest message, or tell us what you would like to change."
 	}
 }

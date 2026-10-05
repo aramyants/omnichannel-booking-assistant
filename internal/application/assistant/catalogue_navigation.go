@@ -22,7 +22,7 @@ func navigationSpeak(lang language) navigationWords {
 	case languageArmenian:
 		return navigationWords{back: "← Հետ", categories: "☰ Բաժիններ", next: "Հաջորդը →", previous: "← Նախորդը", book: "Ընտրել ծառայությունը", askDate: "Ընտրեք ձեզ հարմար օրը։", chooseStaff: "Ազատ ժամերը կախված են մասնագետից։ Ո՞ւմ գրաֆիկը ստուգեմ։", noDates: "Այս մասնագետի մոտ այժմ ազատ օրեր չկան։ Ընտրեք մեկ այլ մասնագետի։", coordinated: "Այս ծառայության համար աշխատակիցը կհամաձայնեցնի հիմնական սեանսը կամ երկու մասնագետի համատեղ աշխատանքը։ Ամրագրում դեռ չկա։"}
 	default:
-		return navigationWords{back: "← Back", categories: "☰ Categories", next: "Next →", previous: "← Previous", book: "Choose treatment", askDate: "Choose a date that suits you.", chooseStaff: "Availability depends on the specialist. Whose schedule should I check?", noDates: "This specialist has no open dates right now. Choose another specialist.", coordinated: "A team member needs to coordinate the main session or two therapists working together for this treatment. Nothing has been booked yet."}
+		return navigationWords{back: "← Back", categories: "☰ Categories", next: "Next →", previous: "← Previous", book: "Choose treatment", askDate: "Choose a date that suits you.", chooseStaff: "Availability depends on the specialist. Whose schedule should we check?", noDates: "This specialist has no open dates right now. Choose another specialist.", coordinated: "A team member needs to coordinate the main session or two therapists working together for this treatment. Nothing has been booked yet."}
 	}
 }
 

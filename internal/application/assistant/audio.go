@@ -47,10 +47,10 @@ func (s *Service) transcribeInput(ctx context.Context, msg messaging.Envelope) (
 func audioRetry(lang language) string {
 	switch lang {
 	case languageArmenian:
-		return "Չկարողացա հասկանալ ձայնային հաղորդագրությունը։ Խնդրում եմ ուղարկեք ավելի կարճ ձայնային հաղորդագրություն կամ գրեք Ձեր հարցը։"
+		return "Չկարողացանք հասկանալ ձայնային հաղորդագրությունը։ Խնդրում ենք ուղարկել ավելի կարճ ձայնային հաղորդագրություն կամ գրել Ձեր հարցը։"
 	case languageRussian:
 		return "Не удалось разобрать голосовое сообщение. Отправьте, пожалуйста, более короткое аудио или напишите свой вопрос."
 	default:
-		return "I could not understand that audio. Please send a shorter voice message or type your request."
+		return "We could not understand that audio. Please send a shorter voice message or type your request."
 	}
 }
