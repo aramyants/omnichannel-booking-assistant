@@ -183,7 +183,7 @@ func run() error {
 	var model ai.Provider
 	var speech ai.Transcriber
 	if cfg.AI.Enabled() {
-		opts := []openai.Option{openai.WithModel(cfg.AI.Model), openai.WithTranscriptionModel(cfg.AI.TranscriptionModel)}
+		opts := []openai.Option{openai.WithModel(cfg.AI.Model), openai.WithTranscriptionModel(cfg.AI.TranscriptionModel), openai.WithReasoningEffort(cfg.AI.ReasoningEffort), openai.WithMaxOutputTokens(cfg.AI.MaxOutputTokens)}
 		if cfg.AI.BaseURL != "" {
 			opts = append(opts, openai.WithBaseURL(cfg.AI.BaseURL))
 			logger.Warn("using a non-default openai host", "host", cfg.AI.BaseURL)

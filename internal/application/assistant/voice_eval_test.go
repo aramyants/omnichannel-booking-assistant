@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +52,13 @@ func TestLiveArmenianVoiceEval(t *testing.T) {
 		{"price_information", "Հանգստացնող մերսման արժեքը կգրե՞ք։ Դեռ չեմ ուզում ամրագրել։"},
 		{"no_pressure", "Շնորհակալություն, կմտածեմ ու հետո կգրեմ։"},
 		{"personal_feelings", "Ուրախացա, որ կարող եք օգնել ինձ։ Դուք էլ եք ուրախ ինձ համար՞"},
+		{"price_latin", "barev, relax masaji gin@ kaseq, hima grem miayn gin@, chem uzum grancvel"},
+		{"all_categories", "Կարո՞ղ եք ներկայացնել ծառայությունների բոլոր կատեգորիաները։"},
+		{"surname_clarity", "Ամրագրման համար անունն ու ազգանունը առանձի՞ն գրեմ, թե միասին։"},
+		{"reschedule_safety", "Վաղվա ամրագրումս տեղափոխեք մյուս օրը, բայց դեռ չեղարկում մի արեք։"},
+		{"language_correction", "Խնդրում եմ պատասխանեք բնական հայերենով՝ առանց ավելորդ գովազդի։ Միայն ասեք՝ ինչպես կապվել Ձեր թիմի հետ։"},
+		{"human_request", "Ձեր նախորդ պատասխանը չեմ հասկացել։ Ուզում եմ խոսել ադմինիստրատորի հետ։"},
+		{"conversation_correction", "Բարև, ուզում եմ հանգստացնող մերսում։"},
 	}
 	type result struct {
 		Model      string   `json:"model"`
@@ -61,6 +69,7 @@ func TestLiveArmenianVoiceEval(t *testing.T) {
 		DurationMS int64    `json:"duration_ms"`
 		Usage      ai.Usage `json:"usage"`
 		Warnings   []string `json:"warnings"`
+		Choices    []string `json:"choices"`
 	}
 	results := []result{}
 	singular := regexp.MustCompile(`(?i)(^|[^\p{L}])(?:կարող եմ|խնդրում եմ|գործընկերս|գործընկերոջս|շնորհակալ եմ|համաձայն եմ|ուրախ եմ|կօգնեմ|ես|քեզ|քո|դու)(?:[^\p{L}]|$)`)
@@ -75,6 +84,12 @@ func TestLiveArmenianVoiceEval(t *testing.T) {
 				sender := &fakeSender{}
 				calendar := defaultScheduling()
 				calendar.services = []booking.Service{{ID: "1001", Name: "Motion Relax · 80 min", Category: "Motion Relax", Duration: 80 * time.Minute, PriceMin: 27000, PriceMax: 27000, Currency: "AMD"}}
+				if tc.id == "all_categories" {
+					calendar.services = nil
+					for i, category := range []string{"Motion Relax", "Motion Sport", "Face Motion", "Motion Sculpt", "Motion Four Hands", "Add More Time", "Local"} {
+						calendar.services = append(calendar.services, booking.Service{ID: strconv.Itoa(1001 + i), Name: category + " · synthetic service", Category: category, Duration: time.Hour, PriceMin: 27000, PriceMax: 27000, Currency: "AMD"})
+					}
+				}
 				svc, _ := newAIServiceWithStaff(t, model, calendar, sender, &recordingStaff{})
 				svc.business.Name = "E-Motion Concept"
 				svc.tools.messages = appointmentmessage.New(appointmentmessage.Business{
@@ -83,9 +98,13 @@ func TestLiveArmenianVoiceEval(t *testing.T) {
 				}, time.UTC)
 				started := time.Now()
 				err = svc.Handle(t.Context(), incomingText("synthetic-"+tc.id, tc.text))
+				if tc.id == "conversation_correction" && err == nil {
+					err = svc.Handle(t.Context(), incomingText("synthetic-"+tc.id+"-correction", "Ոչ, դեռ չեմ ամրագրում։ Միայն գինը և տևողությունն ասեք։"))
+				}
 				r := result{Model: modelName, Case: tc.id, Input: tc.text, Failed: err != nil || model.failed, DurationMS: time.Since(started).Milliseconds(), Usage: model.usage, Warnings: []string{}}
 				if len(sender.sent) > 0 {
 					r.Reply = sender.sent[len(sender.sent)-1].Text
+					r.Choices = labelsOf(sender.sent[len(sender.sent)-1].Choices)
 				}
 				if hearts.MatchString(r.Reply) {
 					r.Warnings = append(r.Warnings, "heart")
@@ -99,6 +118,19 @@ func TestLiveArmenianVoiceEval(t *testing.T) {
 				results = append(results, r)
 				if r.Failed {
 					t.Error("model or orchestration failed; inspect credential/model availability separately")
+				}
+				if tc.id == "all_categories" {
+					for _, category := range categoriesOf(calendar.services) {
+						found := false
+						for _, label := range r.Choices {
+							if label == category.Name {
+								found = true
+							}
+						}
+						if !found {
+							t.Errorf("live category omitted: %s", category.Name)
+						}
+					}
 				}
 				if len(r.Warnings) > 0 {
 					t.Errorf("voice warnings: %v", r.Warnings)

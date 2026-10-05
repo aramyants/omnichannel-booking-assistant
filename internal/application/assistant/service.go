@@ -918,7 +918,7 @@ func (s *Service) reply(
 			return s.apologise(ctx, sess)
 		}
 
-		turn := ai.Turn{Calls: resp.ToolCalls}
+		turn := ai.Turn{Calls: resp.ToolCalls, Continuation: resp.Continuation}
 		for _, tc := range resp.ToolCalls {
 			if errors.Is(context.Cause(ctx), errTurnSuperseded) {
 				return "", errTurnSuperseded

@@ -111,13 +111,23 @@ func New(business Business, location *time.Location) Renderer {
 // Confirmation renders the message sent only after the scheduling system has
 // confirmed that the appointment exists.
 func (r Renderer) Confirmation(lang Language, appointment Appointment) string {
-	return r.render(lang, appointment, false)
+	return r.render(lang, appointment, "confirmed")
 }
 
 // Reminder renders a concise reminder without making assumptions such as
 // "tomorrow"; the configured lead time may be changed independently.
 func (r Renderer) Reminder(lang Language, appointment Appointment) string {
-	return r.render(lang, appointment, true)
+	return r.render(lang, appointment, "reminder")
+}
+
+// Changed and Cancelled keep authoritative appointment updates in the same
+// localized layout as confirmations, without implying a cancelled visit remains.
+func (r Renderer) Changed(lang Language, appointment Appointment) string {
+	return r.render(lang, appointment, "changed")
+}
+
+func (r Renderer) Cancelled(lang Language, appointment Appointment) string {
+	return r.render(lang, appointment, "cancelled")
 }
 
 // Links returns the same visit actions that are printed in a confirmation,
@@ -238,7 +248,7 @@ var translations = map[Language]labels{
 	},
 }
 
-func (r Renderer) render(lang Language, appointment Appointment, reminder bool) string {
+func (r Renderer) render(lang Language, appointment Appointment, status string) string {
 	words, ok := translations[lang]
 	if !ok {
 		words = translations[English]
@@ -246,10 +256,19 @@ func (r Renderer) render(lang Language, appointment Appointment, reminder bool) 
 
 	name := inline(appointment.CustomerName)
 	heading := words.confirmation
+	reminder := status == "reminder"
 	if reminder {
 		heading = words.reminder
 	} else if name != "" {
 		heading = replaceName(words.confirmationNamed, name)
+	}
+	if status == "changed" || status == "cancelled" {
+		headings := map[Language]map[string]string{
+			English:  {"changed": "🔄 Your appointment has been updated.", "cancelled": "❌ Your appointment has been cancelled."},
+			Armenian: {"changed": "🔄 Ձեր ամրագրումը փոփոխված է։", "cancelled": "❌ Ձեր ամրագրումը չեղարկված է։"},
+			Russian:  {"changed": "🔄 Ваша запись изменена.", "cancelled": "❌ Ваша запись отменена."},
+		}
+		heading = headings[ParseLanguage(string(lang))][status]
 	}
 
 	location := r.location
@@ -258,7 +277,7 @@ func (r Renderer) render(lang Language, appointment Appointment, reminder bool) 
 	}
 	when := appointment.StartsAt.In(location)
 	details := []string{
-		"🗓 " + words.date + ": " + when.Format("02.01.2006"),
+		"📅 " + words.date + ": " + when.Format("02.01.2006"),
 		"🕒 " + words.time + ": " + when.Format("15:04") + " · " + location.String(),
 	}
 	if service := inline(appointment.Service); service != "" {
@@ -272,7 +291,7 @@ func (r Renderer) render(lang Language, appointment Appointment, reminder bool) 
 	}
 
 	sections := []string{heading, strings.Join(details, "\n")}
-	if appointment.CalendarURL != "" {
+	if appointment.CalendarURL != "" && status != "cancelled" {
 		label := "📅 Add to calendar"
 		if lang == Russian {
 			label = "📅 Добавить в календарь"
@@ -288,10 +307,10 @@ func (r Renderer) render(lang Language, appointment Appointment, reminder bool) 
 	if phone := inline(r.business.Phone); phone != "" {
 		sections = append(sections, "☎️ "+phone)
 	}
-	if preparation := r.business.Preparation.In(lang); preparation != "" {
+	if preparation := r.business.Preparation.In(lang); preparation != "" && status != "cancelled" {
 		sections = append(sections, words.preparation+"\n"+preparation)
 	}
-	if amenities := r.business.Amenities.In(lang); amenities != "" {
+	if amenities := r.business.Amenities.In(lang); amenities != "" && status != "cancelled" {
 		sections = append(sections, words.amenities+"\n"+amenities)
 	}
 
@@ -325,12 +344,19 @@ func (r Renderer) render(lang Language, appointment Appointment, reminder bool) 
 			warm = "🌿 Немного времени для себя и спокойного отдыха. Если планы изменились, пожалуйста, напишите нам здесь."
 		}
 		if lang == Armenian {
-			warm = "🌿 Մի փոքր ժամանակ՝ ձեզ և հանգստի համար։ Եթե ձեր ծրագրերը փոխվել են, խնդրում ենք գրել մեզ այստեղ։"
+			warm = "🌿 Մի փոքր ժամանակ՝ Ձեզ և հանգստի համար։ Եթե Ձեր ծրագրերը փոխվել են, խնդրում ենք գրել մեզ այստեղ։"
 		}
 		sections = append(sections, warm)
 	}
 	if businessName := inline(r.business.Name); businessName != "" {
 		closing = replaceName(namedClosing, businessName)
+	}
+	if status == "cancelled" {
+		closing = map[Language]string{
+			English:  "For questions or a new appointment, please reply here.",
+			Armenian: "Հարցերի կամ նոր ամրագրման համար խնդրում ենք գրել մեզ այստեղ։",
+			Russian:  "По вопросам или для новой записи, пожалуйста, напишите нам здесь.",
+		}[ParseLanguage(string(lang))]
 	}
 	sections = append(sections, closing)
 	return strings.Join(sections, "\n\n")

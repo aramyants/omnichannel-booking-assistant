@@ -23,16 +23,15 @@ const (
 	// change faster than deployments, so it is overridable: a wrong one is a
 	// configuration fix rather than a release.
 	//
-	// Keep the deployed baseline until an evaluation shows a quality gain
-	// within the studio's latency and cost requirements. OPENAI_MODEL selects
-	// a candidate; docs/bot-quality.md describes the synthetic evaluation.
-	DefaultModel = "gpt-5.6-luna"
+	// The business requested a stronger model for Armenian conversations.
+	DefaultModel = "gpt-6.1-sol"
 
 	// defaultTimeout is generous because a customer is waiting on the reply,
 	// but bounded because they will not wait forever.
 	defaultTimeout = 60 * time.Second
 
-	defaultMaxTokens = 1024
+	// Includes private reasoning as well as the brief customer reply.
+	defaultMaxTokens = 8192
 
 	maxResponseBytes = 8 << 20
 )
@@ -44,6 +43,8 @@ type Client struct {
 	apiKey             string
 	model              string
 	transcriptionModel string
+	reasoningEffort    string
+	maxOutputTokens    int
 }
 
 // Option customises a Client.
@@ -69,6 +70,21 @@ func WithModel(model string) Option {
 	}
 }
 
+func WithReasoningEffort(effort string) Option {
+	return func(c *Client) {
+		if effort != "" {
+			c.reasoningEffort = effort
+		}
+	}
+}
+func WithMaxOutputTokens(tokens int) Option {
+	return func(c *Client) {
+		if tokens > 0 {
+			c.maxOutputTokens = tokens
+		}
+	}
+}
+
 func WithTranscriptionModel(model string) Option {
 	return func(c *Client) {
 		if model != "" {
@@ -89,9 +105,16 @@ func NewClient(apiKey string, opts ...Option) (*Client, error) {
 		apiKey:             apiKey,
 		model:              DefaultModel,
 		transcriptionModel: "gpt-4o-mini-transcribe",
+		reasoningEffort:    "high",
+		maxOutputTokens:    defaultMaxTokens,
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	switch c.reasoningEffort {
+	case "none", "low", "medium", "high", "xhigh", "max":
+	default:
+		return nil, errors.New("openai: unsupported reasoning effort")
 	}
 	return c, nil
 }
@@ -107,7 +130,7 @@ func (c *Client) Model() string { return c.model }
 func (c *Client) Complete(ctx context.Context, req ai.Request) (ai.Response, error) {
 	maxTokens := req.MaxTokens
 	if maxTokens <= 0 {
-		maxTokens = defaultMaxTokens
+		maxTokens = c.maxOutputTokens
 	}
 
 	payload := responsesRequest{
@@ -117,6 +140,7 @@ func (c *Client) Complete(ctx context.Context, req ai.Request) (ai.Response, err
 		Tools:           buildTools(req.Tools),
 		MaxOutputTokens: maxTokens,
 		Store:           false,
+		Reasoning:       &reasoningConfig{Effort: c.reasoningEffort},
 	}
 	if req.StructuredReply {
 		payload.Text = &textConfig{Format: textFormat{
@@ -171,13 +195,19 @@ func buildInput(req ai.Request) []inputItem {
 	}
 
 	for _, turn := range req.Turns {
-		for _, call := range turn.Calls {
-			items = append(items, inputItem{
-				Type:      "function_call",
-				CallID:    call.ID,
-				Name:      call.Name,
-				Arguments: string(call.Arguments),
-			})
+		if len(turn.Continuation) > 0 {
+			for _, raw := range turn.Continuation {
+				items = append(items, inputItem{Raw: raw})
+			}
+		} else {
+			for _, call := range turn.Calls {
+				items = append(items, inputItem{
+					Type:      "function_call",
+					CallID:    call.ID,
+					Name:      call.Name,
+					Arguments: string(call.Arguments),
+				})
+			}
 		}
 		for _, result := range turn.Results {
 			items = append(items, inputItem{
@@ -212,11 +242,15 @@ func buildTools(tools []ai.Tool) []toolDef {
 // toResponse extracts the reply text and any tool calls from the output array.
 func toResponse(parsed responsesResponse) ai.Response {
 	var (
-		text  strings.Builder
-		calls []ai.ToolCall
+		text         strings.Builder
+		calls        []ai.ToolCall
+		continuation []json.RawMessage
 	)
 
 	for _, item := range parsed.Output {
+		if len(item.Raw) > 0 {
+			continuation = append(continuation, item.Raw)
+		}
 		switch item.Type {
 		case "function_call":
 			calls = append(calls, ai.ToolCall{
@@ -226,6 +260,9 @@ func toResponse(parsed responsesResponse) ai.Response {
 			})
 
 		case "message":
+			if item.Phase == "commentary" {
+				continue
+			}
 			for _, content := range item.Content {
 				if content.Type == "output_text" {
 					text.WriteString(content.Text)
@@ -240,8 +277,9 @@ func toResponse(parsed responsesResponse) ai.Response {
 	}
 
 	return ai.Response{
-		Text:      strings.TrimSpace(text.String()),
-		ToolCalls: calls,
+		Text:         strings.TrimSpace(text.String()),
+		ToolCalls:    calls,
+		Continuation: continuation,
 		Usage: ai.Usage{
 			InputTokens:  parsed.Usage.InputTokens,
 			OutputTokens: parsed.Usage.OutputTokens,

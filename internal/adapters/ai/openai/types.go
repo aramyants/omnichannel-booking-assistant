@@ -20,12 +20,17 @@ type responsesRequest struct {
 	Input []inputItem `json:"input"`
 	Tools []toolDef   `json:"tools,omitempty"`
 
-	MaxOutputTokens int         `json:"max_output_tokens,omitempty"`
-	Text            *textConfig `json:"text,omitempty"`
+	MaxOutputTokens int              `json:"max_output_tokens,omitempty"`
+	Text            *textConfig      `json:"text,omitempty"`
+	Reasoning       *reasoningConfig `json:"reasoning,omitempty"`
 
 	// Store is false so OpenAI does not retain the conversation. This system
 	// keeps its own transcript and is the only place customer messages belong.
 	Store bool `json:"store"`
+}
+
+type reasoningConfig struct {
+	Effort string `json:"effort"`
 }
 
 type textConfig struct {
@@ -60,7 +65,8 @@ type toolDef struct {
 // role-carrying message, a function call the model previously made, or the
 // result of running one.
 type inputItem struct {
-	Type string `json:"type,omitempty"`
+	Raw  json.RawMessage `json:"-"`
+	Type string          `json:"type,omitempty"`
 
 	// Message fields.
 	Role    string `json:"role,omitempty"`
@@ -75,6 +81,14 @@ type inputItem struct {
 	Output string `json:"output,omitempty"`
 }
 
+func (i inputItem) MarshalJSON() ([]byte, error) {
+	if len(i.Raw) > 0 {
+		return i.Raw, nil
+	}
+	type plain inputItem
+	return json.Marshal(plain(i))
+}
+
 type responsesResponse struct {
 	ID     string       `json:"id"`
 	Model  string       `json:"model"`
@@ -85,7 +99,9 @@ type responsesResponse struct {
 }
 
 type outputItem struct {
-	Type string `json:"type"`
+	Raw   json.RawMessage `json:"-"`
+	Phase string          `json:"phase,omitempty"`
+	Type  string          `json:"type"`
 
 	// Message fields.
 	Role    string          `json:"role"`
@@ -95,6 +111,17 @@ type outputItem struct {
 	CallID    string `json:"call_id"`
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
+}
+
+func (i *outputItem) UnmarshalJSON(data []byte) error {
+	type plain outputItem
+	var parsed plain
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	*i = outputItem(parsed)
+	i.Raw = append(json.RawMessage(nil), data...)
+	return nil
 }
 
 type outputContent struct {
