@@ -257,6 +257,8 @@ func run() error {
 			FacebookURL:  cfg.BusinessProfile.FacebookURL,
 			TelegramURL:  cfg.BusinessProfile.TelegramURL,
 			WhatsAppURL:  cfg.BusinessProfile.WhatsAppURL,
+			TikTokURL:    cfg.BusinessProfile.TikTokURL,
+			YouTubeURL:   cfg.BusinessProfile.YouTubeURL,
 			Name:         cfg.BusinessName,
 			Description:  cfg.BusinessDescription,
 			Location:     cfg.Altegio.Location,

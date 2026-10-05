@@ -151,7 +151,8 @@ WhatsApp Business-app echoes also suppress a reply already in progress.
 
 Welcome category menus keep online booking and the studio website available.
 The localized **Contact & socials** entry groups Instagram, Facebook, Telegram,
-WhatsApp, the website and branch-specific online booking. `/book_online` and
+WhatsApp, TikTok, YouTube, Google Maps, Yandex Maps, the website and
+branch-specific online booking. `/book_online` and
 `/website` answer directly without a model. Category and time selections remain
 on their own grids, and social links do not replace interactive choices.
 Configure destinations with the `BUSINESS_*_URL` settings in `.env.example`.
@@ -170,6 +171,10 @@ consent withdrawal and live Altegio refresh failures. Local responsive visual QA
 uses synthetic data via `CALENDAR_PREVIEW=1 go test ./internal/application/calendar
 -run TestPreviewCalendar -v`; no customer booking or calendar write is performed.
 
-Still required before claiming every channel production-ready: studio WhatsApp
-number onboarding, approved reminder templates, Meta review/access validation,
-and consented end-to-end real-device tests. Credentials alone do not prove this.
+The studio WhatsApp number +37494768067 was confirmed in the production API and
+shown as connected with high quality in WhatsApp Manager on 5 October 2026.
+Its profile already lists the website; its Chrome profile fields are disabled,
+and the business-profile API returns 403 with the current token. WhatsApp Manager
+reports no valid payment method for business-initiated notices. Billing,
+approved/configured reminder templates, Meta review/access validation and
+consented real-device tests remain necessary before proactive notifications.

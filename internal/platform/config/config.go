@@ -88,6 +88,8 @@ type BusinessProfile struct {
 	FacebookURL  string
 	TelegramURL  string
 	WhatsAppURL  string
+	TikTokURL    string
+	YouTubeURL   string
 	Address      LocalizedText
 	Phone        string
 	Preparation  LocalizedText
@@ -407,6 +409,8 @@ func Load() (Config, error) {
 		FacebookURL: getenv("BUSINESS_FACEBOOK_URL", ""),
 		TelegramURL: getenv("BUSINESS_TELEGRAM_URL", ""),
 		WhatsAppURL: getenv("BUSINESS_WHATSAPP_URL", ""),
+		TikTokURL:   getenv("BUSINESS_TIKTOK_URL", ""),
+		YouTubeURL:  getenv("BUSINESS_YOUTUBE_URL", ""),
 		Address: LocalizedText{
 			English:  getenv("BUSINESS_ADDRESS_EN", ""),
 			Armenian: getenv("BUSINESS_ADDRESS_HY", ""),
@@ -434,6 +438,8 @@ func Load() (Config, error) {
 		{"BUSINESS_FACEBOOK_URL", cfg.BusinessProfile.FacebookURL},
 		{"BUSINESS_TELEGRAM_URL", cfg.BusinessProfile.TelegramURL},
 		{"BUSINESS_WHATSAPP_URL", cfg.BusinessProfile.WhatsAppURL},
+		{"BUSINESS_TIKTOK_URL", cfg.BusinessProfile.TikTokURL},
+		{"BUSINESS_YOUTUBE_URL", cfg.BusinessProfile.YouTubeURL},
 		{"BUSINESS_INSTAGRAM_URL", cfg.BusinessProfile.InstagramURL},
 		{"BUSINESS_MAP_URL", cfg.BusinessProfile.MapURL},
 		{"BUSINESS_YANDEX_MAP_URL", cfg.BusinessProfile.YandexMapURL},

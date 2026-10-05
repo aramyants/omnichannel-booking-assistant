@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
@@ -151,7 +152,7 @@ func TestDatesBeyondTheFirstEightRemainReachable(t *testing.T) {
 	}
 }
 
-func TestPublicMenusDeliverAllSixDestinationsWithoutAI(t *testing.T) {
+func TestPublicMenusDeliverAllContactDestinationsWithoutAI(t *testing.T) {
 	for _, lang := range languages {
 		t.Run(string(lang), func(t *testing.T) {
 			sender := &fakeSender{}
@@ -162,6 +163,11 @@ func TestPublicMenusDeliverAllSixDestinationsWithoutAI(t *testing.T) {
 			svc.business.FacebookURL = "https://www.facebook.com/profile.php?id=61593274220346"
 			svc.business.TelegramURL = "https://t.me/emotion_concept_bot"
 			svc.business.WhatsAppURL = "https://wa.me/37494768067"
+			svc.business.TikTokURL = "https://www.tiktok.com/@emotion.concept"
+			svc.business.YouTubeURL = "https://www.youtube.com/@emotion.concept"
+			svc.tools.messages = appointmentmessage.New(appointmentmessage.Business{
+				MapURL: "https://maps.app.goo.gl/oSW4ZYFcf66H75Wa9", YandexMapURL: "https://yandex.com/maps/-/CXezAUML",
+			}, time.UTC)
 			for i, text := range []string{"/start", "/contact", "/book_online", "/website"} {
 				msg := incomingText(fmt.Sprint("link-", i), text)
 				msg.Sender.Language = string(lang)
@@ -172,7 +178,7 @@ func TestPublicMenusDeliverAllSixDestinationsWithoutAI(t *testing.T) {
 			if len(sender.sent[0].Links) != 2 || !slices.Contains(labelsOf(sender.sent[0].Choices), contactLabel(lang)) {
 				t.Fatal("welcome lacks prominent booking and contact entry")
 			}
-			if len(sender.sent[1].Links) != 6 || len(sender.sent[1].Choices) == 0 {
+			if len(sender.sent[1].Links) != 10 || len(sender.sent[1].Choices) == 0 {
 				t.Fatalf("contact links=%v choices=%v", sender.sent[1].Links, sender.sent[1].Choices)
 			}
 			if sender.sent[1].Links[0].URL != svc.business.BookingURL {

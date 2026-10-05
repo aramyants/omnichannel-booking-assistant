@@ -61,11 +61,16 @@ func contactLabel(lang language) string {
 
 func (s *Service) contactLinks(lang language) []messaging.Link {
 	links := s.publicLinks(lang)
+	profile := s.tools.messages.Business()
 	for _, link := range []messaging.Link{
 		{Label: "Instagram", URL: s.business.InstagramURL},
 		{Label: "Facebook", URL: s.business.FacebookURL},
 		{Label: "Telegram", URL: s.business.TelegramURL},
 		{Label: "WhatsApp", URL: s.business.WhatsAppURL},
+		{Label: "TikTok", URL: s.business.TikTokURL},
+		{Label: "YouTube", URL: s.business.YouTubeURL},
+		{Label: "Google Maps", URL: profile.MapURL},
+		{Label: "Yandex Maps", URL: profile.YandexMapURL},
 	} {
 		if link.URL != "" {
 			links = append(links, link)
