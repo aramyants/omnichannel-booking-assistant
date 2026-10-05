@@ -154,31 +154,44 @@ failure alerts. Failed OTPs must not be sent hours later when the phone returns.
 
 ## Native form and account ownership
 
-Enable Altegio's supported Last Name field and configure whether it is required.
+Altegio's supported Last Name field was enabled for branch **1389810** on
+5 October 2026 and verified on the public booking form after refresh. It is
+optional; name and phone remain required. The hosted form renders Last Name
+before Name, followed by phone, email and comment.
 Keep name, surname, phone and notification preference clear and concise.
 Individual field reordering and an arbitrary channel selector in the hosted
 form have not been confirmed. Use a supported redirect/companion page for bot
 linking and preferences if the native form cannot display them. Do not claim
 the Marketplace app can inject arbitrary HTML into Altegio's hosted form.
 
-For the inaccessible developer account, request restoration or transfer of the
-existing app **2397** for branch **1389810** to Garik's accessible account.
-Transfer support has not been confirmed. If transfer is unavailable, register
-a new app under the accessible account, test its branch authorization and
-notifications in parallel, and switch once the new installation passes checks.
-Keep the existing installation operational until cutover. Rotate old credentials
-after successful cutover and reconcile native records against the new access.
-Do not delete the working app or change appointment identities during migration.
+Chrome inspection corrected the earlier app identification: **2397** is
+Altegio Pro MCP, not the studio bot application. The working backend's legacy
+developer credentials must be identified separately; no ownership transfer has
+been completed and no working credentials have been replaced.
+
+A new developer account **2830**, E-Motion Concept, was registered under
+Garik's accessible login on 5 October 2026. Private app **2554**,
+E-Motion Concept Notifications (`emotionconceptnotifications`), was created
+in the SMS aggregators category with SMS, WhatsApp and Telegram metadata.
+It is unpublished and not activated as a branch notification provider. API
+permissions and connection endpoints remain unset until the implementation
+and provider contract are ready. Native SMS and WhatsApp channels are currently
+not connected; email and the administrator app are active.
+
+Request restoration of the legacy developer registration if needed. Test the
+replacement branch authorization and notifications before switching. Keep the
+working backend operational until cutover, then retire old credentials and
+reconcile native records. Do not change appointment identities during migration.
 
 ## Remaining implementation and acceptance gates
 
-- Recover developer ownership or complete a new private app installation.
+- Identify legacy credential ownership and complete the new private app installation.
 - Obtain the exact Altegio SMS-provider contract and callback credentials.
 - Implement authenticated webhook ingestion, Firestore outbox, worker leases,
   provider adapters, reconciliation, callbacks and self-booking deduplication.
 - Build authenticated administrative settings, delivery timeline, staff controls
   and verified Telegram linking. Preserve verified consent and language choices.
-- Enable and validate the native surname field and browser verification/reviews.
+- Validate native browser verification/reviews after the SMS provider is activated.
 - Install/register SMSGate and validate the work SIM before sending real clients.
 - Supply approved staff biographies and actual discount conditions so the bot
   can answer those questions without unnecessary handoffs.
