@@ -29,6 +29,7 @@ type Snapshot struct {
 	Phone     string          `firestore:"phone"`
 	ChangedAt time.Time       `firestore:"changed_at"`
 	APIID     string          `firestore:"api_id"`
+	Online    bool            `firestore:"online"`
 }
 type Contact struct {
 	Chat        string    `firestore:"chat"`
@@ -37,6 +38,7 @@ type Contact struct {
 	Channel     Channel   `firestore:"channel"`
 	RequestedAt time.Time `firestore:"requested_at"`
 	ExpiresAt   time.Time `firestore:"expires_at"`
+	Blocked     bool      `firestore:"blocked"`
 }
 type Notice struct {
 	ID          string   `firestore:"id"`
@@ -47,19 +49,21 @@ type Notice struct {
 
 // Entry is private durable integration state. No provider bodies are retained.
 type Entry struct {
-	Kind        string    `firestore:"kind"`
-	State       string    `firestore:"state"`
-	Event       Event     `firestore:"event"`
-	Contact     Contact   `firestore:"contact"`
-	Notice      Notice    `firestore:"notice"`
-	Fingerprint string    `firestore:"fingerprint"`
-	ChangedAt   time.Time `firestore:"changed_at"`
-	LeaseOwner  string    `firestore:"lease_owner"`
-	LeaseUntil  time.Time `firestore:"lease_until"`
-	Order       string    `firestore:"order"`
-	Outcome     string    `firestore:"outcome"`
-	Attempted   []string  `firestore:"attempted"`
-	UpdatedAt   time.Time `firestore:"updated_at"`
+	Kind              string    `firestore:"kind"`
+	State             string    `firestore:"state"`
+	Event             Event     `firestore:"event"`
+	Contact           Contact   `firestore:"contact"`
+	Notice            Notice    `firestore:"notice"`
+	Fingerprint       string    `firestore:"fingerprint"`
+	ChangedAt         time.Time `firestore:"changed_at"`
+	LeaseOwner        string    `firestore:"lease_owner"`
+	LeaseUntil        time.Time `firestore:"lease_until"`
+	Order             string    `firestore:"order"`
+	Outcome           string    `firestore:"outcome"`
+	Attempted         []string  `firestore:"attempted"`
+	UpdatedAt         time.Time `firestore:"updated_at"`
+	SessionCiphertext []byte    `firestore:"session_ciphertext,omitempty"`
+	NextLookupAt      time.Time `firestore:"next_lookup_at,omitempty"`
 }
 type Repository interface {
 	TransactNotifications(context.Context, []string, func(map[string]*Entry) error) error
@@ -82,14 +86,17 @@ type Sender interface {
 	SendNotification(context.Context, Target, Notice, string) (rejected bool, err error)
 }
 type Service struct {
-	Repo              Repository
-	Scheduler         Scheduler
-	Reader            Reader
-	Owned             OwnedBookings
-	Sender            Sender
-	ActivatedAt       time.Time
-	WhatsAppTemplates map[string]string // purpose:language -> approved template
-	Now               func() time.Time
+	Repo                   Repository
+	Scheduler              Scheduler
+	Reader                 Reader
+	Owned                  OwnedBookings
+	Sender                 Sender
+	ActivatedAt            time.Time
+	WhatsAppTemplates      map[string]string // purpose:language -> approved template
+	Now                    func() time.Time
+	TelegramAccount        bool
+	BookingPermissionSince time.Time
+	NativeLanguage         string
 }
 
 func Key(kind, id string) string { return fmt.Sprintf("%s_%x", kind, sha256.Sum256([]byte(id))) }
@@ -215,7 +222,13 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 			if snap.Booking.Status == booking.StatusCancelled {
 				purpose = BookingCancelled
 			}
-			*record = Entry{Kind: "record", Fingerprint: fp, ChangedAt: snap.ChangedAt, UpdatedAt: now}
+			permission := record.Contact
+			if first && row.Event.Status == "create" && snap.Online && snap.APIID == "" && !s.BookingPermissionSince.IsZero() && !snap.Booking.CreatedAt.Before(s.BookingPermissionSince) {
+				if phone, err := customer.NormalizePhone(snap.Phone); err == nil {
+					permission = Contact{Phone: phone, RequestedAt: snap.Booking.CreatedAt}
+				}
+			}
+			*record = Entry{Kind: "record", Fingerprint: fp, ChangedAt: snap.ChangedAt, UpdatedAt: now, Contact: permission}
 			event.Notice = Notice{ID: event.Event.ID, Snapshot: snap, Purpose: purpose, Fingerprint: fp}
 			event.State = "prepared"
 			event.UpdatedAt = now
@@ -259,9 +272,30 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	staffPermission, err := s.Repo.GetNotification(ctx, Key("booking_phone", phone))
+	if err != nil {
+		return err
+	}
 	telegramLanguage := string(appointmentmessage.ParseLanguage(tg.Contact.Language))
+	if tg.Contact.Language == "" {
+		language := s.NativeLanguage
+		if staffPermission.Contact.Language != "" {
+			language = staffPermission.Contact.Language
+		}
+		telegramLanguage = string(appointmentmessage.ParseLanguage(language))
+	}
 	whatsappLanguage := string(appointmentmessage.ParseLanguage(wa.Contact.Language))
-	recipient := Recipient{Phone: phone}
+	// A request printed at native booking submission applies only to new online
+	// records after rollout, never imported/API or administrator records.
+	permission, err := s.Repo.GetNotification(ctx, Key("record", row.Event.RecordID))
+	if err != nil {
+		return err
+	}
+	requested := !permission.Contact.RequestedAt.IsZero() && permission.Contact.Phone == phone && latest.Online && latest.APIID == "" && !s.BookingPermissionSince.IsZero() && !permission.Contact.RequestedAt.Before(s.BookingPermissionSince)
+	if staffPermission.Contact.Phone == phone && staffPermission.Contact.ExpiresAt.After(now) && !staffPermission.Contact.Blocked {
+		requested = true
+	}
+	recipient := Recipient{Phone: phone, TelegramOptedOut: tg.Contact.Blocked, BookingUpdatesRequested: requested}
 	if tg.Contact.ExpiresAt.After(now) {
 		recipient.TelegramChat = tg.Contact.Chat
 		recipient.TelegramPhone = tg.Contact.Phone
@@ -270,12 +304,16 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 		recipient.WhatsAppOptedIn = true
 		recipient.WhatsAppOptInPhone = wa.Contact.Phone
 	}
+	if requested && !wa.Contact.Blocked {
+		recipient.WhatsAppOptedIn = true
+		recipient.WhatsAppOptInPhone = phone
+	}
 	order := []Channel{Telegram, WhatsApp}
 	if policyRow.Order == "whatsapp" {
 		order = []Channel{WhatsApp, Telegram}
 	}
 	template := s.WhatsAppTemplates[string(row.Notice.Purpose)+":"+whatsappLanguage]
-	targets, err := Plan(Policy{MessengerOrder: order, Enabled: map[Channel]bool{Telegram: true, WhatsApp: template != "", SMS: false}, Templates: map[Purpose]string{row.Notice.Purpose: template}}, recipient, row.Notice.Purpose)
+	targets, err := Plan(Policy{MessengerOrder: order, TelegramAccount: s.TelegramAccount, Enabled: map[Channel]bool{Telegram: true, WhatsApp: template != "", SMS: false}, Templates: map[Purpose]string{row.Notice.Purpose: template}}, recipient, row.Notice.Purpose)
 	if err != nil {
 		return err
 	}
@@ -284,6 +322,10 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 	}
 	deliveryKey := Key("delivery", row.Event.RecordID+":"+row.Event.ID)
 	for i, target := range targets {
+		route := string(target.Channel)
+		if target.StudioAccount {
+			route = "telegram_account"
+		}
 		lang := telegramLanguage
 		if target.Channel == WhatsApp {
 			lang = whatsappLanguage
@@ -300,16 +342,16 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 				return nil
 			}
 			for _, channel := range attempt.Attempted {
-				if channel == string(target.Channel) {
+				if channel == route {
 					alreadyRejected = true
 					return nil
 				}
 			}
 			attempt.Kind = "delivery"
 			attempt.State = "sending"
-			attempt.Outcome = "uncertain_" + string(target.Channel)
+			attempt.Outcome = "uncertain_" + route
 			attempt.UpdatedAt = now
-			attempt.Attempted = append(attempt.Attempted, string(target.Channel))
+			attempt.Attempted = append(attempt.Attempted, route)
 			send = true
 			return nil
 		})
@@ -327,11 +369,11 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 		}
 		// Once this intent is durable, a timeout is ambiguous and is never repeated.
 		rejected, sendErr := s.Sender.SendNotification(ctx, target, row.Notice, lang)
-		outcome := "accepted_" + string(target.Channel)
+		outcome := "accepted_" + route
 		if sendErr != nil {
-			outcome = "uncertain_" + string(target.Channel)
+			outcome = "uncertain_" + route
 			if rejected {
-				outcome = "rejected_" + string(target.Channel)
+				outcome = "rejected_" + route
 			}
 		}
 		if err = s.Repo.TransactNotifications(ctx, []string{deliveryKey}, func(rows map[string]*Entry) error {
@@ -349,6 +391,45 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 		}
 	}
 	return nil
+}
+
+// AllowPhone records a client's request documented by authenticated studio
+// staff. It is not exposed to the AI or accepted from a customer-typed number.
+func (s *Service) AllowPhone(ctx context.Context, rawPhone, lang string) error {
+	phone, err := customer.NormalizePhone(rawPhone)
+	if err != nil {
+		return err
+	}
+	if lang != "en" && lang != "ru" && lang != "hy" {
+		return errors.New("unsupported notification language")
+	}
+	keys := []string{Key("booking_phone", phone), Key("telegram_phone", phone), Key("whatsapp_phone", phone)}
+	return s.Repo.TransactNotifications(ctx, keys, func(rows map[string]*Entry) error {
+		*rows[keys[0]] = Entry{Kind: "staff_permission", Contact: Contact{Phone: phone, Language: lang, RequestedAt: s.now(), ExpiresAt: s.now().Add(180 * 24 * time.Hour)}}
+		rows[keys[1]].Contact.Blocked = false
+		rows[keys[2]].Contact.Blocked = false
+		return nil
+	})
+}
+
+// BlockPhone applies a withdrawal across every automatic notification route.
+func (s *Service) BlockPhone(ctx context.Context, rawPhone string) error {
+	phone, err := customer.NormalizePhone(rawPhone)
+	if err != nil {
+		return err
+	}
+	keys := []string{Key("booking_phone", phone), Key("telegram_phone", phone), Key("whatsapp_phone", phone)}
+	return s.Repo.TransactNotifications(ctx, keys, func(rows map[string]*Entry) error {
+		for _, key := range keys {
+			row := rows[key]
+			row.Kind = "contact"
+			row.Contact.Phone = phone
+			row.Contact.Blocked = true
+			row.Contact.ExpiresAt = time.Time{}
+			row.UpdatedAt = s.now()
+		}
+		return nil
+	})
 }
 func (s *Service) finish(ctx context.Context, key, owner, outcome string) error {
 	return s.Repo.TransactNotifications(ctx, []string{key}, func(rows map[string]*Entry) error {
@@ -407,6 +488,7 @@ func (s *Service) LinkTelegram(ctx context.Context, chat, rawPhone string) error
 		own.Contact.Phone = phone
 		own.Contact.Channel = Telegram
 		own.Contact.ExpiresAt = s.now().Add(180 * 24 * time.Hour)
+		own.Contact.Blocked = false
 		own.Contact.RequestedAt = time.Time{}
 		*byPhone = *own
 		return nil
@@ -426,9 +508,11 @@ func (s *Service) UnlinkTelegram(ctx context.Context, chat string) error {
 		if rows[chatKey].Contact.Phone != old.Contact.Phone {
 			return errors.New("contact changed; try again")
 		}
-		*rows[chatKey] = Entry{}
+		rows[chatKey].Contact.ExpiresAt = time.Time{}
+		rows[chatKey].Contact.Blocked = true
 		if rows[phoneKey].Contact.Chat == chat {
-			*rows[phoneKey] = Entry{}
+			rows[phoneKey].Contact.ExpiresAt = time.Time{}
+			rows[phoneKey].Contact.Blocked = true
 		}
 		return nil
 	})
@@ -441,7 +525,7 @@ func (s *Service) LinkWhatsApp(ctx context.Context, phone, lang string, enabled 
 	key := Key("whatsapp_phone", phone)
 	return s.Repo.TransactNotifications(ctx, []string{key}, func(rows map[string]*Entry) error {
 		if !enabled {
-			*rows[key] = Entry{}
+			*rows[key] = Entry{Kind: "contact", Contact: Contact{Phone: phone, Channel: WhatsApp, Blocked: true}}
 			return nil
 		}
 		*rows[key] = Entry{Kind: "contact", Contact: Contact{Phone: phone, Channel: WhatsApp, Language: string(appointmentmessage.ParseLanguage(lang)), ExpiresAt: s.now().Add(180 * 24 * time.Hour)}}

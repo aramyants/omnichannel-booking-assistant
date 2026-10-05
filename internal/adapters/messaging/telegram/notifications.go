@@ -44,7 +44,33 @@ func (h NativeNotifications) HandleTelegram(ctx context.Context, body []byte) (b
 			if row.Order == "whatsapp" {
 				order = "WhatsApp → Telegram"
 			}
-			_, err = h.Client.sendWithMarkup(ctx, chatID, "Ծանուցումների հերթականությունը՝ "+order+"։ SMS-ն անջատված է։ Սպասող իրադարձություններ՝ "+strconv.Itoa(len(pending))+"։\nTelegram՝ միայն հաստատված հեռախոսով։ WhatsApp՝ միայն համաձայնությամբ և հաստատված ձևանմուշով։\n/notification_order telegram կամ /notification_order whatsapp", nil)
+			account := "անջատված"
+			if h.Service.TelegramAccount {
+				account = "միացված"
+			}
+			_, err = h.Client.sendWithMarkup(ctx, chatID, "Ծանուցումների հերթականությունը՝ "+order+"։ SMS-ն անջատված է։ Սպասող իրադարձություններ՝ "+strconv.Itoa(len(pending))+"։\nՍտուդիայի Telegram հաշիվ՝ "+account+"։ Կապակցված հաճախորդները ծանուցումներ ստանում են բոտից։\n/notification_order telegram կամ /notification_order whatsapp\nՀաճախորդի համաձայնությունն արձանագրելու համար՝ /notification_allow +374… hy|ru|en\nԾանուցումներն անջատելու համար՝ /notification_block +374…", nil)
+			return true, err
+		case "/notification_allow":
+			if len(command) != 3 {
+				_, err := h.Client.sendWithMarkup(ctx, chatID, "Միայն հաճախորդի խնդրանքը հաստատելուց հետո՝ /notification_allow +374… hy|ru|en", nil)
+				return true, err
+			}
+			if err := h.Service.AllowPhone(ctx, command[1], command[2]); err != nil {
+				_, sendErr := h.Client.sendWithMarkup(ctx, chatID, "Խնդրում ենք ստուգել հեռախոսահամարը և լեզուն՝ hy, ru կամ en։", nil)
+				return true, sendErr
+			}
+			_, err := h.Client.sendWithMarkup(ctx, chatID, "Հաճախորդի՝ ամրագրման ծանուցումներ ստանալու խնդրանքն արձանագրված է։ SMS-ն անջատված է։", nil)
+			return true, err
+		case "/notification_block":
+			if len(command) != 2 {
+				_, err := h.Client.sendWithMarkup(ctx, chatID, "/notification_block +374…", nil)
+				return true, err
+			}
+			if err := h.Service.BlockPhone(ctx, command[1]); err != nil {
+				_, sendErr := h.Client.sendWithMarkup(ctx, chatID, "Խնդրում ենք ստուգել հեռախոսահամարը։", nil)
+				return true, sendErr
+			}
+			_, err := h.Client.sendWithMarkup(ctx, chatID, "Այս համարի ամրագրման ավտոմատ ծանուցումներն անջատված են։", nil)
 			return true, err
 		case "/notification_order":
 			if len(command) != 2 || (command[1] != "telegram" && command[1] != "whatsapp") {

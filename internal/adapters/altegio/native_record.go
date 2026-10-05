@@ -26,6 +26,7 @@ func (c *Client) ReadNativeBooking(ctx context.Context, id string) (notification
 		Created   string `json:"create_date"`
 		Changed   string `json:"last_change_date"`
 		APIID     string `json:"api_id"`
+		Online    bool   `json:"online"`
 		Client    *struct {
 			Name  string `json:"name"`
 			Phone string `json:"phone"`
@@ -71,5 +72,5 @@ func (c *Client) ReadNativeBooking(ctx context.Context, id string) (notification
 	if b.StartsAt.IsZero() || (!dto.Deleted && (dto.Length <= 0 || dto.Staff.ID <= 0 || len(dto.Services) == 0)) {
 		return notifications.Snapshot{}, fmt.Errorf("%w: incomplete native appointment", booking.ErrUnavailable)
 	}
-	return notifications.Snapshot{Booking: b, Phone: phone, ChangedAt: parse(dto.Changed), APIID: dto.APIID}, nil
+	return notifications.Snapshot{Booking: b, Phone: phone, ChangedAt: parse(dto.Changed), APIID: dto.APIID, Online: dto.Online}, nil
 }
