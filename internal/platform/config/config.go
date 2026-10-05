@@ -4,6 +4,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -60,14 +61,22 @@ type Config struct {
 	// booking confirmations and reminders. Empty facts are omitted.
 	BusinessProfile BusinessProfile
 
-	Telegram  Telegram
-	WhatsApp  WhatsApp
-	Messenger DirectMessaging
-	Instagram DirectMessaging
-	Altegio   Altegio
-	AI        AI
-	Storage   Storage
-	Reminders Reminders
+	Telegram      Telegram
+	WhatsApp      WhatsApp
+	Messenger     DirectMessaging
+	Instagram     DirectMessaging
+	Altegio       Altegio
+	AI            AI
+	Storage       Storage
+	Reminders     Reminders
+	Notifications Notifications
+}
+
+type Notifications struct {
+	Enabled           bool
+	WebhookSecret     string
+	ActivatedAt       time.Time
+	WhatsAppTemplates map[string]string
 }
 
 // LocalizedText is business-authored copy in each supported language. The
@@ -468,6 +477,33 @@ func Load() (Config, error) {
 	reminders, reminderErrs := loadReminders(cfg.Env, cfg.Storage.ProjectID)
 	cfg.Reminders = reminders
 	errs = append(errs, reminderErrs...)
+	cfg.Notifications.Enabled = getenv("NATIVE_NOTIFICATIONS_ENABLED", "false") == "true"
+	cfg.Notifications.WebhookSecret = getenv("ALTEGIO_WEBHOOK_SECRET", "")
+	cfg.Notifications.WhatsAppTemplates = map[string]string{}
+	if getenv("NATIVE_WHATSAPP_READY", "false") == "true" {
+		if err := json.Unmarshal([]byte(getenv("WHATSAPP_BOOKING_TEMPLATES_JSON", "{}")), &cfg.Notifications.WhatsAppTemplates); err != nil {
+			errs = append(errs, errors.New("WHATSAPP_BOOKING_TEMPLATES_JSON must map purpose:language to approved template names"))
+		}
+		for key, name := range cfg.Notifications.WhatsAppTemplates {
+			purpose, lang, ok := strings.Cut(key, ":")
+			if !ok || (purpose != "booking_created" && purpose != "booking_changed" && purpose != "booking_cancelled") || (lang != "en" && lang != "ru" && lang != "hy") || strings.TrimSpace(name) == "" {
+				errs = append(errs, errors.New("invalid approved booking template configuration"))
+			}
+		}
+	}
+	if cfg.Notifications.Enabled {
+		activated, err := time.Parse(time.RFC3339, getenv("NATIVE_NOTIFICATIONS_ACTIVATED_AT", ""))
+		cfg.Notifications.ActivatedAt = activated
+		if err != nil {
+			errs = append(errs, errors.New("NATIVE_NOTIFICATIONS_ACTIVATED_AT must be a fixed RFC3339 activation time"))
+		}
+		if len(cfg.Notifications.WebhookSecret) < 32 {
+			errs = append(errs, errors.New("ALTEGIO_WEBHOOK_SECRET must have at least 32 characters"))
+		}
+		if cfg.Storage.Backend != StorageFirestore || cfg.Reminders.Backend != RemindersCloudTasks || cfg.PublicBaseURL == "" || !cfg.Telegram.Enabled() || cfg.Altegio.UserToken == "" {
+			errs = append(errs, errors.New("native notifications require Firestore, Cloud Tasks, a public URL, Telegram and Altegio private credentials"))
+		}
+	}
 
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("load config: %w", errors.Join(errs...))

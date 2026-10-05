@@ -824,7 +824,7 @@ func (t *toolset) prepareBooking(ctx context.Context, s *session, call ai.ToolCa
 	draft := booking.Draft{
 		// Generated once, here. Reusing it on every confirmation attempt is
 		// what stops a retry becoming a second appointment.
-		IdempotencyKey:        id.New(),
+		IdempotencyKey:        "omnichannel-" + id.New(),
 		ServiceIDs:            []string{service.ID},
 		ServiceNames:          []string{service.Name},
 		StaffID:               staff.ID,

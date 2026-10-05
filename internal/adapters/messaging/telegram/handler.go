@@ -60,8 +60,17 @@ type Handler struct {
 	staffReplies func(ctx context.Context, text string) error
 
 	// buttons is set when the handler may answer and retire inline keyboards.
-	buttons Buttons
-	inbox   *staffInbox
+	buttons       Buttons
+	inbox         *staffInbox
+	notifications BookingNotifications
+}
+
+type BookingNotifications interface {
+	HandleTelegram(context.Context, []byte) (bool, error)
+}
+
+func WithBookingNotifications(handler BookingNotifications) HandlerOption {
+	return func(h *Handler) { h.notifications = handler }
 }
 
 // HandlerOption customises a Handler.
@@ -152,6 +161,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(ctx, "could not read a telegram delivery", "error", err)
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
+	}
+	if h.notifications != nil {
+		handled, err := h.notifications.HandleTelegram(ctx, body)
+		if err != nil {
+			http.Error(w, "processing failed", http.StatusInternalServerError)
+			return
+		}
+		if handled {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 	}
 
 	// A button press is not a message and arrives on its own, so it is looked

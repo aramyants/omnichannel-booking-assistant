@@ -94,6 +94,25 @@ func TestDuplicateTaskIsSuccessfulIdempotence(t *testing.T) {
 	}
 }
 
+func TestNativeNotificationHasSeparateRouteAndPayload(t *testing.T) {
+	creator := &fakeCreator{}
+	cfg := taskConfig()
+	cfg.TargetURL = "https://booking.example.run.app/tasks/notifications"
+	scheduler := newScheduler(creator, nil, cfg)
+	scheduler.now = func() time.Time { return taskNow }
+	if err := scheduler.ScheduleNotification(t.Context(), "native-event", "hook-event", taskNow.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	req := creator.request.Task.GetHttpRequest()
+	var payload map[string]string
+	if err := json.Unmarshal(req.Body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if req.Url != cfg.TargetURL || req.GetOidcToken().GetAudience() != cfg.Audience || len(payload) != 1 || payload["event_id"] != "hook-event" {
+		t.Fatal("native task must use its authenticated route and event identity")
+	}
+}
+
 func TestScheduleRefusesCloudTasksThirtyDayLimit(t *testing.T) {
 	scheduler := newScheduler(&fakeCreator{}, nil, taskConfig())
 	scheduler.now = func() time.Time { return taskNow }

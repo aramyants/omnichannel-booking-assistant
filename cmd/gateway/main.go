@@ -31,6 +31,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/assistant"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/calendar"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/notifications"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/reminders"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/staffinbox"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
@@ -234,6 +235,14 @@ func run() error {
 	}
 	defer closeReminders()
 	gw.reminder = reminderHandler
+	nativeReader, _ := scheduling.(notifications.Reader)
+	nativeNotifications, altegioHook, notificationTasks, closeNotifications, err := openNotifications(ctx, cfg, store, nativeReader, telegramClient, whatsappClient, logger)
+	if err != nil {
+		return err
+	}
+	defer closeNotifications()
+	gw.altegio = altegioHook
+	gw.notifications = notificationTasks
 
 	assistantService, err := assistant.NewService(assistant.Deps{
 		Senders:             senders,
@@ -279,6 +288,7 @@ func run() error {
 			// Lets a pressed button be acknowledged and an answered question
 			// stop being answerable.
 			telegram.WithButtons(telegramClient),
+			telegram.WithBookingNotifications(optionalTelegramNotifications(nativeNotifications, telegramClient, cfg.Telegram.StaffChatID)),
 		)
 	}
 
@@ -287,7 +297,11 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		gw.whatsapp = meta.NewWhatsAppHandler(webhook, assistantService, logger, cfg.WhatsApp.PhoneNumberID).WithFeedback(whatsappClient)
+		var whatsappMessages telegram.MessageHandler = assistantService
+		if nativeNotifications != nil {
+			whatsappMessages = notificationMessages{service: nativeNotifications, next: assistantService, wa: whatsappClient}
+		}
+		gw.whatsapp = meta.NewWhatsAppHandler(webhook, whatsappMessages, logger, cfg.WhatsApp.PhoneNumberID).WithFeedback(whatsappClient)
 	}
 	if cfg.Messenger.Enabled() {
 		webhook, err := meta.NewWebhook(cfg.Messenger.AppSecret, cfg.Messenger.VerifyToken)
@@ -401,6 +415,13 @@ func publishTelegramMenu(ctx context.Context, client *telegram.Client, cfg confi
 				Description: entry.Description,
 			})
 		}
+		if cfg.Notifications.Enabled {
+			labels := map[string][]string{"hy": {"Միացնել ամրագրման ծանուցումները", "Անջատել ամրագրման ծանուցումները"}, "ru": {"Подключить уведомления о записи", "Отключить уведомления о записи"}, "en": {"Enable booking notifications", "Disable booking notifications"}}[menu.LanguageTag]
+			if len(labels) == 0 {
+				labels = []string{"Enable booking notifications", "Disable booking notifications"}
+			}
+			commands = append(commands, telegram.Command{Name: "notifications", Description: labels[0]}, telegram.Command{Name: "notifications_off", Description: labels[1]})
+		}
 
 		if err := client.SetCommands(ctx, "", menu.LanguageTag, commands); err != nil {
 			// One language failing is not a reason to abandon the rest: a
@@ -416,7 +437,11 @@ func publishTelegramMenu(ctx context.Context, client *telegram.Client, cfg confi
 	// still enforced by the webhook handler, not by menu visibility.
 	if cfg.Telegram.StaffChatID != "" {
 		for _, language := range []string{"", "en", "ru", "hy"} {
-			if err := client.SetCommands(ctx, cfg.Telegram.StaffChatID, language, []telegram.Command{{Name: "inbox", Description: "Հաճախորդների Telegram զրույցները"}}); err != nil {
+			commands := []telegram.Command{{Name: "inbox", Description: "Հաճախորդների Telegram զրույցները"}}
+			if cfg.Notifications.Enabled {
+				commands = append(commands, telegram.Command{Name: "notification_status", Description: "Ամրագրման ծանուցումների կարգավիճակը"}, telegram.Command{Name: "notification_order", Description: "Ծանուցման առաջին ալիքը"})
+			}
+			if err := client.SetCommands(ctx, cfg.Telegram.StaffChatID, language, commands); err != nil {
 				logger.Warn("could not publish the staff inbox menu", "error", err, "language", language)
 			}
 		}
