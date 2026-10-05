@@ -71,3 +71,22 @@ func TestAltegioWebhookAuthenticatesBeforeQueuing(t *testing.T) {
 		})
 	}
 }
+
+func TestWhatsAppNotificationCommandLanguageIsExplicit(t *testing.T) {
+	for _, test := range []struct {
+		text, source, language string
+		enabled, handled       bool
+	}{
+		{"/notifications", "", "en", true, true},
+		{"/notifications ru", "hy", "ru", true, true},
+		{"/notifications en", "ru", "en", true, true},
+		{"/notifications_off", "hy", "hy", false, true},
+		{"/notifications please book me", "en", "en", false, false},
+		{"/notifications hy", "en", "en", false, false},
+	} {
+		enabled, lang, handled := whatsappNotificationPreference(test.text, test.source)
+		if enabled != test.enabled || lang != test.language || handled != test.handled {
+			t.Errorf("command %q incorrectly changed preference", test.text)
+		}
+	}
+}

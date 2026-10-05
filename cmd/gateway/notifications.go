@@ -245,19 +245,51 @@ type notificationMessages struct {
 }
 
 func (h notificationMessages) Handle(ctx context.Context, msg messaging.Envelope) error {
-	command := strings.TrimSpace(msg.Content.Text)
-	if msg.Provider != messaging.ProviderWhatsApp || (command != "/notifications" && command != "/notifications_off") {
+	enabled, lang, handled := whatsappNotificationPreference(msg.Content.Text, msg.Sender.Language)
+	if msg.Provider != messaging.ProviderWhatsApp || !handled {
 		return h.next.Handle(ctx, msg)
 	}
-	enabled := command == "/notifications"
-	if err := h.service.LinkWhatsApp(ctx, msg.ExternalUserID, msg.Sender.Language, enabled); err != nil {
+	if err := h.service.LinkWhatsApp(ctx, msg.ExternalUserID, lang, enabled); err != nil {
 		return err
 	}
-	text := "Booking notification preference saved. Notifications are sent only with an approved WhatsApp template. SMS is disabled. Use /notifications_off to disable."
+	text := map[string]string{
+		"en": "Booking updates are enabled in English. Please use this phone number when booking. For Russian, send /notifications ru. To stop these updates, send /notifications_off.",
+		"ru": "Уведомления о записи включены. Пожалуйста, указывайте этот номер телефона при записи. Чтобы отключить уведомления, отправьте /notifications_off.",
+		"hy": "Ամրագրման ծանուցումները միացված են։ Խնդրում ենք ամրագրելիս նշել այս հեռախոսահամարը։ Ծանուցումներն անջատելու համար ուղարկեք /notifications_off։",
+	}[lang]
+	if enabled && h.service.WhatsAppTemplates[string(notifications.BookingCreated)+":"+lang] == "" {
+		text = map[string]string{
+			"en": "Your notification preference is saved. WhatsApp booking updates are not available in this language yet. Please use our Telegram bot for booking updates.",
+			"ru": "Ваше предпочтение сохранено. Уведомления о записи на этом языке пока недоступны в WhatsApp. Пожалуйста, используйте наш Telegram-бот для уведомлений.",
+			"hy": "Ձեր նախընտրությունը պահպանված է։ Հայերեն ծանուցումները հասանելի են մեր Telegram բոտում։ WhatsApp-ում անգլերեն ծանուցումների համար ուղարկեք /notifications en, իսկ ռուսերենի համար՝ /notifications ru։",
+		}[lang]
+	}
 	if !enabled {
-		text = "WhatsApp booking notifications are disabled. Use /notifications to enable them again."
+		text = map[string]string{
+			"en": "Booking updates are disabled. To enable them again, send /notifications.",
+			"ru": "Уведомления о записи отключены. Чтобы включить их снова, отправьте /notifications.",
+			"hy": "Ամրագրման ծանուցումներն անջատված են։ Կրկին միացնելու համար ուղարկեք /notifications։",
+		}[lang]
 	}
 	return h.wa.Send(ctx, messaging.Outgoing{Provider: messaging.ProviderWhatsApp, ExternalThreadID: msg.ExternalThreadID, Text: text})
+}
+
+func whatsappNotificationPreference(text, language string) (enabled bool, lang string, handled bool) {
+	lang = string(appointmentmessage.ParseLanguage(language))
+	parts := strings.Fields(text)
+	if len(parts) == 1 && parts[0] == "/notifications_off" {
+		return false, lang, true
+	}
+	if len(parts) < 1 || len(parts) > 2 || parts[0] != "/notifications" {
+		return false, lang, false
+	}
+	if len(parts) == 2 {
+		if parts[1] != "en" && parts[1] != "ru" {
+			return false, lang, false
+		}
+		lang = parts[1]
+	}
+	return true, lang, true
 }
 
 func optionalTelegramNotifications(s *notifications.Service, c *telegram.Client, staff string) telegram.BookingNotifications {

@@ -24,8 +24,9 @@ Cloud Scheduler must invoke `/tasks/notifications` every five minutes with body
 `{"reconcile":true}`, using the existing Cloud Tasks OIDC audience and identity.
 This recovers persisted work after queue creation failures and task exhaustion.
 
-SMS is disabled. WhatsApp is also unavailable until a valid payment setup and
-approved utility templates exist. Only then set `NATIVE_WHATSAPP_READY=true` and
+SMS is disabled. The owner completed WhatsApp payment setup and the English and
+Russian utility templates `emotion_booking_update` and `emotion_booking_update_ru`
+are approved. The deployment now sets `NATIVE_WHATSAPP_READY=true` and
 map `purpose:language` to actual approved template names in
 `WHATSAPP_BOOKING_TEMPLATES_JSON`. Supported purposes are `booking_created`,
 `booking_changed`, `booking_cancelled`; supported languages are `en`, `ru`, `hy`.
@@ -42,7 +43,12 @@ contact user ID can link. Linking expires after 180 days and can be withdrawn
 with `/notifications_off`. Never merge customers solely by a phone match.
 
 WhatsApp clients explicitly opt in using `/notifications` in a signed,
-customer-initiated chat; `/notifications_off` withdraws consent. Sender identity
+customer-initiated chat; `/notifications en` or `/notifications ru` selects an
+approved notification language. `/notifications_off` withdraws consent. There is
+no approved Armenian WhatsApp template in this deployment; Armenian conversation
+replies and Telegram notices remain available. Each messenger uses its own saved
+language, so Armenian Telegram preferences do not suppress English WhatsApp fallback.
+Sender identity
 comes from the signed provider update. Approved template messaging is required
 outside the customer service window.
 
