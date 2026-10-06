@@ -80,6 +80,18 @@ type Notifications struct {
 	TelegramAccount        TelegramAccount
 	BookingPermissionSince time.Time
 	NativeLanguage         string
+	SMS                    SMSGate
+	SMSPermissionSince     time.Time
+}
+
+// SMSGate credentials are supplied as one Secret Manager binding.
+type SMSGate struct {
+	Enabled    bool   `json:"-"`
+	APIBaseURL string `json:"api_base_url"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	DeviceID   string `json:"device_id"`
+	SIMNumber  int    `json:"sim_number"`
 }
 
 type TelegramAccount struct {
@@ -535,6 +547,21 @@ func Load() (Config, error) {
 				errs = append(errs, errors.New("invalid approved booking template configuration"))
 			}
 		}
+	}
+	if getenv("NATIVE_SMS_READY", "false") == "true" {
+		if err := json.Unmarshal([]byte(getenv("SMSGATE_CREDENTIALS_JSON", "")), &cfg.Notifications.SMS); err != nil {
+			errs = append(errs, errors.New("SMSGate credentials unavailable"))
+		}
+		cfg.Notifications.SMS.Enabled = true
+		sms := cfg.Notifications.SMS
+		if !cfg.Notifications.Enabled || strings.TrimSpace(sms.Username) == "" || strings.Contains(sms.Username, ":") || sms.Password == "" || strings.TrimSpace(sms.DeviceID) == "" || sms.SIMNumber < 1 || sms.SIMNumber > 3 {
+			errs = append(errs, errors.New("SMS notifications require enabled native notifications, private credentials, an explicit device and SIM"))
+		}
+		since, err := time.Parse(time.RFC3339, getenv("NATIVE_SMS_PERMISSION_SINCE", ""))
+		if err != nil || cfg.Notifications.BookingPermissionSince.IsZero() || since.Before(cfg.Notifications.BookingPermissionSince) {
+			errs = append(errs, errors.New("NATIVE_SMS_PERMISSION_SINCE must be a fixed time at or after booking notification requests became visible"))
+		}
+		cfg.Notifications.SMSPermissionSince = since
 	}
 	if cfg.Notifications.Enabled {
 		activated, err := time.Parse(time.RFC3339, getenv("NATIVE_NOTIFICATIONS_ACTIVATED_AT", ""))

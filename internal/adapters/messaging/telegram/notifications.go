@@ -48,7 +48,7 @@ func (h NativeNotifications) HandleTelegram(ctx context.Context, body []byte) (b
 			if h.Service.TelegramAccount {
 				account = "միացված"
 			}
-			_, err = h.Client.sendWithMarkup(ctx, chatID, "Ծանուցումների հերթականությունը՝ "+order+"։ SMS-ն անջատված է։ Սպասող իրադարձություններ՝ "+strconv.Itoa(len(pending))+"։\nՍտուդիայի Telegram հաշիվ՝ "+account+"։ Կապակցված հաճախորդները ծանուցումներ ստանում են բոտից։\n/notification_order telegram կամ /notification_order whatsapp\nՀաճախորդի համաձայնությունն արձանագրելու համար՝ /notification_allow +374… hy|ru|en\nԾանուցումներն անջատելու համար՝ /notification_block +374…", nil)
+			_, err = h.Client.sendWithMarkup(ctx, chatID, "Ծանուցումների հերթականությունը՝ "+order+"։ "+h.smsStatus()+" Սպասող իրադարձություններ՝ "+strconv.Itoa(len(pending))+"։\nՍտուդիայի Telegram հաշիվ՝ "+account+"։ Կապակցված հաճախորդները ծանուցումներ ստանում են բոտից։\n/notification_order telegram կամ /notification_order whatsapp\nՀաճախորդի համաձայնությունն արձանագրելու համար՝ /notification_allow +374… hy|ru|en\nԾանուցումներն անջատելու համար՝ /notification_block +374…", nil)
 			return true, err
 		case "/notification_allow":
 			if len(command) != 3 {
@@ -59,7 +59,7 @@ func (h NativeNotifications) HandleTelegram(ctx context.Context, body []byte) (b
 				_, sendErr := h.Client.sendWithMarkup(ctx, chatID, "Խնդրում ենք ստուգել հեռախոսահամարը և լեզուն՝ hy, ru կամ en։", nil)
 				return true, sendErr
 			}
-			_, err := h.Client.sendWithMarkup(ctx, chatID, "Հաճախորդի՝ ամրագրման ծանուցումներ ստանալու խնդրանքն արձանագրված է։ SMS-ն անջատված է։", nil)
+			_, err := h.Client.sendWithMarkup(ctx, chatID, "Հաճախորդի՝ ամրագրման ծանուցումներ ստանալու խնդրանքն արձանագրված է։ "+h.smsStatus(), nil)
 			return true, err
 		case "/notification_block":
 			if len(command) != 2 {
@@ -85,7 +85,7 @@ func (h NativeNotifications) HandleTelegram(ctx context.Context, body []byte) (b
 			if err != nil {
 				return true, err
 			}
-			_, err = h.Client.sendWithMarkup(ctx, chatID, "Ծանուցումների հերթականությունը պահպանված է։ SMS-ն անջատված է։", nil)
+			_, err = h.Client.sendWithMarkup(ctx, chatID, "Ծանուցումների հերթականությունը պահպանված է։ "+h.smsStatus(), nil)
 			return true, err
 		}
 		return false, nil
@@ -130,12 +130,19 @@ func (c *Client) contactMessage(ctx context.Context, chat, text string, remove b
 func notificationCopy(lang, kind string) string {
 	lang = strings.Split(strings.ToLower(lang), "-")[0]
 	copy := map[string]map[string]string{
-		"en": {"request": "Receive booking confirmations and changes here. To enable them, use the button to share your own Telegram phone number, then use the same number in our booking form. Sharing enables booking notifications; /notifications_off disables them. SMS is currently disabled.", "linked": "Your phone is linked. We will send new booking confirmations and changes here when your booking uses this number. /notifications_off disables notifications.", "own": "Please share your own Telegram contact, using /notifications and the phone button.", "retry": "We could not link this contact. Use /notifications and share your own phone within 10 minutes. If it is already linked to another account, please contact the studio.", "off": "Telegram booking notifications are disabled. Use /notifications to enable them again."},
-		"ru": {"request": "Получайте подтверждения и изменения записи здесь. Для подключения нажмите кнопку и отправьте свой номер Telegram, затем указывайте этот же номер в форме записи. Отправляя номер, Вы включаете уведомления о записи. /notifications_off отключает их. SMS пока отключены.", "linked": "Ваш номер подключён. Мы будем отправлять сюда подтверждения новых записей и изменения, если в записи указан этот номер. /notifications_off отключает уведомления.", "own": "Пожалуйста, отправьте свой контакт Telegram через /notifications и кнопку отправки номера.", "retry": "Не удалось подключить контакт. Отправьте /notifications и свой номер в течение 10 минут. Если номер уже связан с другим аккаунтом, пожалуйста, свяжитесь со студией.", "off": "Уведомления о записи в Telegram отключены. /notifications включает их снова."},
-		"hy": {"request": "Ամրագրումների հաստատումներն ու փոփոխությունները կարող եք ստանալ այստեղ։ Միացնելու համար կոճակով ուղարկեք Ձեր Telegram հեռախոսահամարը և ամրագրման ձևում նշեք նույն համարը։ Համարն ուղարկելով՝ միացնում եք ամրագրման ծանուցումները։ /notifications_off հրամանով կարող եք անջատել դրանք։ SMS-ն այս պահին անջատված է։", "linked": "Ձեր հեռախոսահամարը կապակցված է։ Նոր ամրագրումների հաստատումներն ու փոփոխությունները կուղարկենք այստեղ, եթե ամրագրելիս նշեք նույն համարը։ /notifications_off հրամանով կարող եք անջատել ծանուցումները։", "own": "Խնդրում ենք /notifications հրամանով և հեռախոսահամարի կոճակով ուղարկել Ձեր սեփական Telegram կոնտակտը։", "retry": "Չհաջողվեց կապակցել կոնտակտը։ Խնդրում ենք ուղարկել /notifications և 10 րոպեի ընթացքում՝ Ձեր սեփական համարը։ Եթե համարը կապված է այլ հաշվի հետ, խնդրում ենք կապվել ստուդիայի հետ։", "off": "Telegram-ում ամրագրման ծանուցումներն անջատված են։ /notifications հրամանով կարող եք կրկին միացնել դրանք։"},
+		"en": {"request": "Receive booking confirmations and changes here. To enable them, use the button to share your own Telegram phone number, then use the same number in our booking form. Sharing enables booking notifications; /notifications_off disables them.", "linked": "Your phone is linked. We will send new booking confirmations and changes here when your booking uses this number. /notifications_off disables notifications.", "own": "Please share your own Telegram contact, using /notifications and the phone button.", "retry": "We could not link this contact. Use /notifications and share your own phone within 10 minutes. If it is already linked to another account, please contact the studio.", "off": "Telegram booking notifications are disabled. Use /notifications to enable them again."},
+		"ru": {"request": "Получайте подтверждения и изменения записи здесь. Для подключения нажмите кнопку и отправьте свой номер Telegram, затем указывайте этот же номер в форме записи. Отправляя номер, Вы включаете уведомления о записи. /notifications_off отключает их.", "linked": "Ваш номер подключён. Мы будем отправлять сюда подтверждения новых записей и изменения, если в записи указан этот номер. /notifications_off отключает уведомления.", "own": "Пожалуйста, отправьте свой контакт Telegram через /notifications и кнопку отправки номера.", "retry": "Не удалось подключить контакт. Отправьте /notifications и свой номер в течение 10 минут. Если номер уже связан с другим аккаунтом, пожалуйста, свяжитесь со студией.", "off": "Уведомления о записи в Telegram отключены. /notifications включает их снова."},
+		"hy": {"request": "Ամրագրումների հաստատումներն ու փոփոխությունները կարող եք ստանալ այստեղ։ Միացնելու համար կոճակով ուղարկեք Ձեր Telegram հեռախոսահամարը և ամրագրման ձևում նշեք նույն համարը։ Համարն ուղարկելով՝ միացնում եք ամրագրման ծանուցումները։ /notifications_off հրամանով կարող եք անջատել դրանք։", "linked": "Ձեր հեռախոսահամարը կապակցված է։ Նոր ամրագրումների հաստատումներն ու փոփոխությունները կուղարկենք այստեղ, եթե ամրագրելիս նշեք նույն համարը։ /notifications_off հրամանով կարող եք անջատել ծանուցումները։", "own": "Խնդրում ենք /notifications հրամանով և հեռախոսահամարի կոճակով ուղարկել Ձեր սեփական Telegram կոնտակտը։", "retry": "Չհաջողվեց կապակցել կոնտակտը։ Խնդրում ենք ուղարկել /notifications և 10 րոպեի ընթացքում՝ Ձեր սեփական համարը։ Եթե համարը կապված է այլ հաշվի հետ, խնդրում ենք կապվել ստուդիայի հետ։", "off": "Telegram-ում ամրագրման ծանուցումներն անջատված են։ /notifications հրամանով կարող եք կրկին միացնել դրանք։"},
 	}
 	if copy[lang] == nil {
 		lang = "en"
 	}
 	return copy[lang][kind]
+}
+
+func (h NativeNotifications) smsStatus() string {
+	if h.Service.SMSReady {
+		return "SMS-ը վերջին պահուստային ալիքն է։"
+	}
+	return "SMS-ն անջատված է։"
 }

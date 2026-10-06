@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/meta"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/smsgate"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/telegram"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/telegramaccount"
 	cloudtasksadapter "github.com/aramyants/omnichannel-booking-assistant/internal/adapters/tasks/cloudtasks"
@@ -47,7 +50,16 @@ func openNotifications(ctx context.Context, cfg config.Config, store appStore, r
 			return nil, nil, nil, nil, err
 		}
 	}
-	service := &notifications.Service{Repo: repo, Scheduler: scheduler, Reader: reader, Owned: store, Sender: nativeNotificationSender{tg: tg, wa: wa, account: account, store: store, logger: logger, location: cfg.Altegio.Location, renderer: newAppointmentMessages(cfg), bookingURL: cfg.BusinessProfile.BookingURL, websiteURL: cfg.BusinessProfile.WebsiteURL}, ActivatedAt: cfg.Notifications.ActivatedAt, WhatsAppTemplates: cfg.Notifications.WhatsAppTemplates, TelegramAccount: account != nil, BookingPermissionSince: cfg.Notifications.BookingPermissionSince, NativeLanguage: cfg.Notifications.NativeLanguage}
+	var sms *smsgate.Client
+	if cfg.Notifications.SMS.Enabled {
+		credentials := cfg.Notifications.SMS
+		sms, err = smsgate.NewClient(smsgate.Config{APIBaseURL: credentials.APIBaseURL, Username: credentials.Username, Password: credentials.Password, DeviceID: credentials.DeviceID, SIMNumber: credentials.SIMNumber}, nil)
+		if err != nil {
+			_ = scheduler.Close()
+			return nil, nil, nil, nil, err
+		}
+	}
+	service := &notifications.Service{Repo: repo, Scheduler: scheduler, Reader: reader, Owned: store, Sender: nativeNotificationSender{tg: tg, wa: wa, account: account, sms: sms, store: store, logger: logger, location: cfg.Altegio.Location, renderer: newAppointmentMessages(cfg), bookingURL: cfg.BusinessProfile.BookingURL, websiteURL: cfg.BusinessProfile.WebsiteURL}, ActivatedAt: cfg.Notifications.ActivatedAt, WhatsAppTemplates: cfg.Notifications.WhatsAppTemplates, TelegramAccount: account != nil, BookingPermissionSince: cfg.Notifications.BookingPermissionSince, NativeLanguage: cfg.Notifications.NativeLanguage, SMSReady: sms != nil, SMSPermissionSince: cfg.Notifications.SMSPermissionSince}
 	authorizer, err := cloudtasksadapter.NewAuthorizer(cfg.Reminders.Audience, cfg.Reminders.ServiceAccountEmail)
 	if err != nil {
 		_ = scheduler.Close()
@@ -173,6 +185,7 @@ type nativeNotificationSender struct {
 	tg                     *telegram.Client
 	wa                     *meta.Client
 	account                *telegramaccount.Client
+	sms                    *smsgate.Client
 	store                  appStore
 	logger                 *slog.Logger
 	location               *time.Location
@@ -189,6 +202,22 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 		"ru": {notifications.BookingCreated: "Ваша запись подтверждена", notifications.BookingChanged: "Ваша запись изменена", notifications.BookingCancelled: "Ваша запись отменена"},
 		"hy": {notifications.BookingCreated: "Ձեր ամրագրումը հաստատված է", notifications.BookingChanged: "Ձեր ամրագրումը փոփոխված է", notifications.BookingCancelled: "Ձեր ամրագրումը չեղարկված է"},
 	}[lang][notice.Purpose]
+	if target.Channel == notifications.SMS {
+		if s.sms == nil {
+			return true, errors.New("SMS unavailable")
+		}
+		// Keep the same provider ID across retries, while fitting the live API's
+		// ID limit. A timeout remains uncertain in the durable send ledger.
+		digest := sha256.Sum256([]byte("smsgate:" + notice.ID + ":" + target.Address))
+		validUntil := time.Now().UTC().Add(15 * time.Minute)
+		if notice.Purpose != notifications.BookingCancelled && b.StartsAt.Before(validUntil) {
+			validUntil = b.StartsAt
+		}
+		_, err := s.sms.Send(ctx, smsgate.Message{ID: fmt.Sprintf("%x", digest[:16]), Phone: target.Address,
+			Text:       s.renderer.SMS(title, appointmentmessage.Appointment{StartsAt: b.StartsAt, Service: strings.Join(b.ServiceNames, ", "), Specialist: b.StaffName}, appointmentmessage.Language(lang)),
+			ValidUntil: validUntil, Priority: 0})
+		return errors.Is(err, smsgate.ErrRejected), err
+	}
 	details := strings.Join(b.ServiceNames, ", ")
 	if b.StaffName != "" {
 		details += " · " + b.StaffName
@@ -198,7 +227,7 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 		if s.wa == nil {
 			return true, errors.New("WhatsApp unavailable")
 		}
-		err := s.wa.SendBookingTemplate(ctx, target.Address, target.TemplateID, lang, []string{title, when, details})
+		err := s.wa.SendBookingTemplateWithReference(ctx, target.Address, target.TemplateID, lang, []string{title, when, details}, "native-booking:"+notice.ID)
 		return errors.Is(err, meta.ErrRejected), err
 	}
 	appointment := appointmentmessage.Appointment{CustomerName: b.CustomerName, StartsAt: b.StartsAt, Service: strings.Join(b.ServiceNames, ", "), Specialist: b.StaffName}

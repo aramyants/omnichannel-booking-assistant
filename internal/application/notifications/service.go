@@ -64,6 +64,7 @@ type Entry struct {
 	UpdatedAt         time.Time `firestore:"updated_at"`
 	SessionCiphertext []byte    `firestore:"session_ciphertext,omitempty"`
 	NextLookupAt      time.Time `firestore:"next_lookup_at,omitempty"`
+	ProviderState     string    `firestore:"provider_state,omitempty"`
 }
 type Repository interface {
 	TransactNotifications(context.Context, []string, func(map[string]*Entry) error) error
@@ -97,6 +98,8 @@ type Service struct {
 	TelegramAccount        bool
 	BookingPermissionSince time.Time
 	NativeLanguage         string
+	SMSReady               bool
+	SMSPermissionSince     time.Time
 }
 
 func Key(kind, id string) string { return fmt.Sprintf("%s_%x", kind, sha256.Sum256([]byte(id))) }
@@ -155,6 +158,9 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	return nil
 }
 func (s *Service) Deliver(ctx context.Context, id string) error {
+	if err := s.resumeFailedWhatsApp(ctx, id); err != nil {
+		return err
+	}
 	key := Key("event", id)
 	owner := uuid.NewString()
 	var row Entry
@@ -292,9 +298,15 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 		return err
 	}
 	requested := !permission.Contact.RequestedAt.IsZero() && permission.Contact.Phone == phone && latest.Online && latest.APIID == "" && !s.BookingPermissionSince.IsZero() && !permission.Contact.RequestedAt.Before(s.BookingPermissionSince)
-	if staffPermission.Contact.Phone == phone && staffPermission.Contact.ExpiresAt.After(now) && !staffPermission.Contact.Blocked {
+	staffRequested := staffPermission.Contact.Phone == phone && staffPermission.Contact.ExpiresAt.After(now) && !staffPermission.Contact.Blocked
+	if staffRequested {
 		requested = true
 	}
+	// The form's original Telegram/WhatsApp request cannot enroll existing
+	// bookings into SMS. Only new SMS-disclosed bookings or staff-recorded
+	// client requests qualify; a global withdrawal always wins.
+	smsRequested := !staffPermission.Contact.Blocked && (staffRequested ||
+		(requested && !s.SMSPermissionSince.IsZero() && !permission.Contact.RequestedAt.Before(s.SMSPermissionSince)))
 	recipient := Recipient{Phone: phone, TelegramOptedOut: tg.Contact.Blocked, BookingUpdatesRequested: requested}
 	if tg.Contact.ExpiresAt.After(now) {
 		recipient.TelegramChat = tg.Contact.Chat
@@ -313,7 +325,7 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 		order = []Channel{WhatsApp, Telegram}
 	}
 	template := s.WhatsAppTemplates[string(row.Notice.Purpose)+":"+whatsappLanguage]
-	targets, err := Plan(Policy{MessengerOrder: order, TelegramAccount: s.TelegramAccount, Enabled: map[Channel]bool{Telegram: true, WhatsApp: template != "", SMS: false}, Templates: map[Purpose]string{row.Notice.Purpose: template}}, recipient, row.Notice.Purpose)
+	targets, err := Plan(Policy{MessengerOrder: order, TelegramAccount: s.TelegramAccount, Enabled: map[Channel]bool{Telegram: true, WhatsApp: template != "", SMS: s.SMSReady && smsRequested}, Templates: map[Purpose]string{row.Notice.Purpose: template}}, recipient, row.Notice.Purpose)
 	if err != nil {
 		return err
 	}

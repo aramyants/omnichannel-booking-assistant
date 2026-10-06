@@ -5,15 +5,15 @@ queued in Cloud Tasks. The worker reads the current record with private Altegio
 credentials scoped to the studio. Webhook bodies cannot supply recipients or
 appointment details. This integration sends confirmations, meaningful changes
 and cancellations. Altegio login/verification codes remain a separate provider
-contract. SMS is disabled while the work Android phone is not ready.
+contract. Booking SMS fallback uses the commissioned work Android phone.
 
 ## Customer flow and sender identity
 
 The native form explains that submitting a booking requests E-Motion appointment
-updates through Telegram or WhatsApp. No bot command or separate contact-sharing
+updates through Telegram or WhatsApp, with SMS as a fallback. No bot command or separate contact-sharing
 step is required for this flow. The on-screen booking result remains available.
 
-Default order is Telegram, then WhatsApp. A valid verified bot link keeps delivery
+Default order is Telegram, then WhatsApp, then SMS. A valid verified bot link keeps delivery
 from `@emotion_concept_bot`. Otherwise, an eligible booking request can use the
 authorized studio user account `@emotion_concept` to resolve the customer's phone
 through Telegram and send the same appointment copy. User-account notices include
@@ -25,6 +25,39 @@ enumerate account histories, bypass recipient restrictions, or pay for contact.
 It reserves one lookup per three seconds across instances and honors flood-wait
 cooldowns. A definitively unavailable Telegram route can fall back to WhatsApp.
 An ambiguous send outcome never triggers another channel or automatic resend.
+
+## Work phone SMS fallback
+
+SMSGate 1.77.1 is installed from its verified official secure APK on the studio's
+Samsung Galaxy A17, with work SIM +37494768067 in slot 1. Its cloud credentials
+are pinned in Secret Manager as `smsgate-work-phone-credentials:1` and supplied
+through `SMSGATE_CREDENTIALS_JSON`. No Android LAN endpoint is exposed. Start on
+boot and the battery-optimization exemption are enabled. A real commissioning
+SMS reported **Delivered** after the studio refilled the SIM balance.
+
+`NATIVE_SMS_READY=true` enables the final route only for current client requests.
+`NATIVE_SMS_PERMISSION_SINCE=2026-10-06T09:40:06Z` is the fixed SMS disclosure
+cutoff. Earlier form bookings are not enrolled into SMS. Staff can separately
+record a client's booking-update request with `/notification_allow`; a global
+`/notification_block` withdrawal wins over the form request.
+
+SMS contains the local date/time, treatment, specialist, address and callback
+number, capped at 201 UTF-16 units (at most three Unicode SMS parts). Each send
+pins the work device and SIM, uses a stable 32-character provider ID, requests
+delivery reports, and expires after 15 minutes or at the appointment start,
+whichever comes first. No uncertain send is retried. `accepted_sms` means queued
+by SMSGate, not received by the client; provider status can be queried by the
+stable ID. Keep the phone powered, online, and supplied with carrier SMS credit.
+
+WhatsApp native notices carry a client-data-free native event reference. The
+signed webhook for the configured business number records sent/delivered/read/
+failed receipts. A confirmed failure requeues the original event, skips routes
+already attempted and proceeds to the remaining route. It rechecks the booking
+and withdrawal before sending. Unknown outcomes do not trigger SMS. Read or
+delivered receipts cannot be overwritten by an older failure.
+
+Incoming SMS stays in the phone's normal Messages app. This release does not
+turn on an SMS AI assistant or connect Altegio's separate login/OTP provider.
 
 Studio-account replies appear in the studio's normal Telegram app. They are not
 imported into the bot inbox and do not receive AI replies through this adapter.
