@@ -2,6 +2,7 @@ package firestore
 
 import (
 	"fmt"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/cabinet"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
@@ -13,7 +14,7 @@ func TestVerifiedProfilesResolveAliasesAtomically(t *testing.T) {
 	store := newStore(t)
 	ctx := opCtx(t)
 	external := unique(t, "profile")
-	phone := fmt.Sprintf("+374%08d", time.Now().UnixNano()%100000000)
+	phone := fmt.Sprintf("+37491%06d", time.Now().UnixNano()%1000000)
 	var first customer.Customer
 	for i, provider := range []messaging.Provider{messaging.ProviderTelegram, messaging.ProviderWhatsApp} {
 		id := unique(t, "old")
@@ -38,5 +39,26 @@ func TestVerifiedProfilesResolveAliasesAtomically(t *testing.T) {
 	booked, err := store.ListBookings(ctx, first.ID)
 	if err != nil || len(booked) != 2 {
 		t.Fatalf("alias bookings=%d err=%v", len(booked), err)
+	}
+}
+
+func TestTelegramCabinetProofAndReceiptSurviveFirestore(t *testing.T) {
+	store := newStore(t)
+	ctx := opCtx(t)
+	user := unique(t, "contact")
+	identity := &cabinet.Identity{Repo: store}
+	if err := identity.Begin(ctx, messaging.ProviderTelegram, user); err != nil {
+		t.Fatal(err)
+	}
+	first, err := identity.AcceptTelegramContact(ctx, user, "+37491123456", "42")
+	if err != nil || !first {
+		t.Fatalf("first=%v err=%v", first, err)
+	}
+	first, err = identity.AcceptTelegramContact(ctx, user, "+37491123456", "42")
+	if err != nil || first {
+		t.Fatalf("retry first=%v err=%v", first, err)
+	}
+	if phone, err := identity.Phone(ctx, messaging.ProviderTelegram, user); err != nil || phone != "+37491123456" {
+		t.Fatalf("persisted phone=%s err=%v", phone, err)
 	}
 }
