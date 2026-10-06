@@ -1,5 +1,29 @@
 # Meta setup status
 
+## Account restriction — 6 October 2026, after the live reconnection test
+
+WhatsApp Manager subsequently reports the entire studio WABA disabled. Business
+Support Home says it cannot receive, reply to, or initiate client messages and
+cannot add phone numbers. The page names the business terms, messaging policy
+and commerce policy without identifying a specific violating activity. The user
+provided the phone's “Account in review” screen, dated 6 October, so the phone
+review is already submitted. Do not claim the API is currently usable based on
+the earlier successful test. Do not repeat registration or device migration as
+an attempted workaround. Meta must resolve this restriction.
+
+The 14 verified services are now uploaded to catalogue `977524844636774` through
+Meta's service feed. All visible items show eligible status with AMD prices.
+The WhatsApp catalogue selector is disabled while the account is restricted.
+Two Duo services remain excluded because their published and configured
+durations disagree. Keep the catalogue separate until WhatsApp access and
+catalogue eligibility can both be verified.
+
+Normal deployments preserve `NATIVE_WHATSAPP_READY` instead of setting it true.
+Keep proactive WhatsApp booking notices and reminder templates disabled during
+the review; preserve the credentials for later recovery. Telegram and SMS remain
+the notification routes. Account restoration requires a fresh live check before
+WhatsApp sends are enabled again.
+
 ## Work-phone coexistence recheck — 6 October 2026
 
 The studio scanned the approved coexistence QR from WhatsApp Business on the
