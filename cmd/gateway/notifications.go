@@ -299,6 +299,19 @@ type notificationMessages struct {
 	wa      *meta.Client
 }
 
+// Preserve manual Business app replies through the notification command layer.
+// The Meta handler applies these before customer messages so staff takeover
+// can suppress an assistant answer already being composed.
+func (h notificationMessages) RecordExternalReply(ctx context.Context, reply messaging.ExternalReply) error {
+	recorder, ok := h.next.(interface {
+		RecordExternalReply(context.Context, messaging.ExternalReply) error
+	})
+	if !ok {
+		return errors.New("assistant business app reply recorder is not configured")
+	}
+	return recorder.RecordExternalReply(ctx, reply)
+}
+
 func (h notificationMessages) Handle(ctx context.Context, msg messaging.Envelope) error {
 	enabled, lang, handled := whatsappNotificationPreference(msg.Content.Text, msg.Sender.Language)
 	if msg.Provider != messaging.ProviderWhatsApp || !handled {
