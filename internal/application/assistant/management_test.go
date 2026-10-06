@@ -157,9 +157,13 @@ func TestConfirmedCancellationChangesProviderThenLocalState(t *testing.T) {
 		t.Error("the cancellation draft survived a successful change")
 	}
 
-	for _, i := range []int{1, 3} {
-		if strings.Contains(resultOf(t, model, i), "private-record-hash") {
-			t.Fatal("the private booking management token was exposed to the model")
+	for _, request := range model.requests {
+		for _, turn := range request.Turns {
+			for _, result := range turn.Results {
+				if strings.Contains(result.Output, "private-record-hash") {
+					t.Fatal("the private booking management token was exposed to the model")
+				}
+			}
 		}
 	}
 }

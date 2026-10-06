@@ -1,5 +1,26 @@
 # Meta setup status
 
+## Work-phone coexistence recheck — 6 October 2026
+
+The studio scanned the approved coexistence QR from WhatsApp Business on the
+Galaxy A17. Graph reports phone ID `1351571984706018` as `CLOUD_API`, high quality,
+under WABA `1522559759898453`. The existing app subscription and messaging token
+remain valid. A real client message reached the production webhook, and the
+user confirmed the assistant replied after their test chat was returned from
+human handling to assistant handling. Production uses `gpt-6.1-sol` with high
+reasoning effort. The ordinary phone registration endpoint was not used.
+
+The final Embedded Signup asset step displayed Meta error #1690130 saying the
+studio business ID was invalid. This remains an onboarding UI issue; the live
+inbound/outbound WhatsApp check succeeded. Do not repeat registration to work
+around it or claim that every onboarding step completed. Manual phone message
+echoes are supported; older phone chat history was not imported.
+
+Meta catalogue `977524844636774` was created with the user's approval. Catalogue
+items are still being prepared; creation alone does not establish publication
+or WhatsApp catalogue eligibility. Historical observations below are dated and
+must not be used as current readiness claims.
+
 ## Runtime and profile recheck — 5 October 2026
 
 The production WhatsApp API phone now matches the work number +37494768067;

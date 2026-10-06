@@ -52,8 +52,8 @@ real-conversation evidence is still required. See
   its cleanup. Do not silently create a real studio appointment for a recording.
 
 The bot changes are merged to `main` and deployed as runtime version `ecd7520`.
-Coexistence contact/history sync and manual-phone message mirroring are
-implemented, and `smb_message_echoes` is subscribed. Claiming and configuring a
+Manual-phone message mirroring is implemented, and `smb_message_echoes` is
+subscribed. Older phone contact/history import is not implemented. Claiming and configuring a
 Meta test number does not resolve the existing number's advanced-permission
 approval gate.
 

@@ -1,7 +1,9 @@
 # Connect WhatsApp, Instagram and Messenger
 
-Updated 11 September 2026. The integrations below are implemented; they need
-deployment and channel credentials before they become live. Business
+Updated 6 October 2026. The integrations are deployed with production channel
+credentials. A real WhatsApp client exchange on the studio number succeeded
+after work-phone coexistence reconnection. See [current setup observations](meta-onboarding-status.md)
+for the remaining Embedded Signup UI error and catalogue work. Business
 verification, permission approval and webhook subscriptions are separate steps.
 
 ## Callback URLs for this deployment
@@ -27,8 +29,8 @@ active in the WhatsApp Business app. To keep that app usable, use Embedded Signu
 with **WhatsApp Business App Onboarding** (`featureType:
 whatsapp_business_app_onboarding`), rather than standard new-number registration.
 Meta's coexistence documentation requires a Solution Partner or Tech Provider,
-session logging, and a working webhook. The current app is not yet approved for
-production Embedded Signup. Do not delete the phone's WhatsApp account to work
+session logging, and a working webhook. The current Embedded Signup builder
+allows production onboarding. Do not delete the phone's WhatsApp account to work
 around registration errors.
 
 After successful coexistence signup, capture the **Phone Number ID** and **WABA

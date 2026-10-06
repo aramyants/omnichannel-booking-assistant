@@ -16,6 +16,7 @@ import (
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
@@ -847,6 +848,37 @@ func (s *Service) reply(
 	// Handle an explicit yes in code so short Armenian transliterations such as
 	// "ayo" cannot fall into a generic model response after a valid proposal.
 	var seededTurns []ai.Turn
+	changeConfirmationAttempted := false
+	if conv.BookingChange == nil && conv.Draft == nil && isChangeAnswerButton(msg.Content.Text) {
+		sess.offer()
+		return expiredChangeConfirmation(sess.language), nil
+	}
+	if draft := conv.BookingChange; draft != nil {
+		switch changeAnswer(msg.Content.Text) {
+		case -1:
+			conv.BookingChange = nil
+			sess.offer()
+			return unchangedAppointment(sess.language), nil
+		case 1:
+			if draft.Validate(draft.Kind, s.now()) != nil || draft.PreparedFromMessageID == sess.incomingMessageID ||
+				(draft.Kind != booking.ChangeCancel && draft.Kind != booking.ChangeReschedule) {
+				conv.BookingChange = nil
+				sess.offer()
+				return expiredChangeConfirmation(sess.language), nil
+			}
+			name := toolConfirmCancel
+			if draft.Kind == booking.ChangeReschedule {
+				name = toolConfirmMove
+			}
+			call := ai.ToolCall{ID: "application-change-confirmation", Name: name, Arguments: []byte(`{}`)}
+			result := s.tools.execute(ctx, sess, call)
+			if sess.finalReply != "" {
+				return sess.finalReply, nil
+			}
+			changeConfirmationAttempted = true
+			seededTurns = append(seededTurns, ai.Turn{Calls: []ai.ToolCall{call}, Results: []ai.ToolResult{result}})
+		}
+	}
 	if conv.Draft != nil && explicitlyConfirmsBooking(msg.Content.Text, sess.language) {
 		call := ai.ToolCall{ID: "application-confirmation", Name: toolConfirmBooking, Arguments: []byte(`{}`)}
 		result := s.tools.execute(ctx, sess, call)
@@ -861,6 +893,10 @@ func (s *Service) reply(
 	}
 
 	instructions := s.instructions(cust, sess.language, msg.Sender.Language)
+	instructions += pendingChangeInstruction(conv.BookingChange)
+	if changeConfirmationAttempted {
+		instructions += "\nThe application has already attempted the customer's confirmed change. Explain that tool result. Do not retry the change, prepare another change, or ask for the same confirmation in this turn."
+	}
 	if conv.CatalogueServiceID != "" {
 		instructions += "\n\nThe customer selected service_id " + conv.CatalogueServiceID + " through the validated catalogue buttons. Use that exact service for availability and booking; do not ask them to choose it again."
 	}
@@ -876,6 +912,18 @@ func (s *Service) reply(
 		Turns:           seededTurns,
 		Tools:           s.tools.definitions(),
 		StructuredReply: true,
+	}
+	if changeConfirmationAttempted {
+		allowed := req.Tools[:0]
+		for _, tool := range req.Tools {
+			switch tool.Name {
+			case toolPrepareCancel, toolConfirmCancel, toolPrepareMove, toolConfirmMove:
+				continue
+			default:
+				allowed = append(allowed, tool)
+			}
+		}
+		req.Tools = allowed
 	}
 
 	for round := 1; round <= maxToolRounds; round++ {
@@ -920,6 +968,10 @@ func (s *Service) reply(
 
 		turn := ai.Turn{Calls: resp.ToolCalls, Continuation: resp.Continuation}
 		for _, tc := range resp.ToolCalls {
+			if changeConfirmationAttempted && (tc.Name == toolPrepareCancel || tc.Name == toolConfirmCancel || tc.Name == toolPrepareMove || tc.Name == toolConfirmMove) {
+				turn.Results = append(turn.Results, ai.ToolResult{CallID: tc.ID, Output: toolFailure(errors.New("the confirmed change was already attempted; explain its result without repeating it"))})
+				continue
+			}
 			if errors.Is(context.Cause(ctx), errTurnSuperseded) {
 				return "", errTurnSuperseded
 			}
