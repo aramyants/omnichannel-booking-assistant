@@ -300,6 +300,12 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 	// even if recording completion fails, avoiding an immediate second reply.
 	releaseClaim := true
 	defer func() {
+		if messaging.TerminalDelivery(resultErr) {
+			// Retain the claim after a refused or uncertain provider send. Replaying
+			// this turn can duplicate an accepted answer or repeat booking tools.
+			releaseClaim = false
+			s.completeDelivery(ctx, msg.DedupeKey(), claimID, s.now())
+		}
 		if errors.Is(resultErr, conversation.ErrExternalReplyConflict) {
 			// The customer has already heard from staff. A stale model answer
 			// is obsolete, and retrying this turn must not produce another one.

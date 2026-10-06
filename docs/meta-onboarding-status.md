@@ -1,5 +1,24 @@
 # Meta setup status
 
+## Recovery audit — 6 October 2026, 19:19 UTC
+
+Graph reports the studio WABA as `APPROVED`, business verification as verified,
+and WABA/app messaging health as `AVAILABLE`. The restriction banner has gone.
+The phone is still offline in WhatsApp Manager and reports `ON_PREMISE` and
+`NOT_VERIFIED`, so the phone's restored app login does not establish Cloud API
+readiness. Both booking templates remain rejected. The template editor currently
+refuses submission with “This WhatsApp Business account cannot create or update
+templates.” Keep `NATIVE_WHATSAPP_READY=false` until reconnection, template
+approval and a fresh real-client test are verified.
+
+WhatsApp webhook recovery now ignores expired, missing, invalid and excessively
+future customer timestamps before typing or assistant work. Terminal provider
+refusals and uncertain send outcomes are acknowledged without replaying the
+customer turn; partial multi-message sends cannot repeat their accepted prefix.
+Definite rate-limit refusals before any accepted chunk remain retryable. These
+controls reduce duplicate and out-of-window attempts; they do not establish the
+cause of Meta's restriction or guarantee against future restrictions.
+
 ## Account restriction — 6 October 2026, after the live reconnection test
 
 WhatsApp Manager subsequently reports the entire studio WABA disabled. Business

@@ -67,10 +67,10 @@ func whatsAppEnvelope(
 		return messaging.Envelope{}, fmt.Errorf("%w: message has no sender or id", ErrMalformedUpdate)
 	}
 
-	// WhatsApp sends unix seconds as a string. An unreadable timestamp is not
-	// worth losing the message over: only ReceivedAt is relied on anyway.
-	sentAt := receivedAt
-	if seconds, err := strconv.ParseInt(m.Timestamp, 10, 64); err == nil {
+	// Do not invent a fresh service window for a missing or invalid timestamp.
+	// The handler acknowledges such events without running the assistant.
+	var sentAt time.Time
+	if seconds, err := strconv.ParseInt(m.Timestamp, 10, 64); err == nil && seconds > 0 {
 		sentAt = time.Unix(seconds, 0).UTC()
 	}
 
@@ -172,19 +172,29 @@ func (c *Client) SendWhatsApp(ctx context.Context, msg messaging.Outgoing) error
 
 	if len(msg.Choices) > 0 {
 		chunks := textChunks(msg.Text, 1024)
-		for _, chunk := range chunks[:len(chunks)-1] {
+		for i, chunk := range chunks[:len(chunks)-1] {
 			if err := c.SendWhatsApp(ctx, messaging.Outgoing{Provider: msg.Provider, ExternalThreadID: msg.ExternalThreadID, Text: chunk}); err != nil {
+				if i > 0 {
+					return fmt.Errorf("%w: partial reply: %w", messaging.ErrDeliveryUncertain, err)
+				}
 				return err
 			}
 		}
 		msg.Text = chunks[len(chunks)-1]
 		if payload := whatsAppInteractive(msg); payload != nil {
-			return c.post(ctx, c.phoneNumberID+"/messages", payload)
+			err := c.post(ctx, c.phoneNumberID+"/messages", payload)
+			if err != nil && len(chunks) > 1 {
+				return fmt.Errorf("%w: partial reply: %w", messaging.ErrDeliveryUncertain, err)
+			}
+			return err
 		}
 	}
 	if chunks := textChunks(msg.Text, 4096); len(chunks) > 1 {
-		for _, chunk := range chunks {
+		for i, chunk := range chunks {
 			if err := c.SendWhatsApp(ctx, messaging.Outgoing{Provider: msg.Provider, ExternalThreadID: msg.ExternalThreadID, Text: chunk}); err != nil {
+				if i > 0 {
+					return fmt.Errorf("%w: partial reply: %w", messaging.ErrDeliveryUncertain, err)
+				}
 				return err
 			}
 		}
