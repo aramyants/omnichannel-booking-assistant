@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/notifications"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/staffinbox"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
@@ -46,8 +47,10 @@ type processedEntry struct {
 type Store struct {
 	mu sync.Mutex
 
-	customers  map[string]customer.Customer
-	identities map[string]customer.ChannelIdentity
+	customers           map[string]customer.Customer
+	identities          map[string]customer.ChannelIdentity
+	profileAliases      map[string][]string
+	notificationEntries map[string]notifications.Entry
 
 	// conversations is keyed by channel thread, which is how a conversation is
 	// looked up when a message arrives. byID resolves the other direction.
@@ -96,6 +99,8 @@ func New(opts ...Option) *Store {
 	s := &Store{
 		customers:           make(map[string]customer.Customer),
 		identities:          make(map[string]customer.ChannelIdentity),
+		profileAliases:      make(map[string][]string),
+		notificationEntries: make(map[string]notifications.Entry),
 		conversations:       make(map[string]conversation.Conversation),
 		conversationKeyByID: make(map[string]string),
 		messages:            make(map[string][]conversation.Message),
@@ -394,6 +399,9 @@ func (s *Store) ListBookings(_ context.Context, customerID string) ([]booking.Bo
 	defer s.mu.Unlock()
 
 	stored := slices.Clone(s.bookings[customerID])
+	for _, alias := range s.profileAliases[customerID] {
+		stored = append(stored, s.bookings[alias]...)
+	}
 	slices.SortFunc(stored, func(a, b booking.Booking) int {
 		return a.StartsAt.Compare(b.StartsAt)
 	})

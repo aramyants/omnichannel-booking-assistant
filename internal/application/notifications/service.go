@@ -49,22 +49,23 @@ type Notice struct {
 
 // Entry is private durable integration state. No provider bodies are retained.
 type Entry struct {
-	Kind              string    `firestore:"kind"`
-	State             string    `firestore:"state"`
-	Event             Event     `firestore:"event"`
-	Contact           Contact   `firestore:"contact"`
-	Notice            Notice    `firestore:"notice"`
-	Fingerprint       string    `firestore:"fingerprint"`
-	ChangedAt         time.Time `firestore:"changed_at"`
-	LeaseOwner        string    `firestore:"lease_owner"`
-	LeaseUntil        time.Time `firestore:"lease_until"`
-	Order             string    `firestore:"order"`
-	Outcome           string    `firestore:"outcome"`
-	Attempted         []string  `firestore:"attempted"`
-	UpdatedAt         time.Time `firestore:"updated_at"`
-	SessionCiphertext []byte    `firestore:"session_ciphertext,omitempty"`
-	NextLookupAt      time.Time `firestore:"next_lookup_at,omitempty"`
-	ProviderState     string    `firestore:"provider_state,omitempty"`
+	Verification      PhoneChallenge `firestore:"verification,omitempty"`
+	Kind              string         `firestore:"kind"`
+	State             string         `firestore:"state"`
+	Event             Event          `firestore:"event"`
+	Contact           Contact        `firestore:"contact"`
+	Notice            Notice         `firestore:"notice"`
+	Fingerprint       string         `firestore:"fingerprint"`
+	ChangedAt         time.Time      `firestore:"changed_at"`
+	LeaseOwner        string         `firestore:"lease_owner"`
+	LeaseUntil        time.Time      `firestore:"lease_until"`
+	Order             string         `firestore:"order"`
+	Outcome           string         `firestore:"outcome"`
+	Attempted         []string       `firestore:"attempted"`
+	UpdatedAt         time.Time      `firestore:"updated_at"`
+	SessionCiphertext []byte         `firestore:"session_ciphertext,omitempty"`
+	NextLookupAt      time.Time      `firestore:"next_lookup_at,omitempty"`
+	ProviderState     string         `firestore:"provider_state,omitempty"`
 }
 type Repository interface {
 	TransactNotifications(context.Context, []string, func(map[string]*Entry) error) error

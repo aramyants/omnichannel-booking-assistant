@@ -20,6 +20,8 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/telegramaccount"
 	cloudtasksadapter "github.com/aramyants/omnichannel-booking-assistant/internal/adapters/tasks/cloudtasks"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/assistant"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/cabinet"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/notifications"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
@@ -351,9 +353,9 @@ func whatsappNotificationPreference(text, language string) (enabled bool, lang s
 	return true, lang, true
 }
 
-func optionalTelegramNotifications(s *notifications.Service, c *telegram.Client, staff string) telegram.BookingNotifications {
+func optionalTelegramNotifications(s *notifications.Service, c *telegram.Client, staff string, identity *cabinet.Identity, app *assistant.Service) telegram.BookingNotifications {
 	if s == nil {
 		return nil
 	}
-	return telegram.NativeNotifications{Service: s, Client: c, StaffChatID: staff}
+	return telegram.NativeNotifications{Service: s, Client: c, StaffChatID: staff, Identity: identity, CabinetAssistant: app}
 }

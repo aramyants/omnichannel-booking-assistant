@@ -161,8 +161,10 @@ const maxChoices = 100
 
 // Outgoing is a message the assistant wants to deliver back to a customer.
 type Outgoing struct {
-	ChoiceToken string
-	Provider    Provider
+	// RequestOwnContact asks Telegram to share only the sender's own contact.
+	RequestOwnContact bool
+	ChoiceToken       string
+	Provider          Provider
 
 	// ExternalThreadID is the conversation to deliver into, taken from the
 	// envelope being answered.

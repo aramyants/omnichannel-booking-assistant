@@ -172,6 +172,19 @@ func (c *Client) SendReturningID(ctx context.Context, msg messaging.Outgoing) (s
 	if err := msg.Validate(); err != nil {
 		return "", err
 	}
+	if msg.RequestOwnContact {
+		result, err := c.call(ctx, "sendMessage", map[string]any{"chat_id": msg.ExternalThreadID, "text": msg.Text, "reply_markup": map[string]any{"keyboard": [][]any{{map[string]any{"text": "Share my phone / Ուղարկել հեռախոսահամարը / Поделиться номером", "request_contact": true}}}, "resize_keyboard": true, "one_time_keyboard": true}})
+		if err != nil {
+			return "", err
+		}
+		var sent struct {
+			ID int64 `json:"message_id"`
+		}
+		if err := json.Unmarshal(result, &sent); err != nil {
+			return "", err
+		}
+		return strconv.FormatInt(sent.ID, 10), nil
+	}
 
 	result, err := c.call(ctx, "sendMessage", sendMessageRequest{
 		ChatID:      msg.ExternalThreadID,

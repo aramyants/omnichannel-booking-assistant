@@ -451,7 +451,7 @@ func TestNothingBookedIsSaidPlainly(t *testing.T) {
 	}
 
 	output := resultOf(t, model, 1)
-	if !strings.Contains(output, "nothing booked") {
-		t.Errorf("result = %s, want it to say plainly that there is nothing", output)
+	if !strings.Contains(output, "No upcoming appointments") || strings.Contains(output, "nothing booked with us") {
+		t.Errorf("result = %s, want scoped absence without denying bookings under another identity", output)
 	}
 }

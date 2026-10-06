@@ -244,7 +244,12 @@ func run() error {
 	gw.altegio = altegioHook
 	gw.notifications = notificationTasks
 
+	clientIdentity, err := openCabinet(cfg, store)
+	if err != nil {
+		return err
+	}
 	assistantService, err := assistant.NewService(assistant.Deps{
+		Identity:            clientIdentity,
 		Senders:             senders,
 		Customers:           store,
 		Conversations:       store,
@@ -288,7 +293,7 @@ func run() error {
 			// Lets a pressed button be acknowledged and an answered question
 			// stop being answerable.
 			telegram.WithButtons(telegramClient),
-			telegram.WithBookingNotifications(optionalTelegramNotifications(nativeNotifications, telegramClient, cfg.Telegram.StaffChatID)),
+			telegram.WithBookingNotifications(optionalTelegramNotifications(nativeNotifications, telegramClient, cfg.Telegram.StaffChatID, clientIdentity, assistantService)),
 		)
 	}
 

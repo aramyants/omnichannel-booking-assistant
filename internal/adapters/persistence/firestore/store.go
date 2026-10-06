@@ -84,10 +84,11 @@ func (s *Store) Close() error { return s.client.Close() }
 // separate from the domain type: renaming a Go field should not silently
 // orphan every record already written.
 type customerDoc struct {
-	Name      string    `firestore:"name"`
-	Phone     string    `firestore:"phone"`
-	CreatedAt time.Time `firestore:"created_at"`
-	UpdatedAt time.Time `firestore:"updated_at"`
+	LinkedCustomerIDs []string  `firestore:"linked_customer_ids,omitempty"`
+	Name              string    `firestore:"name"`
+	Phone             string    `firestore:"phone"`
+	CreatedAt         time.Time `firestore:"created_at"`
+	UpdatedAt         time.Time `firestore:"updated_at"`
 }
 
 type identityDoc struct {
@@ -728,12 +729,24 @@ func (s *Store) FindBooking(ctx context.Context, reference string) (booking.Book
 
 // ListBookings returns a customer's appointments, soonest first.
 func (s *Store) ListBookings(ctx context.Context, customerID string) ([]booking.Booking, error) {
-	docs, err := s.client.Collection(collectionBookings).
-		Where("customer_id", "==", customerID).
-		Documents(ctx).
-		GetAll()
-	if err != nil {
-		return nil, fmt.Errorf("firestore: list bookings: %w", err)
+	ids := []string{customerID}
+	profile, err := s.client.Collection(collectionCustomers).Doc(customerID).Get(ctx)
+	if err == nil {
+		var doc customerDoc
+		if err := profile.DataTo(&doc); err != nil {
+			return nil, err
+		}
+		ids = append(ids, doc.LinkedCustomerIDs...)
+	} else if status.Code(err) != codes.NotFound {
+		return nil, err
+	}
+	var docs []*firestore.DocumentSnapshot
+	for start := 0; start < len(ids); start += 30 {
+		page, err := s.client.Collection(collectionBookings).Where("customer_id", "in", ids[start:min(start+30, len(ids))]).Documents(ctx).GetAll()
+		if err != nil {
+			return nil, fmt.Errorf("firestore: list bookings: %w", err)
+		}
+		docs = append(docs, page...)
 	}
 
 	bookings := make([]booking.Booking, 0, len(docs))
