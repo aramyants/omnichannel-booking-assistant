@@ -115,14 +115,17 @@ type ConversationTurns interface {
 // there are enough of them that call sites would otherwise be a row of
 // same-typed arguments that are easy to transpose.
 type Deps struct {
-	Identity      *cabinet.Identity
-	Senders       map[messaging.Provider]Sender
-	Customers     CustomerRepository
-	Conversations ConversationRepository
-	Messages      MessageRepository
-	Processed     ProcessedEvents
-	Turns         ConversationTurns
-	Logger        *slog.Logger
+	// DeliveryAvailable prevents model/tool work when a provider has confirmed
+	// that replies cannot be delivered. Incoming messages still reach staff.
+	DeliveryAvailable func(context.Context, messaging.Provider) (bool, error)
+	Identity          *cabinet.Identity
+	Senders           map[messaging.Provider]Sender
+	Customers         CustomerRepository
+	Conversations     ConversationRepository
+	Messages          MessageRepository
+	Processed         ProcessedEvents
+	Turns             ConversationTurns
+	Logger            *slog.Logger
 
 	// AI interprets the conversation. When it is absent the assistant falls
 	// back to a fixed reply rather than failing, so the channels keep working
@@ -158,21 +161,22 @@ type Deps struct {
 
 // Service handles one inbound message at a time.
 type Service struct {
-	identity      *cabinet.Identity
-	senders       map[messaging.Provider]Sender
-	customers     CustomerRepository
-	conversations ConversationRepository
-	messages      MessageRepository
-	processed     ProcessedEvents
-	turns         ConversationTurns
-	activeTurns   *activeTurnRegistry
-	logger        *slog.Logger
-	now           func() time.Time
-	ai            ai.Provider
-	speech        ai.Transcriber
-	tools         *toolset
-	business      Business
-	staff         StaffNotifier
+	deliveryAvailable func(context.Context, messaging.Provider) (bool, error)
+	identity          *cabinet.Identity
+	senders           map[messaging.Provider]Sender
+	customers         CustomerRepository
+	conversations     ConversationRepository
+	messages          MessageRepository
+	processed         ProcessedEvents
+	turns             ConversationTurns
+	activeTurns       *activeTurnRegistry
+	logger            *slog.Logger
+	now               func() time.Time
+	ai                ai.Provider
+	speech            ai.Transcriber
+	tools             *toolset
+	business          Business
+	staff             StaffNotifier
 }
 
 // NewService returns a Service, or reports which collaborator is missing.
@@ -208,20 +212,21 @@ func NewService(deps Deps) (*Service, error) {
 	}
 
 	return &Service{
-		identity:      deps.Identity,
-		senders:       senders,
-		customers:     deps.Customers,
-		conversations: deps.Conversations,
-		messages:      deps.Messages,
-		processed:     deps.Processed,
-		turns:         deps.Turns,
-		activeTurns:   newActiveTurnRegistry(),
-		logger:        deps.Logger,
-		now:           now,
-		ai:            deps.AI,
-		speech:        deps.Speech,
-		business:      business,
-		staff:         deps.Staff,
+		deliveryAvailable: deps.DeliveryAvailable,
+		identity:          deps.Identity,
+		senders:           senders,
+		customers:         deps.Customers,
+		conversations:     deps.Conversations,
+		messages:          deps.Messages,
+		processed:         deps.Processed,
+		turns:             deps.Turns,
+		activeTurns:       newActiveTurnRegistry(),
+		logger:            deps.Logger,
+		now:               now,
+		ai:                deps.AI,
+		speech:            deps.Speech,
+		business:          business,
+		staff:             deps.Staff,
 		tools: &toolset{
 			identity:   deps.Identity,
 			scheduling: deps.Scheduling,
@@ -422,6 +427,43 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 		"content_length", len(msg.Content.Text),
 	)
 
+	if s.deliveryAvailable != nil {
+		available, err := s.deliveryAvailable(ctx, msg.Provider)
+		if err != nil {
+			return fmt.Errorf("check reply availability: %w", err)
+		}
+		if !available {
+			if stopsReminders(msg.Content.Text) {
+				conv.ReminderOptIn = false
+			}
+			if conv.AssistantMayReply() {
+				if err := conv.TransitionTo(conversation.StateHumanRequested, now); err != nil {
+					return err
+				}
+				if err := s.conversations.Save(ctx, conv); err != nil {
+					return err
+				}
+				s.notifyStaff(ctx, HandoffNotice{ConversationID: conv.ID, Reason: ReasonChannelUnavailable,
+					Detail:   "Provider has confirmed that replies cannot be delivered; contact the client through an available channel.",
+					Provider: conv.Provider, Customer: cust, ExternalUserID: msg.ExternalUserID,
+					Recent: []conversation.Message{{Direction: conversation.DirectionInbound, Text: originalText}}, RequestedAt: now})
+			} else {
+				if err := s.conversations.Save(ctx, conv); err != nil {
+					return err
+				}
+				if notifier, ok := s.staff.(StaffInboundNotifier); ok {
+					if err := notifier.NotifyInbound(ctx, HandoffNotice{ConversationID: conv.ID, Provider: conv.Provider,
+						Customer: cust, ExternalUserID: msg.ExternalUserID, RequestedAt: now}, originalText); err != nil {
+						s.logger.ErrorContext(ctx, "could not notify staff of a reply during channel outage", "error", err, "conversation_id", conv.ID)
+					}
+				}
+			}
+			releaseClaim = false
+			s.completeDelivery(ctx, msg.DedupeKey(), claimID, now)
+			return nil
+		}
+	}
+
 	// A colleague was asked for and never arrived. Resuming is better than
 	// leaving the customer talking to nobody indefinitely.
 	if conv.WaitingForHumanLongerThan(handoffTimeout, now) {
@@ -439,7 +481,7 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 	// A colleague handling the conversation must not be talked over, and a
 	// customer waiting for a person must not be answered by the bot again.
 	if !conv.AssistantMayReply() {
-		if notifier, ok := s.staff.(StaffInboundNotifier); ok && conv.Provider == messaging.ProviderTelegram {
+		if notifier, ok := s.staff.(StaffInboundNotifier); ok {
 			if err := notifier.NotifyInbound(ctx, HandoffNotice{ConversationID: conv.ID,
 				Provider: conv.Provider, Customer: cust, ExternalUserID: msg.ExternalUserID,
 				RequestedAt: now}, originalText); err != nil {

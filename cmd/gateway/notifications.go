@@ -62,6 +62,48 @@ func openNotifications(ctx context.Context, cfg config.Config, store appStore, r
 		}
 	}
 	service := &notifications.Service{Repo: repo, Scheduler: scheduler, Reader: reader, Owned: store, Sender: nativeNotificationSender{tg: tg, wa: wa, account: account, sms: sms, store: store, logger: logger, location: cfg.Altegio.Location, renderer: newAppointmentMessages(cfg), bookingURL: cfg.BusinessProfile.BookingURL, websiteURL: cfg.BusinessProfile.WebsiteURL}, ActivatedAt: cfg.Notifications.ActivatedAt, WhatsAppTemplates: cfg.Notifications.WhatsAppTemplates, TelegramAccount: account != nil, BookingPermissionSince: cfg.Notifications.BookingPermissionSince, NativeLanguage: cfg.Notifications.NativeLanguage, SMSReady: sms != nil, SMSPermissionSince: cfg.Notifications.SMSPermissionSince}
+	if wa != nil {
+		expected := map[string]bool{}
+		for key, name := range cfg.Notifications.WhatsAppTemplates {
+			_, lang, ok := strings.Cut(key, ":")
+			if ok && name != "" {
+				expected[name+":"+lang] = true
+			}
+		}
+		for lang, name := range cfg.WhatsApp.ReminderTemplates {
+			if name != "" {
+				expected[name+":"+lang] = true
+			}
+		}
+		service.Health = &notifications.HealthGuard{Repo: repo,
+			Read: func(ctx context.Context) (messaging.ChannelHealth, error) {
+				return wa.ReadWhatsAppHealth(ctx, expected)
+			},
+			Alert: func(ctx context.Context, health messaging.ChannelHealth) error {
+				logger.WarnContext(ctx, "WhatsApp messaging health changed", "blocked", health.Blocked, "proactive_paused", health.ProactivePaused)
+				if cfg.Telegram.StaffChatID == "" {
+					return nil
+				}
+				text := "✅ WhatsApp messaging is available again. Approved booking templates and customer replies can resume."
+				switch {
+				case health.Blocked:
+					text = "🚨 Meta has restricted WhatsApp sending. Automatic WhatsApp replies are paused; incoming messages are saved for staff. Eligible booking notices continue through Telegram or SMS. Check Meta Business Support Home before reconnecting."
+				case health.ProactivePaused:
+					text = "⚠️ WhatsApp message quality is RED. Proactive booking templates are paused; customer-initiated replies remain available. Eligible notices use Telegram or SMS. Review complaints and notification consent in Meta."
+				default:
+					for _, approved := range health.Templates {
+						if !approved {
+							text = "⚠️ A configured WhatsApp utility template is not approved or has been paused. That template is skipped; eligible booking notices use Telegram or SMS. Customer-initiated replies remain available. Review the templates in WhatsApp Manager."
+							break
+						}
+					}
+				}
+				return tg.Send(ctx, messaging.Outgoing{Provider: messaging.ProviderTelegram, ExternalThreadID: cfg.Telegram.StaffChatID, Text: text})
+			},
+		}
+		wa.SetDeliveryGuard(service.Health.Allows)
+		logger.Info("WhatsApp messaging health monitor configured")
+	}
 	authorizer, err := cloudtasksadapter.NewAuthorizer(cfg.Reminders.Audience, cfg.Reminders.ServiceAccountEmail)
 	if err != nil {
 		_ = scheduler.Close()
