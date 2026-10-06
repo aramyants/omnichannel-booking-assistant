@@ -1,5 +1,21 @@
 # Meta setup status
 
+## Phone reconnection — 6 October 2026, 19:27 UTC
+
+After the approved QR scan, the studio phone reports `CLOUD_API` again and
+quality remains green. WABA/business/app messaging health is available. Phone
+messaging health is limited pending display-name approval; its separate code
+verification field still says `NOT_VERIFIED`, so a real client reply is required
+before declaring it usable. The final Embedded Signup screen still returns
+Meta error #1690130 for the studio business ID. Preserve the established phone
+connection rather than repeating ordinary registration or creating another WABA.
+
+The first Business app echo exposed a gateway wiring defect: the native
+notification command wrapper did not forward `RecordExternalReply` to the
+assistant. This is now forwarded, preserving signed staff takeover and its
+atomic transcript/deduplication behavior. Gateway regressions cover the complete
+signed webhook path with notifications enabled.
+
 ## Recovery audit — 6 October 2026, 19:19 UTC
 
 Graph reports the studio WABA as `APPROVED`, business verification as verified,
