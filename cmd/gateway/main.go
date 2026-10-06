@@ -249,6 +249,12 @@ func run() error {
 		return err
 	}
 	assistantService, err := assistant.NewService(assistant.Deps{
+		DeliveryAvailable: func(ctx context.Context, provider messaging.Provider) (bool, error) {
+			if provider == messaging.ProviderWhatsApp && nativeNotifications != nil && nativeNotifications.Health != nil {
+				return nativeNotifications.Health.Allows(ctx, "", "")
+			}
+			return true, nil
+		},
 		Identity:            clientIdentity,
 		Senders:             senders,
 		Customers:           store,

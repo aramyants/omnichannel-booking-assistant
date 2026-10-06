@@ -53,6 +53,7 @@ type Client struct {
 	version       string
 	accessToken   string
 	phoneNumberID string
+	deliveryGuard func(context.Context, string, string) (bool, error)
 }
 
 // Option customises a Client.
@@ -104,6 +105,27 @@ func (c *Client) post(ctx context.Context, path string, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("meta %s: encode request: %w", path, err)
+	}
+	if c.deliveryGuard != nil && path == c.phoneNumberID+"/messages" {
+		var message struct {
+			Template struct {
+				Name     string `json:"name"`
+				Language struct {
+					Code string `json:"code"`
+				} `json:"language"`
+			} `json:"template"`
+		}
+		if err := json.Unmarshal(body, &message); err != nil {
+			return err
+		}
+		allowed, err := c.deliveryGuard(ctx, message.Template.Name, message.Template.Language.Code)
+		if err != nil {
+			return fmt.Errorf("check WhatsApp delivery health: %w", err)
+		}
+		if !allowed {
+			// No POST was attempted: native booking routing may safely fall back.
+			return fmt.Errorf("WhatsApp delivery paused: %w: %w", ErrRejected, messaging.ErrDeliveryRejected)
+		}
 	}
 
 	url := c.baseURL + "/" + c.version + "/" + path

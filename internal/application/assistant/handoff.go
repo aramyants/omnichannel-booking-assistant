@@ -30,11 +30,14 @@ const (
 	// ReasonBookingUnresolved means a booking request was sent and its outcome
 	// never came back. The appointment may or may not exist, so somebody has to
 	// check the calendar before the customer is told anything.
-	ReasonBookingUnresolved HandoffReason = "booking_unresolved"
+	ReasonBookingUnresolved  HandoffReason = "booking_unresolved"
+	ReasonChannelUnavailable HandoffReason = "channel_unavailable"
 )
 
 // Urgent reports whether the business should act now rather than in due course.
-func (r HandoffReason) Urgent() bool { return r == ReasonBookingUnresolved }
+func (r HandoffReason) Urgent() bool {
+	return r == ReasonBookingUnresolved || r == ReasonChannelUnavailable
+}
 
 // HandoffNotice is everything a colleague needs to pick a conversation up
 // without reading a database.

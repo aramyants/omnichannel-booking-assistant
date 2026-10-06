@@ -12,6 +12,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 	"github.com/google/uuid"
 )
 
@@ -49,23 +50,24 @@ type Notice struct {
 
 // Entry is private durable integration state. No provider bodies are retained.
 type Entry struct {
-	Verification      PhoneChallenge `firestore:"verification,omitempty"`
-	Kind              string         `firestore:"kind"`
-	State             string         `firestore:"state"`
-	Event             Event          `firestore:"event"`
-	Contact           Contact        `firestore:"contact"`
-	Notice            Notice         `firestore:"notice"`
-	Fingerprint       string         `firestore:"fingerprint"`
-	ChangedAt         time.Time      `firestore:"changed_at"`
-	LeaseOwner        string         `firestore:"lease_owner"`
-	LeaseUntil        time.Time      `firestore:"lease_until"`
-	Order             string         `firestore:"order"`
-	Outcome           string         `firestore:"outcome"`
-	Attempted         []string       `firestore:"attempted"`
-	UpdatedAt         time.Time      `firestore:"updated_at"`
-	SessionCiphertext []byte         `firestore:"session_ciphertext,omitempty"`
-	NextLookupAt      time.Time      `firestore:"next_lookup_at,omitempty"`
-	ProviderState     string         `firestore:"provider_state,omitempty"`
+	Health            messaging.ChannelHealth `firestore:"health,omitempty"`
+	Verification      PhoneChallenge          `firestore:"verification,omitempty"`
+	Kind              string                  `firestore:"kind"`
+	State             string                  `firestore:"state"`
+	Event             Event                   `firestore:"event"`
+	Contact           Contact                 `firestore:"contact"`
+	Notice            Notice                  `firestore:"notice"`
+	Fingerprint       string                  `firestore:"fingerprint"`
+	ChangedAt         time.Time               `firestore:"changed_at"`
+	LeaseOwner        string                  `firestore:"lease_owner"`
+	LeaseUntil        time.Time               `firestore:"lease_until"`
+	Order             string                  `firestore:"order"`
+	Outcome           string                  `firestore:"outcome"`
+	Attempted         []string                `firestore:"attempted"`
+	UpdatedAt         time.Time               `firestore:"updated_at"`
+	SessionCiphertext []byte                  `firestore:"session_ciphertext,omitempty"`
+	NextLookupAt      time.Time               `firestore:"next_lookup_at,omitempty"`
+	ProviderState     string                  `firestore:"provider_state,omitempty"`
 }
 type Repository interface {
 	TransactNotifications(context.Context, []string, func(map[string]*Entry) error) error
@@ -88,6 +90,7 @@ type Sender interface {
 	SendNotification(context.Context, Target, Notice, string) (rejected bool, err error)
 }
 type Service struct {
+	Health                 *HealthGuard
 	Repo                   Repository
 	Scheduler              Scheduler
 	Reader                 Reader
@@ -144,6 +147,11 @@ func (s *Service) schedule(ctx context.Context, id, attempt string) error {
 	return s.Scheduler.ScheduleNotification(ctx, Key("native", id+":"+attempt), id, s.now().Add(2*time.Second))
 }
 func (s *Service) Reconcile(ctx context.Context) error {
+	if s.Health != nil {
+		if err := s.Health.Refresh(ctx); err != nil {
+			return err
+		}
+	}
 	entries, err := s.Repo.PendingNotifications(ctx)
 	if err != nil {
 		return err
@@ -326,7 +334,14 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 		order = []Channel{WhatsApp, Telegram}
 	}
 	template := s.WhatsAppTemplates[string(row.Notice.Purpose)+":"+whatsappLanguage]
-	targets, err := Plan(Policy{MessengerOrder: order, TelegramAccount: s.TelegramAccount, Enabled: map[Channel]bool{Telegram: true, WhatsApp: template != "", SMS: s.SMSReady && smsRequested}, Templates: map[Purpose]string{row.Notice.Purpose: template}}, recipient, row.Notice.Purpose)
+	whatsappReady := template != ""
+	if whatsappReady && s.Health != nil {
+		whatsappReady, err = s.Health.Allows(ctx, template, whatsappLanguage)
+		if err != nil {
+			return err
+		}
+	}
+	targets, err := Plan(Policy{MessengerOrder: order, TelegramAccount: s.TelegramAccount, Enabled: map[Channel]bool{Telegram: true, WhatsApp: whatsappReady, SMS: s.SMSReady && smsRequested}, Templates: map[Purpose]string{row.Notice.Purpose: template}}, recipient, row.Notice.Purpose)
 	if err != nil {
 		return err
 	}

@@ -74,9 +74,6 @@ func (n *StaffNotifier) NotifyHandoff(ctx context.Context, notice assistant.Hand
 
 // NotifyInbound forwards new messages while the bot is paused for a person.
 func (n *StaffNotifier) NotifyInbound(ctx context.Context, notice assistant.HandoffNotice, text string) error {
-	if notice.Provider != messaging.ProviderTelegram {
-		return nil
-	}
 	name := strings.TrimSpace(notice.Customer.Name)
 	if name == "" {
 		name = notice.ExternalUserID
@@ -84,17 +81,26 @@ func (n *StaffNotifier) NotifyInbound(ctx context.Context, notice assistant.Hand
 	if strings.TrimSpace(text) == "" {
 		text = "[Հաճախորդն ուղարկել է կցորդ։ Բացեք զրույցի պատմությունը։]"
 	}
-	chunks := splitInboxText("Հաճախորդի նոր հաղորդագրություն\n"+name+"\n\n"+text, 3500)
+	header := "Հաճախորդի նոր հաղորդագրություն\n" + name + "\n"
+	if notice.Provider != messaging.ProviderTelegram {
+		var channel strings.Builder
+		writeChannel(&channel, notice)
+		header += channel.String()
+		if notice.Customer.Phone != "" {
+			header += "\nPhone: " + notice.Customer.Phone
+		}
+	}
+	chunks := splitInboxText(header+"\n"+text, 3500)
 	for index, chunk := range chunks {
 		var keyboard *inlineKeyboardMarkup
-		if index == len(chunks)-1 {
+		if index == len(chunks)-1 && notice.Provider == messaging.ProviderTelegram {
 			keyboard = &inlineKeyboardMarkup{Keyboard: [][]inlineKeyboardButton{{{Text: "Բացել զրույցը", CallbackData: inboxData("open", notice.ConversationID)}}}}
 		}
 		messageID, err := n.client.sendWithMarkup(ctx, n.chat(), chunk, keyboard)
 		if err != nil {
 			return err
 		}
-		if n.threads != nil && messageID != "" {
+		if n.threads != nil && messageID != "" && notice.Provider == messaging.ProviderTelegram {
 			if err := n.threads.LinkStaffThread(ctx, messageID, notice.ConversationID); err != nil {
 				return err
 			}
@@ -120,7 +126,9 @@ func (n *StaffNotifier) moveTo(chatID string) {
 func formatHandoff(notice assistant.HandoffNotice) string {
 	var b strings.Builder
 
-	if notice.Reason.Urgent() {
+	if notice.Reason == assistant.ReasonChannelUnavailable {
+		b.WriteString("CHANNEL UNAVAILABLE - contact the customer through an available channel\n\n")
+	} else if notice.Reason.Urgent() {
 		b.WriteString("UNRESOLVED BOOKING - please check the calendar now\n\n")
 	} else {
 		b.WriteString("A customer is waiting for a person\n\n")
