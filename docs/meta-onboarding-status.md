@@ -1,5 +1,21 @@
 # Meta setup status
 
+## Restored client check and catalogue — 6 October 2026, 19:40 UTC
+
+The owner confirmed that a real WhatsApp request returned the 9 October, 12:00
+appointment created through Altegio. Meta approved both English
+`emotion_booking_update` and Russian `emotion_booking_update_ru` utility
+templates after resubmission. They retain the appointment icons and three
+parameters, remove promotional links, and explain STOP. Separate reminder
+templates are not configured because no purpose-specific reminder is approved.
+
+Catalogue `977524844636774`, containing 14 verified services, is attached to the
+studio number. Catalogue browsing is enabled; the shopping cart is disabled for
+appointment services. Ordinary deployments preserve the approved runtime
+template mapping as well as WhatsApp readiness. The earlier dated restriction
+and onboarding observations below are historical; Meta error #1690130 remains
+an unfinished signup UI step despite the verified live connection.
+
 ## Phone reconnection — 6 October 2026, 19:27 UTC
 
 After the approved QR scan, the studio phone reports `CLOUD_API` again and
