@@ -127,10 +127,11 @@ Disabling the readiness flag turns off studio-account delivery while preserving
 existing bot delivery. Revoking the session makes this route unavailable and
 permits an otherwise eligible WhatsApp fallback.
 
-The owner completed WhatsApp billing. At this release, the styled English utility
-template `emotion_booking_update` is APPROVED; the styled Russian
-`emotion_booking_update_ru` is PENDING and is deliberately absent from the
-deployment mapping. Enable only approved `purpose:language` entries in
+The owner completed WhatsApp billing. On 6 October 2026, after the approved
+work-phone reconnection and a real client cabinet check, Meta approved both
+styled utility templates: English `emotion_booking_update` and Russian
+`emotion_booking_update_ru`. Deployment preserves both the runtime readiness
+flag and approved language mapping. Enable only approved `purpose:language` entries in
 `WHATSAPP_BOOKING_TEMPLATES_JSON`. Supported purposes are `booking_created`,
 `booking_changed`, `booking_cancelled`; each template receives three parameters:
 status, local date/time, and service/specialist. General appointment messaging

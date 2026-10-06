@@ -33,6 +33,8 @@ changed after the shared confirmation step. Form/staff bookings without this
 proof are visible, with changes routed to a colleague. No broader calendar
 mutation rights are exposed to the model.
 
-WhatsApp's Meta account is currently restricted. Native WhatsApp notices and
-reminder templates stay paused across deployments; this cabinet release does not
-re-register the number or re-enable WhatsApp sends. Telegram and SMS continue.
+On 6 October 2026, after Meta restored the account and the approved work-phone
+reconnection, the owner confirmed that a real WhatsApp request showed the
+9 October, 12:00 appointment created through Altegio. Account readiness and
+approved notification templates are runtime state preserved across deployments.
+Separate WhatsApp reminder templates remain unset until approved.
