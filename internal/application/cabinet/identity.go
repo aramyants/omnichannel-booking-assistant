@@ -89,6 +89,7 @@ func (s *Identity) Begin(ctx context.Context, provider messaging.Provider, user 
 		}
 		row.Kind = "cabinet_challenge"
 		row.Verification.State = "phone"
+		row.Verification.ContactMessageID = ""
 		row.Verification.ExpiresAt = s.now().Add(10 * time.Minute)
 		return nil
 	})
@@ -113,6 +114,7 @@ func (s *Identity) Cancel(ctx context.Context, provider messaging.Provider, user
 		row := rows[challengeKey(provider, user)]
 		row.Verification.State = ""
 		row.Verification.Hash = nil
+		row.Verification.ContactMessageID = ""
 		return nil
 	})
 }
@@ -132,17 +134,37 @@ func RecordTelegramResolution(ctx context.Context, repo notifications.Repository
 
 // OwnContact runs only after the Telegram adapter checks the contact's owner.
 func (s *Identity) OwnContact(ctx context.Context, user, phone string) error {
-	state, err := s.Pending(ctx, messaging.ProviderTelegram, user)
-	if err != nil {
-		return err
+	_, err := s.AcceptTelegramContact(ctx, user, phone, "")
+	return err
+}
+
+// AcceptTelegramContact consumes the request and saves ownership atomically.
+// Retrying the same authenticated contact delivery resumes the assistant's
+// durable message handling without sending another linking acknowledgement.
+func (s *Identity) AcceptTelegramContact(ctx context.Context, user, rawPhone, messageID string) (bool, error) {
+	phone, err := customer.NormalizePhone(rawPhone)
+	if err != nil || user == "" {
+		return false, ErrInvalid
 	}
-	if state != "phone" {
-		return ErrExpired
-	}
-	if err := RecordTelegramResolution(ctx, s.Repo, user, phone, s.now()); err != nil {
-		return err
-	}
-	return s.Cancel(ctx, messaging.ProviderTelegram, user)
+	ownKey, proofKey := challengeKey(messaging.ProviderTelegram, user), key(messaging.ProviderTelegram, user)
+	first := false
+	err = s.Repo.TransactNotifications(ctx, []string{ownKey, proofKey}, func(rows map[string]*notifications.Entry) error {
+		first = false
+		v, proof := &rows[ownKey].Verification, rows[proofKey]
+		if v.State != "phone" || !v.ExpiresAt.After(s.now()) {
+			if messageID != "" && v.ContactMessageID == messageID && proof.Contact.Phone == phone && proof.Contact.ExpiresAt.After(s.now()) {
+				return nil
+			}
+			return ErrExpired
+		}
+		*proof = notifications.Entry{Kind: "cabinet_identity", Contact: notifications.Contact{Phone: phone, Chat: user, ExpiresAt: s.now().Add(180 * 24 * time.Hour)}}
+		v.State = ""
+		v.Hash = nil
+		v.ContactMessageID = messageID
+		first = true
+		return nil
+	})
+	return first, err
 }
 
 func (s *Identity) digest(provider messaging.Provider, user, phone, code string) []byte {

@@ -28,6 +28,26 @@ func identityFixture() (*cabinet.Identity, *codeSender, *time.Time) {
 	sender := &codeSender{}
 	return &cabinet.Identity{Repo: memory.New(), Sender: sender, Secret: []byte(strings.Repeat("s", 32)), Now: func() time.Time { return now }}, sender, &now
 }
+
+func TestOwnContactRetryOnlyAcceptsTheOriginalDelivery(t *testing.T) {
+	s, _, _ := identityFixture()
+	if err := s.Begin(t.Context(), messaging.ProviderTelegram, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.AcceptTelegramContact(t.Context(), "alice", "+37491123456", "42")
+	if err != nil || !first {
+		t.Fatal("first contact was not accepted")
+	}
+	first, err = s.AcceptTelegramContact(t.Context(), "alice", "+37491123456", "42")
+	if err != nil || first {
+		t.Fatal("contact retry was not idempotent")
+	}
+	for _, tc := range []struct{ user, phone, message string }{{"bob", "+37491123456", "42"}, {"alice", "+37491123457", "42"}, {"alice", "+37491123456", "43"}} {
+		if _, err := s.AcceptTelegramContact(t.Context(), tc.user, tc.phone, tc.message); !errors.Is(err, cabinet.ErrExpired) {
+			t.Fatal("contact receipt crossed account, phone or delivery")
+		}
+	}
+}
 func TestPhoneProofIsBoundSingleUseAndExpiring(t *testing.T) {
 	s, sender, now := identityFixture()
 	p := messaging.ProviderInstagram
