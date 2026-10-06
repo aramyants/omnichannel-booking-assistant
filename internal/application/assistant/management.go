@@ -41,22 +41,30 @@ func (t *toolset) prepareCancellation(
 	}
 
 	s.conv.Draft = nil
-	s.conv.BookingChange = &booking.ChangeDraft{
-		Kind:                  booking.ChangeCancel,
-		Reference:             b.ExternalID,
-		PreparedAt:            t.now(),
-		PreparedFromMessageID: s.incomingMessageID,
+	alreadyPrepared := s.conv.BookingChange != nil && s.conv.BookingChange.Kind == booking.ChangeCancel &&
+		s.conv.BookingChange.Reference == b.ExternalID && s.conv.BookingChange.Validate(booking.ChangeCancel, t.now()) == nil
+	if !alreadyPrepared {
+		s.conv.BookingChange = &booking.ChangeDraft{
+			Kind:                  booking.ChangeCancel,
+			Reference:             b.ExternalID,
+			PreparedAt:            t.now(),
+			PreparedFromMessageID: s.incomingMessageID,
+		}
 	}
 
 	s.offerFixed(offerChangeConfirmation)
 
+	instruction := "Read this appointment back and ask the customer to confirm cancellation. It has not been cancelled yet."
+	if alreadyPrepared {
+		instruction = "This cancellation is already prepared. Preserve the existing confirmation. If the customer has explicitly agreed, call confirm_cancellation now; do not ask for the same consent again. It has not been cancelled yet."
+	}
 	return encode(map[string]any{
-		"prepared":  true,
-		"reference": b.ExternalID,
-		"date":      b.StartsAt.In(t.location).Format(dateLayout),
-		"time":      b.StartsAt.In(t.location).Format(timeLayout),
-		"instruction": "Read this appointment back and ask the customer to confirm cancellation. " +
-			"It has not been cancelled yet.",
+		"prepared":         true,
+		"already_prepared": alreadyPrepared,
+		"reference":        b.ExternalID,
+		"date":             b.StartsAt.In(t.location).Format(dateLayout),
+		"time":             b.StartsAt.In(t.location).Format(timeLayout),
+		"instruction":      instruction,
 	})
 }
 
@@ -78,6 +86,8 @@ func (t *toolset) confirmCancellation(ctx context.Context, s *session) (string, 
 	}
 	if b.Status == booking.StatusCancelled {
 		s.conv.BookingChange = nil
+		s.offer()
+		t.cancellationReply(s, b)
 		return encode(map[string]any{"cancelled": true, "reference": b.ExternalID})
 	}
 	if !b.StartsAt.After(t.now()) {
@@ -99,12 +109,21 @@ func (t *toolset) confirmCancellation(ctx context.Context, s *session) (string, 
 	s.conv.BookingChange = nil
 	s.offer()
 	t.recordChangedBooking(ctx, b, "cancelled")
+	t.cancellationReply(s, b)
 
 	return encode(map[string]any{
 		"cancelled": true,
 		"reference": b.ExternalID,
 		"date":      b.StartsAt.In(t.location).Format(dateLayout),
 		"time":      b.StartsAt.In(t.location).Format(timeLayout),
+	})
+}
+
+func (t *toolset) cancellationReply(s *session, b booking.Booking) {
+	lang := appointmentmessage.ParseLanguage(string(s.language))
+	s.finalReply = t.messages.Cancelled(lang, appointmentmessage.Appointment{
+		CustomerName: b.CustomerName, StartsAt: b.StartsAt, Service: strings.Join(b.ServiceNames, ", "),
+		Specialist: b.StaffName, Reference: b.ExternalID,
 	})
 }
 
@@ -154,19 +173,29 @@ func (t *toolset) prepareReschedule(
 	}
 
 	s.conv.Draft = nil
-	s.conv.BookingChange = &booking.ChangeDraft{
-		Kind:                  booking.ChangeReschedule,
-		Reference:             b.ExternalID,
-		NewStart:              newStart,
-		PreparedAt:            t.now(),
-		PreparedFromMessageID: s.incomingMessageID,
+	alreadyPrepared := s.conv.BookingChange != nil && s.conv.BookingChange.Kind == booking.ChangeReschedule &&
+		s.conv.BookingChange.Reference == b.ExternalID && s.conv.BookingChange.NewStart.Equal(newStart) &&
+		s.conv.BookingChange.Validate(booking.ChangeReschedule, t.now()) == nil
+	if !alreadyPrepared {
+		s.conv.BookingChange = &booking.ChangeDraft{
+			Kind:                  booking.ChangeReschedule,
+			Reference:             b.ExternalID,
+			NewStart:              newStart,
+			PreparedAt:            t.now(),
+			PreparedFromMessageID: s.incomingMessageID,
+		}
 	}
 
 	s.offerFixed(offerChangeConfirmation)
 
+	instruction := "Read the old and new times back and ask the customer to confirm. The appointment has not been moved yet."
+	if alreadyPrepared {
+		instruction = "This reschedule is already prepared. Preserve the existing confirmation. If the customer has explicitly agreed, call confirm_reschedule now; do not ask for the same consent again. The appointment has not been moved yet."
+	}
 	return encode(map[string]any{
-		"prepared":  true,
-		"reference": b.ExternalID,
+		"prepared":         true,
+		"already_prepared": alreadyPrepared,
+		"reference":        b.ExternalID,
 		"from": map[string]string{
 			"date": b.StartsAt.In(t.location).Format(dateLayout),
 			"time": b.StartsAt.In(t.location).Format(timeLayout),
@@ -175,8 +204,7 @@ func (t *toolset) prepareReschedule(
 			"date": newStart.In(t.location).Format(dateLayout),
 			"time": newStart.In(t.location).Format(timeLayout),
 		},
-		"instruction": "Read the old and new times back and ask the customer to confirm. " +
-			"The appointment has not been moved yet.",
+		"instruction": instruction,
 	})
 }
 
