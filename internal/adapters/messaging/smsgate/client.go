@@ -25,7 +25,7 @@ var (
 	ErrUncertain   = errors.New("smsgate acceptance is uncertain; reconcile message ID")
 	ErrUnavailable = errors.New("smsgate status unavailable")
 	ErrNotFound    = errors.New("smsgate message not found")
-	messageID      = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+	messageID      = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
 )
 
 const maxResponseBytes = 64 << 10

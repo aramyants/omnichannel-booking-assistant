@@ -301,7 +301,11 @@ func run() error {
 		if nativeNotifications != nil {
 			whatsappMessages = notificationMessages{service: nativeNotifications, next: assistantService, wa: whatsappClient}
 		}
-		gw.whatsapp = meta.NewWhatsAppHandler(webhook, whatsappMessages, logger, cfg.WhatsApp.PhoneNumberID).WithFeedback(whatsappClient)
+		whatsappHandler := meta.NewWhatsAppHandler(webhook, whatsappMessages, logger, cfg.WhatsApp.PhoneNumberID).WithFeedback(whatsappClient)
+		if nativeNotifications != nil {
+			whatsappHandler.WithBookingStatuses(cfg.WhatsApp.PhoneNumberID, nativeNotifications.WhatsAppStatus)
+		}
+		gw.whatsapp = whatsappHandler
 	}
 	if cfg.Messenger.Enabled() {
 		webhook, err := meta.NewWebhook(cfg.Messenger.AppSecret, cfg.Messenger.VerifyToken)

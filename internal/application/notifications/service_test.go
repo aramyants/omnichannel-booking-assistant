@@ -79,11 +79,13 @@ func (o testOwned) FindBooking(context.Context, string) (booking.Booking, error)
 }
 
 type testSender struct {
-	mu        sync.Mutex
-	channels  []Channel
-	languages []string
-	reject    bool
-	uncertain bool
+	mu               sync.Mutex
+	channels         []Channel
+	languages        []string
+	reject           bool
+	uncertain        bool
+	rejectWhatsApp   bool
+	uncertainChannel Channel
 }
 
 func (s *testSender) SendNotification(_ context.Context, t Target, _ Notice, language string) (bool, error) {
@@ -91,11 +93,14 @@ func (s *testSender) SendNotification(_ context.Context, t Target, _ Notice, lan
 	defer s.mu.Unlock()
 	s.channels = append(s.channels, t.Channel)
 	s.languages = append(s.languages, language)
-	if s.uncertain {
+	if s.uncertain || s.uncertainChannel == t.Channel {
 		return false, errors.New("timeout after send")
 	}
 	if s.reject && t.Channel == Telegram {
 		return true, errors.New("blocked")
+	}
+	if s.rejectWhatsApp && t.Channel == WhatsApp {
+		return true, errors.New("not available")
 	}
 	return false, nil
 }

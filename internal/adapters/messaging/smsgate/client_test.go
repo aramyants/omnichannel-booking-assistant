@@ -117,6 +117,7 @@ func TestInvalidOrExpiredMessageNeverReachesPhone(t *testing.T) {
 	c := testClient(t, server)
 	for _, change := range []func(*Message){
 		func(m *Message) { m.ID = "../escape" },
+		func(m *Message) { m.ID = strings.Repeat("x", 33) },
 		func(m *Message) { m.Phone = "094768067" },
 		func(m *Message) { m.Text = " " },
 		func(m *Message) { m.ValidUntil = time.Now().Add(-time.Minute) },

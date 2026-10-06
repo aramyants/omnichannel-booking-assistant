@@ -2,6 +2,7 @@ package meta
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -42,6 +43,16 @@ type Handler struct {
 	now                  func() time.Time
 	feedback             feedbackSender
 	profiles             profileResolver
+	bookingStatuses      func(context.Context, string, string, string) error
+	statusPhoneNumberID  string
+}
+
+// WithBookingStatuses consumes native notification receipts after signature
+// verification, scoped to the configured business phone number.
+func (h *Handler) WithBookingStatuses(phoneNumberID string, status func(context.Context, string, string, string) error) *Handler {
+	h.statusPhoneNumberID = phoneNumberID
+	h.bookingStatuses = status
+	return h
 }
 
 // WithProfiles fills the provider-visible display name and handle before the
@@ -128,6 +139,40 @@ func (h *Handler) serveDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	receivedAt := h.now().UTC()
+	if h.bookingStatuses != nil {
+		var receiptUpdate struct {
+			Object string `json:"object"`
+			Entry  []struct {
+				Changes []struct {
+					Field string `json:"field"`
+					Value struct {
+						Metadata metadata `json:"metadata"`
+						Statuses []struct {
+							Reference string `json:"biz_opaque_callback_data"`
+							Recipient string `json:"recipient_id"`
+							State     string `json:"status"`
+						} `json:"statuses"`
+					} `json:"value"`
+				} `json:"changes"`
+			} `json:"entry"`
+		}
+		if json.Unmarshal(body, &receiptUpdate) == nil && receiptUpdate.Object == "whatsapp_business_account" {
+			for _, entry := range receiptUpdate.Entry {
+				for _, change := range entry.Changes {
+					if change.Field != "messages" || change.Value.Metadata.PhoneNumberID != h.statusPhoneNumberID {
+						continue
+					}
+					for _, status := range change.Value.Statuses {
+						if err := h.bookingStatuses(ctx, status.Reference, status.Recipient, status.State); err != nil {
+							h.logger.ErrorContext(ctx, "booking delivery receipt processing failed")
+							http.Error(w, "processing failed", http.StatusInternalServerError)
+							return
+						}
+					}
+				}
+			}
+		}
+	}
 	// Apply staff activity before customer messages even when Meta batches them
 	// in the opposite order. Both paths share the verified signature above.
 	if h.parseExternalReplies != nil {

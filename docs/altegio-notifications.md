@@ -18,10 +18,11 @@ WhatsApp and SMS targets. `internal/adapters/messaging/smsgate` sends one
 transactional SMS and queries its status using the documented SMSGate API.
 The native booking event worker, verified Telegram contact linking and staff
 routing controls are now deployed. See [the release setup and guarantees](native-notifications.md).
-SMSGate remains an unwired foundation: SMS and native form OTP are disabled.
-WhatsApp is gated on approved utility templates and billing readiness. The
-future architecture below includes SMS and delivery callbacks, which are not
-claims about the current messenger release.
+The commissioned SMSGate work phone is wired as the final booking fallback.
+WhatsApp uses approved utility templates and its signed failure receipts can
+resume the remaining route. Native form OTP still requires Altegio's separate
+SMS-provider contract. The architecture below also describes future incoming
+SMS synchronization and monitoring work, beyond this transactional release.
 
 ## Architecture decision
 
