@@ -3,6 +3,7 @@
 package customer
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"time"
@@ -12,6 +13,11 @@ import (
 
 // ErrNotFound reports a customer or identity that does not exist.
 var ErrNotFound = errors.New("customer not found")
+
+// ProfileID is the canonical profile key for a verified, normalized phone.
+func ProfileID(phone string) string {
+	return fmt.Sprintf("verified_phone_%x", sha256.Sum256([]byte(phone)))
+}
 
 // Customer is one person, independent of how they reach the business.
 //
@@ -28,6 +34,10 @@ type Customer struct {
 	// Phone is the number bookings are made against. It is empty until the
 	// customer provides one, because provider profiles do not reliably carry it.
 	Phone string
+
+	// VerifiedPhone is request-scoped proof supplied by a trusted channel or
+	// completed verification. A typed booking contact never sets this field.
+	VerifiedPhone string
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/cabinet"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
@@ -114,6 +115,7 @@ type ConversationTurns interface {
 // there are enough of them that call sites would otherwise be a row of
 // same-typed arguments that are easy to transpose.
 type Deps struct {
+	Identity      *cabinet.Identity
 	Senders       map[messaging.Provider]Sender
 	Customers     CustomerRepository
 	Conversations ConversationRepository
@@ -156,6 +158,7 @@ type Deps struct {
 
 // Service handles one inbound message at a time.
 type Service struct {
+	identity      *cabinet.Identity
 	senders       map[messaging.Provider]Sender
 	customers     CustomerRepository
 	conversations ConversationRepository
@@ -205,6 +208,7 @@ func NewService(deps Deps) (*Service, error) {
 	}
 
 	return &Service{
+		identity:      deps.Identity,
 		senders:       senders,
 		customers:     deps.Customers,
 		conversations: deps.Conversations,
@@ -219,6 +223,7 @@ func NewService(deps Deps) (*Service, error) {
 		business:      business,
 		staff:         deps.Staff,
 		tools: &toolset{
+			identity:   deps.Identity,
 			scheduling: deps.Scheduling,
 			bookings:   deps.Bookings,
 			customers:  deps.Customers,
@@ -260,6 +265,11 @@ const deliveryStateTimeout = 5 * time.Second
 func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr error) {
 	if err := msg.Validate(); err != nil {
 		return err
+	}
+	// Appointment access belongs in a private customer conversation. Staff
+	// groups are handled by the adapter before they reach this application.
+	if s.identity != nil && msg.Provider == messaging.ProviderTelegram && msg.ExternalThreadID != msg.ExternalUserID {
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -369,6 +379,15 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 	// conversation logic below.
 	resolvedChoice, selectedPresentedChoice := conv.ResolvePresentedChoice(msg.Content.Text)
 	originalText := msg.Content.Text
+	if s.identity != nil && looksLikeCode(originalText) {
+		state, err := s.identity.Pending(ctx, msg.Provider, msg.ExternalUserID)
+		if err != nil {
+			return err
+		}
+		if state != "" {
+			originalText = "[verification code]"
+		}
+	}
 	if selectedPresentedChoice {
 		msg.Content.Text = resolvedChoice
 	}
@@ -582,6 +601,7 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 		text = withoutRedundantChoiceLines(text, choices)
 	}
 	reply := msg.Reply(text).WithChoices(choices).WithLinks(sess.finalLinks)
+	reply.RequestOwnContact = sess.requestContact
 	if len(reply.Choices) > 0 {
 		reply.ChoiceToken = id.New()
 	}
@@ -738,6 +758,21 @@ func (s *Service) identify(ctx context.Context, msg messaging.Envelope, now time
 			}
 		}
 	}
+	if s.identity != nil {
+		phone, err := s.identity.Phone(ctx, msg.Provider, msg.ExternalUserID)
+		if err != nil {
+			return customer.Customer{}, fmt.Errorf("verify client identity: %w", err)
+		}
+		if phone != "" {
+			if linker, ok := s.customers.(verifiedCustomerRepository); ok {
+				cust, err = linker.LinkVerifiedIdentity(ctx, customer.ChannelIdentity{Provider: msg.Provider, ExternalUserID: msg.ExternalUserID}, cust, phone)
+				if err != nil {
+					return customer.Customer{}, err
+				}
+			}
+			cust.VerifiedPhone = phone
+		}
+	}
 	return cust, nil
 }
 
@@ -776,6 +811,11 @@ func (s *Service) openConversation(
 		return conversation.Conversation{}, fmt.Errorf("open the conversation: %w", err)
 	}
 
+	if s.identity != nil && conv.CustomerID != cust.ID {
+		conv.CustomerID = cust.ID
+		conv.Draft = nil
+		conv.BookingChange = nil
+	}
 	// A message arriving on a finished conversation starts it again rather
 	// than being dropped.
 	if conv.State == conversation.StateClosed {
@@ -835,6 +875,9 @@ func (s *Service) reply(
 	conv, cust := sess.conv, sess.customer
 	if text, ok := s.publicLinkReply(sess, msg.Content.Text); ok {
 		return text, nil
+	}
+	if text, handled, err := s.cabinetReply(ctx, sess, msg); handled {
+		return text, err
 	}
 
 	// Some menu entries are answered here rather than by the model: they say

@@ -11,39 +11,45 @@ import (
 	"time"
 )
 
+type nativeRecord struct {
+	ID        int64  `json:"id"`
+	CompanyID int64  `json:"company_id"`
+	Datetime  string `json:"datetime"`
+	Length    int64  `json:"seance_length"`
+	Deleted   bool   `json:"deleted"`
+	Created   string `json:"create_date"`
+	Changed   string `json:"last_change_date"`
+	APIID     string `json:"api_id"`
+	Online    bool   `json:"online"`
+	Client    *struct {
+		ID    int64  `json:"id"`
+		Name  string `json:"name"`
+		Phone string `json:"phone"`
+	} `json:"client"`
+	Staff struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	} `json:"staff"`
+	Services []struct {
+		ID    int64  `json:"id"`
+		Title string `json:"title"`
+	} `json:"services"`
+}
+
 // ReadNativeBooking is privileged and is never exposed as a customer AI tool.
 func (c *Client) ReadNativeBooking(ctx context.Context, id string) (notifications.Snapshot, error) {
 	numeric, err := strconv.ParseInt(id, 10, 64)
 	if err != nil || numeric <= 0 {
 		return notifications.Snapshot{}, booking.ErrNotFound
 	}
-	type record struct {
-		ID        int64  `json:"id"`
-		CompanyID int64  `json:"company_id"`
-		Datetime  string `json:"datetime"`
-		Length    int64  `json:"seance_length"`
-		Deleted   bool   `json:"deleted"`
-		Created   string `json:"create_date"`
-		Changed   string `json:"last_change_date"`
-		APIID     string `json:"api_id"`
-		Online    bool   `json:"online"`
-		Client    *struct {
-			Name  string `json:"name"`
-			Phone string `json:"phone"`
-		} `json:"client"`
-		Staff struct {
-			ID   int64  `json:"id"`
-			Name string `json:"name"`
-		} `json:"staff"`
-		Services []struct {
-			ID    int64  `json:"id"`
-			Title string `json:"title"`
-		} `json:"services"`
-	}
-	dto, err := call[record](ctx, c, request{method: http.MethodGet, path: "/record/" + c.companyID + "/" + id, repeatable: true})
+	dto, err := call[nativeRecord](ctx, c, request{method: http.MethodGet, path: "/record/" + c.companyID + "/" + id, repeatable: true})
 	if err != nil {
 		return notifications.Snapshot{}, err
 	}
+	return c.nativeSnapshot(dto, numeric)
+}
+
+func (c *Client) nativeSnapshot(dto nativeRecord, numeric int64) (notifications.Snapshot, error) {
 	if dto.ID != numeric || strconv.FormatInt(dto.CompanyID, 10) != c.companyID {
 		return notifications.Snapshot{}, fmt.Errorf("%w: native appointment identity mismatch", booking.ErrUnavailable)
 	}
@@ -56,7 +62,7 @@ func (c *Client) ReadNativeBooking(ctx context.Context, id string) (notification
 		}
 		return time.Time{}
 	}
-	b := booking.Booking{ExternalID: id, StartsAt: parse(dto.Datetime), Duration: time.Duration(dto.Length) * time.Second, CreatedAt: parse(dto.Created), StaffID: strconv.FormatInt(dto.Staff.ID, 10), StaffName: dto.Staff.Name, Status: booking.StatusConfirmed}
+	b := booking.Booking{ExternalID: strconv.FormatInt(numeric, 10), StartsAt: parse(dto.Datetime), Duration: time.Duration(dto.Length) * time.Second, CreatedAt: parse(dto.Created), StaffID: strconv.FormatInt(dto.Staff.ID, 10), StaffName: dto.Staff.Name, Status: booking.StatusConfirmed}
 	if dto.Deleted {
 		b.Status = booking.StatusCancelled
 	}

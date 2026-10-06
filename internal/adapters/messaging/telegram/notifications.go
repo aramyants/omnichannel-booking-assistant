@@ -3,13 +3,20 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/cabinet"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/notifications"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 	"strconv"
 	"strings"
 )
 
 // NativeNotifications runs only after the Telegram webhook secret is checked.
 type NativeNotifications struct {
+	Identity         *cabinet.Identity
+	CabinetAssistant interface {
+		Handle(context.Context, messaging.Envelope) error
+	}
 	Service     *notifications.Service
 	Client      *Client
 	StaffChatID string
@@ -111,6 +118,23 @@ func (h NativeNotifications) HandleTelegram(ctx context.Context, body []byte) (b
 	if m.Contact != nil {
 		if m.Contact.UserID != m.From.ID {
 			return true, h.Client.contactMessage(ctx, chatID, notificationCopy(lang, "own"), true)
+		}
+		if h.Identity != nil {
+			first, err := h.Identity.AcceptTelegramContact(ctx, chatID, m.Contact.PhoneNumber, strconv.FormatInt(m.MessageID, 10))
+			if err != nil && !errors.Is(err, cabinet.ErrExpired) {
+				return true, err
+			}
+			if err == nil {
+				if first {
+					if err := h.Client.contactMessage(ctx, chatID, cabinetLinkedCopy(lang), true); err != nil {
+						return true, err
+					}
+				}
+				if h.CabinetAssistant != nil {
+					return true, h.CabinetAssistant.Handle(ctx, messaging.Envelope{Provider: messaging.ProviderTelegram, ExternalUserID: chatID, ExternalThreadID: chatID, ExternalMessageID: strconv.FormatInt(m.MessageID, 10), Sender: messaging.Sender{Language: lang}, Content: messaging.Content{Type: messaging.ContentTypeText, Text: "/appointments"}})
+				}
+				return true, nil
+			}
 		}
 		if err := h.Service.LinkTelegram(ctx, chatID, m.Contact.PhoneNumber); err != nil {
 			return true, h.Client.contactMessage(ctx, chatID, notificationCopy(lang, "retry"), true)

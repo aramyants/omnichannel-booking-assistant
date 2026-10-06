@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/cabinet"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
@@ -61,6 +62,7 @@ type ReminderPlanner interface {
 // session is the state one reply is produced against. Tools that change
 // something act on this rather than on globals.
 type session struct {
+	requestContact    bool
 	conv              *conversation.Conversation
 	customer          customer.Customer
 	incomingMessageID string
@@ -317,6 +319,7 @@ const noArguments = `{"type":"object","properties":{},"required":[],"additionalP
 
 // toolset runs the capabilities the model is allowed to ask for.
 type toolset struct {
+	identity   *cabinet.Identity
 	scheduling Scheduling
 	bookings   BookingRepository
 	customers  CustomerRepository
@@ -512,6 +515,13 @@ func (t *toolset) execute(ctx context.Context, s *session, call ai.ToolCall) ai.
 }
 
 func (t *toolset) run(ctx context.Context, s *session, call ai.ToolCall) (string, error) {
+	if t.identity != nil && s.customer.VerifiedPhone == "" {
+		switch call.Name {
+		case toolPrepareCancel, toolConfirmCancel, toolPrepareMove, toolConfirmMove:
+			s.finalReply = t.verificationPrompt(ctx, s)
+			return encode(map[string]any{"verified": false, "changed": false, "instruction": "Verify phone ownership before accessing or changing appointments."})
+		}
+	}
 	// Dispatch is an explicit list, not a lookup on whatever the model sent.
 	// A name that is not here is refused rather than resolved.
 	switch call.Name {
@@ -1038,7 +1048,11 @@ func (t *toolset) listBookings(ctx context.Context, s *session) (string, error) 
 		return "", errors.New("appointment history is not available")
 	}
 
-	booked, err := t.bookings.ListBookings(ctx, s.customer.ID)
+	if t.identity != nil && s.customer.VerifiedPhone == "" {
+		s.finalReply = t.verificationPrompt(ctx, s)
+		return encode(map[string]any{"verified": false, "instruction": "Phone ownership must be confirmed to include bookings from the online form. Never claim this customer has no bookings."})
+	}
+	booked, err := t.customerBookings(ctx, s.customer)
 	if err != nil {
 		return "", err
 	}
@@ -1054,30 +1068,40 @@ func (t *toolset) listBookings(ctx context.Context, s *session) (string, error) 
 	if len(upcoming) == 0 {
 		return encode(map[string]any{
 			"appointments": []any{},
-			"instruction": "This customer has nothing booked with us. Tell them so plainly " +
-				"and offer to book something.",
+			"instruction":  "No upcoming appointments were found for this profile. If a booking used another phone, offer to verify that number or contact a colleague. Never claim that no appointment exists under another identity.",
 		})
 	}
 
 	serviceNames, staffNames := t.catalogueNames(ctx)
 
 	type item struct {
-		Reference string   `json:"reference"`
-		Date      string   `json:"date"`
-		Time      string   `json:"time"`
-		Services  []string `json:"services,omitempty"`
-		Staff     string   `json:"staff,omitempty"`
+		Reference   string   `json:"reference"`
+		Date        string   `json:"date"`
+		Time        string   `json:"time"`
+		Services    []string `json:"services,omitempty"`
+		Staff       string   `json:"staff,omitempty"`
+		SelfService bool     `json:"self_service"`
 	}
 
 	items := make([]item, 0, len(upcoming))
 	for _, b := range upcoming {
 		entry := item{
-			Reference: b.ExternalID,
-			Date:      b.StartsAt.In(t.location).Format(dateLayout),
-			Time:      b.StartsAt.In(t.location).Format(timeLayout),
-			Staff:     staffNames[b.StaffID],
+			Reference:   b.ExternalID,
+			Date:        b.StartsAt.In(t.location).Format(dateLayout),
+			Time:        b.StartsAt.In(t.location).Format(timeLayout),
+			Staff:       staffNames[b.StaffID],
+			SelfService: b.ManagementToken != "",
+		}
+		if b.StaffName != "" {
+			entry.Staff = b.StaffName
+		}
+		if len(b.ServiceNames) > 0 {
+			entry.Services = append(entry.Services, b.ServiceNames...)
 		}
 		for _, serviceID := range b.ServiceIDs {
+			if len(b.ServiceNames) > 0 {
+				break
+			}
 			if name := serviceNames[serviceID]; name != "" {
 				entry.Services = append(entry.Services, name)
 			}
@@ -1088,7 +1112,7 @@ func (t *toolset) listBookings(ctx context.Context, s *session) (string, error) 
 	return encode(map[string]any{
 		"appointments": items,
 		"instruction": "These are all of this customer's upcoming appointments, soonest first. " +
-			"There are no others. Use a reference exactly as it appears here to cancel or move one.",
+			"These include the online form and other channels for this verified phone. For self_service=false, a colleague must manage changes. For self_service=true use the exact reference to cancel or move it.",
 	})
 }
 

@@ -3,13 +3,57 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/cabinet"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/notifications"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 )
+
+type cabinetContactHandler struct {
+	messages []messaging.Envelope
+	err      error
+}
+
+func (h *cabinetContactHandler) Handle(_ context.Context, message messaging.Envelope) error {
+	h.messages = append(h.messages, message)
+	return h.err
+}
+
+func TestCabinetContactRetryResumesHistoryWithoutLinkingAgain(t *testing.T) {
+	repo := &contactRepository{rows: map[string]notifications.Entry{}}
+	identity := &cabinet.Identity{Repo: repo}
+	if err := identity.Begin(t.Context(), messaging.ProviderTelegram, "123"); err != nil {
+		t.Fatal(err)
+	}
+	sends := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		sends++
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":1}}`))
+	}))
+	defer server.Close()
+	assistant := &cabinetContactHandler{err: errors.New("temporary history failure")}
+	handler := NativeNotifications{Service: &notifications.Service{Repo: repo}, Identity: identity, CabinetAssistant: assistant, Client: NewClient("fixture", WithBaseURL(server.URL))}
+	body := []byte(`{"message":{"message_id":42,"chat":{"id":123,"type":"private"},"from":{"id":123,"language_code":"hy"},"contact":{"user_id":123,"phone_number":"+37491123456"}}}`)
+	if handled, err := handler.HandleTelegram(t.Context(), body); !handled || !errors.Is(err, assistant.err) {
+		t.Fatalf("first history attempt handled=%v err=%v", handled, err)
+	}
+	assistant.err = nil
+	if handled, err := handler.HandleTelegram(t.Context(), body); !handled || err != nil {
+		t.Fatalf("retry handled=%v err=%v", handled, err)
+	}
+	if sends != 1 || len(assistant.messages) != 2 || assistant.messages[0].ExternalMessageID != assistant.messages[1].ExternalMessageID || assistant.messages[1].Content.Text != "/appointments" {
+		t.Fatalf("retry did not resume durable handling: sends=%d messages=%v", sends, assistant.messages)
+	}
+	row, _ := repo.GetNotification(t.Context(), notifications.Key("telegram_phone", "+37491123456"))
+	if row.Contact.Chat != "" {
+		t.Fatal("cabinet verification enabled notification subscription")
+	}
+}
 
 type contactRepository struct {
 	mu   sync.Mutex

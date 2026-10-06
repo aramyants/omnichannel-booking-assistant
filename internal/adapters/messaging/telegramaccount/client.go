@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/cabinet"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/notifications"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
 	"github.com/google/uuid"
@@ -249,6 +250,9 @@ func (c *Client) Send(ctx context.Context, phone, text, noticeID string) (bool, 
 		peer, e := resolvedUser(resolved, own.ID)
 		if e != nil {
 			return e
+		}
+		if e := cabinet.RecordTelegramResolution(ctx, c.repo, strconv.FormatInt(peer.UserID, 10), phone, time.Now().UTC()); e != nil {
+			return errors.New("telegram customer identity could not be recorded")
 		}
 		requirements, e := client.API().UsersGetRequirementsToContact(ctx, []tg.InputUserClass{&tg.InputUser{UserID: peer.UserID, AccessHash: peer.AccessHash}})
 		if e != nil || len(requirements) != 1 {
