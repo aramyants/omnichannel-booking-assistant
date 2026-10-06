@@ -84,9 +84,10 @@ func TestAppEchoFailureRequestsRedelivery(t *testing.T) {
 }
 
 func TestStaffActivityPrecedesCustomerMessagesInOneDelivery(t *testing.T) {
-	body := []byte(strings.Replace(appEchoBody, `"changes":[`, `"changes":[{"field":"messages","value":{"metadata":{"phone_number_id":"phone-1"},"messages":[{"from":"15550000002","id":"incoming","type":"text","text":{"body":"Thanks"}}]}},`, 1))
+	body := []byte(strings.Replace(appEchoBody, `"changes":[`, `"changes":[{"field":"messages","value":{"metadata":{"phone_number_id":"phone-1"},"messages":[{"from":"15550000002","id":"incoming","timestamp":"1788436800","type":"text","text":{"body":"Thanks"}}]}},`, 1))
 	recorder := &echoRecorder{}
 	h := NewWhatsAppHandler(testWebhook(t), recorder, discardLogger(), "phone-1")
+	h.now = func() time.Time { return receivedAt }
 	if got := post(t, h, sign(body), body).Code; got != http.StatusOK || strings.Join(recorder.events, ",") != "staff,customer" {
 		t.Fatalf("wrong processing order: %d %v", got, recorder.events)
 	}

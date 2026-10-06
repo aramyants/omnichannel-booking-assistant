@@ -205,6 +205,10 @@ func (h *Handler) serveDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, envelope := range envelopes {
+		if envelope.Provider == messaging.ProviderWhatsApp && (envelope.SentAt.IsZero() || !envelope.SentAt.After(receivedAt.Add(-24*time.Hour)) || envelope.SentAt.After(receivedAt.Add(5*time.Minute))) {
+			h.logger.WarnContext(ctx, "acknowledged a whatsapp message without a current service window", "dedupe_key", envelope.DedupeKey())
+			continue
+		}
 		if h.profiles != nil {
 			profileCtx, cancel := context.WithTimeout(ctx, feedbackTimeout)
 			profile, profileErr := h.profiles.ResolveProfile(profileCtx, envelope)
@@ -219,6 +223,10 @@ func (h *Handler) serveDelivery(w http.ResponseWriter, r *http.Request) {
 		err := h.messages.Handle(ctx, envelope)
 		h.endFeedback(ctx, envelope)
 		if err != nil {
+			if messaging.TerminalDelivery(err) {
+				h.logger.ErrorContext(ctx, "meta reply requires staff attention; webhook will not replay it", "error", err, "dedupe_key", envelope.DedupeKey())
+				continue
+			}
 			if errors.Is(err, context.Canceled) {
 				h.logger.WarnContext(ctx, "abandoned a meta message mid-flight",
 					"dedupe_key", envelope.DedupeKey())

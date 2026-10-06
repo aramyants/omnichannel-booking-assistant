@@ -187,7 +187,7 @@ func TestWhatsAppTextMessage(t *testing.T) {
 		ExternalMessageID: "wamid.HBgLMzc0OTUxNTI1MDcVAgASGCA5QjE2",
 		ExternalUserID:    "37495152507",
 		ExternalThreadID:  "37495152507",
-		SentAt:            time.Unix(1756728000, 0).UTC(),
+		SentAt:            receivedAt,
 		ReceivedAt:        receivedAt,
 		Sender:            messaging.Sender{DisplayName: "Anna Petrosyan"},
 		Content: messaging.Content{

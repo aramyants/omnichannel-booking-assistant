@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 )
 
 const (
@@ -117,19 +119,28 @@ func (c *Client) post(ctx context.Context, path string, payload any) error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("meta %s: %w: %w", path, ErrUnavailable, err)
+		return fmt.Errorf("meta %s: %w: %w: %w", path, messaging.ErrDeliveryUncertain, ErrUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		return fmt.Errorf("meta %s: %w: read response: %w", path, ErrUnavailable, err)
+		return fmt.Errorf("meta %s: %w: %w: read response: %w", path, messaging.ErrDeliveryUncertain, ErrUnavailable, err)
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
-	return c.translate(path, resp.StatusCode, raw)
+	err = c.translate(path, resp.StatusCode, raw)
+	if errors.Is(err, ErrRejected) || errors.Is(err, ErrOutsideServiceWindow) {
+		return fmt.Errorf("%w: %w", messaging.ErrDeliveryRejected, err)
+	}
+	// A server failure can occur after accepting a POST. A definite rate-limit
+	// refusal remains retryable; an unknown send outcome needs reconciliation.
+	if resp.StatusCode >= http.StatusInternalServerError {
+		return fmt.Errorf("%w: %w", messaging.ErrDeliveryUncertain, err)
+	}
+	return err
 }
 
 func (c *Client) get(ctx context.Context, path string, query url.Values, target any) error {
