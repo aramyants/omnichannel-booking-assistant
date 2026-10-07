@@ -22,7 +22,7 @@ func structuredEnvelope(t *testing.T, status, output string) string {
 }
 
 func TestStructuredReplyParsesTextAndChoicesInOneRequest(t *testing.T) {
-	srv, sent, _ := serve(t, http.StatusOK, structuredEnvelope(t, "completed", `{"text":"10:00 or 10:30?","choices":["10:00","10:30"]}`))
+	srv, sent, _ := serve(t, http.StatusOK, structuredEnvelope(t, "completed", `{"purpose":"studio","text":"10:00 or 10:30?","choices":["10:00","10:30"]}`))
 	resp, err := testClient(t, srv).Complete(t.Context(), ai.Request{StructuredReply: true})
 	if err != nil {
 		t.Fatal(err)
@@ -37,10 +37,12 @@ func TestStructuredReplyParsesTextAndChoicesInOneRequest(t *testing.T) {
 
 func TestBrokenStructuredRepliesNeverLeakJSONToCustomer(t *testing.T) {
 	for name, output := range map[string]string{
-		"truncated":    `{"text":"hello`,
-		"empty":        `{"text":"  ","choices":[]}`,
-		"unstructured": "Hello",
-		"refusal":      "",
+		"truncated":       `{"text":"hello`,
+		"empty":           `{"text":"  ","choices":[]}`,
+		"missing purpose": `{"text":"answer","choices":[]}`,
+		"unknown purpose": `{"purpose":"general","text":"answer","choices":[]}`,
+		"unstructured":    "Hello",
+		"refusal":         "",
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv, _, _ := serve(t, http.StatusOK, structuredEnvelope(t, "completed", output))

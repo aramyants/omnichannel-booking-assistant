@@ -248,8 +248,24 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	directHealth := map[messaging.Provider]*notifications.HealthGuard{}
+	if repo, ok := store.(notifications.Repository); ok {
+		for provider, client := range map[messaging.Provider]*meta.DirectClient{
+			messaging.ProviderInstagram: instagramClient, messaging.ProviderMessenger: messengerClient,
+		} {
+			if client == nil {
+				continue
+			}
+			guard := &notifications.HealthGuard{Provider: provider, Repo: repo, Read: client.ReadHealth}
+			client.SetAuthRejected(guard.Block)
+			directHealth[provider] = guard
+		}
+	}
 	assistantService, err := assistant.NewService(assistant.Deps{
 		DeliveryAvailable: func(ctx context.Context, provider messaging.Provider) (bool, error) {
+			if guard := directHealth[provider]; guard != nil {
+				return guard.Allows(ctx, "", "")
+			}
 			if provider == messaging.ProviderWhatsApp && nativeNotifications != nil && nativeNotifications.Health != nil {
 				return nativeNotifications.Health.Allows(ctx, "", "")
 			}

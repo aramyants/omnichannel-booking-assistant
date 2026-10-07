@@ -1,5 +1,11 @@
 # Bot quality and Armenian voice
 
+The [7 October reliability audit](reliability-audit-2026-10-07.md) documents the
+active scope classifier, structured reply purpose, output/tool budgets, token
+health guards and verified appointment lookup fixes. These controls supplement
+the voice policy below. The booking model keeps its 8,192-token per-call ceiling,
+with a 16,000-token total across a reply's tool loop.
+
 The assistant speaks for the studio team, addresses clients formally and answers
 their information request before offering a relevant next step. Garik's policy
 is no hearts, no familiar address, no individual first-person self-description,

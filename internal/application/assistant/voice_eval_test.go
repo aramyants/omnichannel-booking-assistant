@@ -30,6 +30,14 @@ func (p *voiceEvalProvider) Complete(ctx context.Context, req ai.Request) (ai.Re
 	return response, err
 }
 
+func (p *voiceEvalProvider) CheckPurpose(ctx context.Context, messages []ai.Message) (ai.Purpose, error) {
+	checker, ok := p.Provider.(ai.PurposeChecker)
+	if !ok {
+		return "", ai.ErrUnavailable
+	}
+	return checker.CheckPurpose(ctx, messages)
+}
+
 // TestLiveArmenianVoiceEval is opt-in, uses synthetic messages and an in-memory
 // calendar/inbox, and never sends to Telegram, WhatsApp, SMS or Altegio. Passing
 // the lexical checks does not replace Armenian editorial review of the report.

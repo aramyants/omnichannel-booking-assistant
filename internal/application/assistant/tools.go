@@ -487,7 +487,8 @@ func (t *toolset) handoffDefinition() ai.Tool {
 	return ai.Tool{
 		Name: toolRequestHandoff,
 		Description: "Hand the conversation to a colleague. Use this whenever the customer asks " +
-			"for a person, is upset, or wants something you cannot do safely. " +
+			"for a person, is upset about a studio matter, or needs studio assistance you cannot safely provide. " +
+			"Never use for unrelated requests or a temporary read/lookup failure; offer retry and human help instead. " +
 			"After calling this, tell the customer a colleague will reply, and stop.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
@@ -509,6 +510,7 @@ func (t *toolset) handoffDefinition() ai.Tool {
 func (t *toolset) execute(ctx context.Context, s *session, call ai.ToolCall) ai.ToolResult {
 	output, err := t.run(ctx, s, call)
 	if err != nil {
+		t.logger.WarnContext(ctx, "assistant tool failed", "conversation_id", s.conv.ID, "tool", call.Name, "error", err)
 		return ai.ToolResult{CallID: call.ID, Output: toolFailure(err)}
 	}
 	return ai.ToolResult{CallID: call.ID, Output: output}
@@ -1054,6 +1056,10 @@ func (t *toolset) listBookings(ctx context.Context, s *session) (string, error) 
 	}
 	booked, err := t.customerBookings(ctx, s.customer)
 	if err != nil {
+		// Finish this turn in application code. A failed read must not invite
+		// another model round to invent absence or automatically escalate.
+		s.present(speak(s.language).myAppointments, speak(s.language).talkToAPerson)
+		s.finalReply = cabinetText(s.language, "lookup_failed")
 		return "", err
 	}
 

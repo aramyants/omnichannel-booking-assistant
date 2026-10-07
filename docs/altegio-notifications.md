@@ -1,5 +1,11 @@
 # Altegio notifications and studio bot
 
+Current status is recorded in [native notifications](native-notifications.md)
+and the [7 October audit](reliability-audit-2026-10-07.md). The implemented
+transactional outbox, app 2555 and SMSGate device supersede the earlier migration
+checklist below. Altegio's separate native SMS/review-provider activation remains
+unconfirmed and its channel is still disconnected.
+
 The native Altegio booking form remains the booking entry point. Extend its
 supported settings and connect booking events to this service. The studio owns
 the notification policy, templates, delivery history and staff controls.

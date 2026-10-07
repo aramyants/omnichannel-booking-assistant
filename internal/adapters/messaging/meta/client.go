@@ -35,7 +35,8 @@ var (
 
 	// ErrRejected means Meta refused the request for a reason that repeating
 	// it will not fix.
-	ErrRejected = errors.New("meta rejected the request")
+	ErrRejected      = errors.New("meta rejected the request")
+	ErrAuthorization = errors.New("meta authentication invalid")
 
 	// ErrOutsideServiceWindow means WhatsApp will not deliver a free-form
 	// message because the customer has not written for 24 hours.
@@ -205,6 +206,9 @@ func (c *Client) translate(path string, status int, raw []byte) error {
 	if parsed.Error.UserMsg != "" {
 		// Meta's user-facing text is usually the one that explains the cause.
 		message = parsed.Error.UserMsg
+	}
+	if parsed.Error.Code == 190 || parsed.Error.Code == 102 || status == http.StatusUnauthorized {
+		return fmt.Errorf("meta %s: %w: %w: %s", path, ErrRejected, ErrAuthorization, message)
 	}
 
 	// 131047 is WhatsApp's code for a free-form message sent more than 24 hours

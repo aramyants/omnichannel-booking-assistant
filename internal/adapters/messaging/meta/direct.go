@@ -18,10 +18,53 @@ import (
 // account. Instagram uses Instagram Login tokens and graph.instagram.com;
 // Messenger uses Page tokens and graph.facebook.com.
 type DirectClient struct {
-	client    *Client
-	provider  messaging.Provider
-	accountID string
-	profiles  sync.Map
+	client       *Client
+	provider     messaging.Provider
+	accountID    string
+	profiles     sync.Map
+	authRejected func(context.Context) error
+}
+
+func (c *DirectClient) SetAuthRejected(handler func(context.Context) error) { c.authRejected = handler }
+
+// ReadHealth validates this account's current token without sending a message.
+// Missing permission on an unrelated read is not proof that sending is blocked.
+func (c *DirectClient) ReadHealth(ctx context.Context) (messaging.ChannelHealth, error) {
+	var account struct {
+		ID   string `json:"id"`
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	path := c.accountID
+	if c.provider == messaging.ProviderMessenger {
+		// Page metadata requires pages_read_engagement, which sending does not.
+		// The existing webhook-management permission provides a suitable read.
+		path += "/subscribed_apps"
+	}
+	err := c.client.get(ctx, path, url.Values{"fields": {"id"}}, &account)
+	if errors.Is(err, ErrAuthorization) {
+		return messaging.ChannelHealth{Known: true, Blocked: true}, nil
+	}
+	if err != nil {
+		return messaging.ChannelHealth{}, err
+	}
+	if account.ID == "" && account.Data == nil {
+		return messaging.ChannelHealth{}, errors.New("meta health identity unavailable")
+	}
+	// Instagram Login can return an app-scoped ID for the dashboard's account
+	// ID alias. A different returned ID alone is not an authentication failure.
+	return messaging.ChannelHealth{Known: true}, nil
+}
+
+func (c *DirectClient) post(ctx context.Context, path string, payload any) error {
+	err := c.client.post(ctx, path, payload)
+	if errors.Is(err, ErrAuthorization) && c.authRejected != nil {
+		if saveErr := c.authRejected(ctx); saveErr != nil {
+			return errors.Join(err, fmt.Errorf("record channel authentication failure: %w", saveErr))
+		}
+	}
+	return err
 }
 
 func NewMessengerClient(accessToken, pageID string, opts ...Option) (*DirectClient, error) {
@@ -94,7 +137,7 @@ func (c *DirectClient) Send(ctx context.Context, msg messaging.Outgoing) error {
 						Type: "web_url", URL: link.URL, Title: shortened(link.Label, 20),
 					})
 				}
-				if err := c.client.post(ctx, c.accountID+"/messages", payload); err != nil {
+				if err := c.post(ctx, c.accountID+"/messages", payload); err != nil {
 					return err
 				}
 			}
@@ -112,7 +155,7 @@ func (c *DirectClient) Send(ctx context.Context, msg messaging.Outgoing) error {
 					payload.Message.Attachment.Payload.Text = chunk
 				}
 				payload.Message.Attachment.Payload.Buttons = buttons[start:end]
-				if err := c.client.post(ctx, c.accountID+"/messages", payload); err != nil {
+				if err := c.post(ctx, c.accountID+"/messages", payload); err != nil {
 					return err
 				}
 			}
@@ -125,7 +168,7 @@ func (c *DirectClient) Send(ctx context.Context, msg messaging.Outgoing) error {
 		if i == len(chunks)-1 && len(msg.Choices) > 0 {
 			payload.Message.QuickReplies = quickReplies(msg)
 		}
-		if err := c.client.post(ctx, c.accountID+"/messages", payload); err != nil {
+		if err := c.post(ctx, c.accountID+"/messages", payload); err != nil {
 			return err
 		}
 	}
@@ -183,7 +226,7 @@ func (c *DirectClient) ResolveProfile(ctx context.Context, msg messaging.Envelop
 
 func (c *DirectClient) sendAction(ctx context.Context, threadID, action string) error {
 	payload := directActionRequest{Recipient: party{ID: threadID}, SenderAction: action}
-	return c.client.post(ctx, c.accountID+"/messages", payload)
+	return c.post(ctx, c.accountID+"/messages", payload)
 }
 
 func NewMessengerHandler(webhook *Webhook, messages MessageHandler, logger *slog.Logger, pageID string) *Handler {

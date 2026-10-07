@@ -11,14 +11,24 @@ import (
 	"github.com/google/uuid"
 )
 
-// HealthGuard shares the last confirmed restrictions across Cloud Run instances.
-// Probes are read-only, leased and capped at one per five minutes. No probe sends
-// a customer message or changes the WhatsApp registration.
+// HealthGuard shares confirmed restrictions across Cloud Run instances. Probes
+// are read-only, leased and normally capped at one per five minutes. A definite
+// authentication rejection allows a recovery probe after one minute. No probe
+// sends a customer message or changes channel registration.
 type HealthGuard struct {
-	Repo  Repository
-	Read  func(context.Context) (messaging.ChannelHealth, error)
-	Alert func(context.Context, messaging.ChannelHealth) error
-	Now   func() time.Time
+	Provider messaging.Provider // Empty preserves the original WhatsApp key.
+	Repo     Repository
+	Read     func(context.Context) (messaging.ChannelHealth, error)
+	Alert    func(context.Context, messaging.ChannelHealth) error
+	Now      func() time.Time
+}
+
+func (g *HealthGuard) key() string {
+	p := g.Provider
+	if p == "" {
+		p = messaging.ProviderWhatsApp
+	}
+	return Key("channel_health", string(p))
 }
 
 func (g *HealthGuard) now() time.Time {
@@ -29,7 +39,7 @@ func (g *HealthGuard) now() time.Time {
 }
 
 func (g *HealthGuard) Refresh(ctx context.Context) error {
-	key, owner, now := Key("channel_health", "whatsapp"), uuid.NewString(), g.now()
+	key, owner, now := g.key(), uuid.NewString(), g.now()
 	claimed := false
 	if err := g.Repo.TransactNotifications(ctx, []string{key}, func(rows map[string]*Entry) error {
 		claimed = false
@@ -80,7 +90,7 @@ func (g *HealthGuard) Refresh(ctx context.Context) error {
 	}
 	if alert && g.Alert != nil {
 		if err := g.Alert(ctx, final); err != nil {
-			return fmt.Errorf("notify WhatsApp health change: %w", err)
+			return fmt.Errorf("notify channel health change: %w", err)
 		}
 	}
 	return probeErr
@@ -90,18 +100,31 @@ func (g *HealthGuard) Allows(ctx context.Context, template, language string) (bo
 	// A transient Graph lookup failure preserves the durable last-known state.
 	// Without a confirmed restriction, the provider remains the authority for
 	// delivery. Database failures must not silently bypass a stored restriction.
-	row, err := g.Repo.GetNotification(ctx, Key("channel_health", "whatsapp"))
+	row, err := g.Repo.GetNotification(ctx, g.key())
 	if err != nil {
 		return false, err
 	}
 	if !row.NextLookupAt.After(g.now()) {
 		_ = g.Refresh(ctx)
-		row, err = g.Repo.GetNotification(ctx, Key("channel_health", "whatsapp"))
+		row, err = g.Repo.GetNotification(ctx, g.key())
 		if err != nil {
 			return false, err
 		}
 	}
 	return row.Health.Allows(template, language), nil
+}
+
+// Block records a definite authentication rejection immediately, even between
+// scheduled probes. Incoming messages are retained without more model spending.
+func (g *HealthGuard) Block(ctx context.Context) error {
+	return g.Repo.TransactNotifications(ctx, []string{g.key()}, func(rows map[string]*Entry) error {
+		row := rows[g.key()]
+		row.Kind = "channel_health"
+		row.LeaseOwner, row.LeaseUntil = "", time.Time{}
+		row.Health.Known, row.Health.Blocked, row.Health.CheckedAt = true, true, g.now()
+		row.UpdatedAt, row.NextLookupAt = g.now(), g.now().Add(time.Minute)
+		return nil
+	})
 }
 
 func healthFingerprint(h messaging.ChannelHealth) string {

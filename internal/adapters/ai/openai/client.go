@@ -145,7 +145,7 @@ func (c *Client) Complete(ctx context.Context, req ai.Request) (ai.Response, err
 	if req.StructuredReply {
 		payload.Text = &textConfig{Format: textFormat{
 			Type: "json_schema", Name: "customer_reply", Strict: true,
-			Schema: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"choices":{"type":"array","items":{"type":"string"}}},"required":["text","choices"],"additionalProperties":false}`),
+			Schema: json.RawMessage(`{"type":"object","properties":{"purpose":{"type":"string","enum":["studio","unrelated"]},"text":{"type":"string"},"choices":{"type":"array","items":{"type":"string"}}},"required":["purpose","text","choices"],"additionalProperties":false}`),
 		}}
 	}
 
@@ -164,8 +164,9 @@ func (c *Client) Complete(ctx context.Context, req ai.Request) (ai.Response, err
 	response := toResponse(parsed)
 	if req.StructuredReply && !response.WantsTools() {
 		var reply struct {
-			Text    string   `json:"text"`
-			Choices []string `json:"choices"`
+			Purpose ai.Purpose `json:"purpose"`
+			Text    string     `json:"text"`
+			Choices []string   `json:"choices"`
 		}
 		if err := json.Unmarshal([]byte(response.Text), &reply); err != nil {
 			return ai.Response{}, errors.New("openai: invalid structured customer reply")
@@ -173,8 +174,12 @@ func (c *Client) Complete(ctx context.Context, req ai.Request) (ai.Response, err
 		if strings.TrimSpace(reply.Text) == "" {
 			return ai.Response{}, errors.New("openai: empty structured customer reply")
 		}
+		if reply.Purpose != ai.PurposeStudio && reply.Purpose != ai.PurposeUnrelated {
+			return ai.Response{}, errors.New("openai: invalid structured reply purpose")
+		}
 		response.Text = strings.TrimSpace(reply.Text)
 		response.Choices = reply.Choices
+		response.Purpose = reply.Purpose
 	}
 	return response, nil
 }

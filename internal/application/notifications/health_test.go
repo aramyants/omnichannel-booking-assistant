@@ -87,6 +87,30 @@ func TestPausedTemplateLeavesRepliesAndOtherLanguageAvailable(t *testing.T) {
 	}
 }
 
+func TestChannelRestrictionsAreSeparateAndAuthFailurePersists(t *testing.T) {
+	now := time.Now()
+	repo := &testRepository{rows: map[string]Entry{}}
+	newGuard := func(p messaging.Provider) *HealthGuard {
+		return &HealthGuard{Provider: p, Repo: repo, Now: func() time.Time { return now }, Read: func(context.Context) (messaging.ChannelHealth, error) {
+			return messaging.ChannelHealth{Known: true}, nil
+		}}
+	}
+	ig, fb := newGuard(messaging.ProviderInstagram), newGuard(messaging.ProviderMessenger)
+	if err := ig.Block(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if allowed, err := ig.Allows(t.Context(), "", ""); err != nil || allowed {
+		t.Fatal("invalid Instagram token still allowed")
+	}
+	if allowed, err := fb.Allows(t.Context(), "", ""); err != nil || !allowed {
+		t.Fatal("Instagram failure disabled Messenger")
+	}
+	now = now.Add(2 * time.Minute)
+	if allowed, err := ig.Allows(t.Context(), "", ""); err != nil || !allowed {
+		t.Fatal("renewed token did not recover")
+	}
+}
+
 func TestHealthAlertFailureDoesNotRepeatOnEveryCheck(t *testing.T) {
 	now := time.Now()
 	var alerts int

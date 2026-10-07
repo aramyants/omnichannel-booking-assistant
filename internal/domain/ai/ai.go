@@ -120,6 +120,7 @@ type Response struct {
 	// Choices are proposed labels, validated against actual tool results by
 	// the application before they become buttons.
 	Choices []string
+	Purpose Purpose
 
 	// ToolCalls is what the model wants run before it can answer.
 	ToolCalls []ToolCall

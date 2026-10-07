@@ -305,6 +305,10 @@ func (c *Client) ClearKeyboard(ctx context.Context, chatID string, messageID int
 		ChatID:    chatID,
 		MessageID: messageID,
 	})
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.Code == 400 && strings.Contains(apiErr.Description, "message is not modified") {
+		return nil // A retry already retired this keyboard.
+	}
 	return err
 }
 

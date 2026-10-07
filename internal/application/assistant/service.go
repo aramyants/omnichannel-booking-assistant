@@ -934,6 +934,9 @@ func (s *Service) reply(
 	if text, ok := s.menuReply(ctx, sess, msg, selectedPresentedChoice); ok {
 		return text, nil
 	}
+	if text, handled := s.purposeReply(ctx, sess, msg.Content.Text, history); handled {
+		return text, nil
+	}
 
 	// Confirmation is a state transition, not a language-understanding puzzle.
 	// Handle an explicit yes in code so short Armenian transliterations such as
@@ -999,10 +1002,11 @@ func (s *Service) reply(
 	}
 	req := ai.Request{
 		Instructions:    instructions,
-		Messages:        toAIMessages(history),
+		Messages:        boundedStudioMessages(history),
 		Turns:           seededTurns,
 		Tools:           s.tools.definitions(),
 		StructuredReply: true,
+		MaxTokens:       8192,
 	}
 	if changeConfirmationAttempted {
 		allowed := req.Tools[:0]
@@ -1017,7 +1021,13 @@ func (s *Service) reply(
 		req.Tools = allowed
 	}
 
+	remainingTokens := 16000
 	for round := 1; round <= maxToolRounds; round++ {
+		if remainingTokens < 512 {
+			s.logger.WarnContext(ctx, "assistant output budget exhausted", "conversation_id", conv.ID)
+			return s.apologise(ctx, sess)
+		}
+		req.MaxTokens = min(8192, remainingTokens)
 		if errors.Is(context.Cause(ctx), errTurnSuperseded) {
 			return "", errTurnSuperseded
 		}
@@ -1041,12 +1051,21 @@ func (s *Service) reply(
 			"output_tokens", resp.Usage.OutputTokens,
 			"tool_calls", len(resp.ToolCalls),
 		)
+		remainingTokens -= resp.Usage.OutputTokens
+		if len(resp.ToolCalls) > 8 {
+			s.logger.WarnContext(ctx, "assistant exceeded tool batch limit", "conversation_id", conv.ID)
+			return s.apologise(ctx, sess)
+		}
 
 		if !resp.WantsTools() {
 			if resp.Text == "" {
 				s.logger.WarnContext(ctx, "the model returned nothing to say",
 					"conversation_id", conv.ID)
 				return s.apologise(ctx, sess)
+			}
+			if resp.Purpose == ai.PurposeUnrelated || outsidePurposeReply(resp.Text) {
+				sess.offerFixed(offerMenu)
+				return purposeText(sess.language), nil
 			}
 			sess.selectChoices(resp.Choices)
 			return resp.Text, nil
@@ -1088,8 +1107,16 @@ func (s *Service) reply(
 	// present that result. It cannot start another lookup loop.
 	finalReq := req
 	finalReq.Tools = nil
+	if remainingTokens < 512 {
+		return s.apologise(ctx, sess)
+	}
+	finalReq.MaxTokens = min(8192, remainingTokens)
 	resp, err := s.ai.Complete(ctx, finalReq)
 	if err == nil && !resp.WantsTools() && resp.Text != "" {
+		if resp.Purpose == ai.PurposeUnrelated || outsidePurposeReply(resp.Text) {
+			sess.offerFixed(offerMenu)
+			return purposeText(sess.language), nil
+		}
 		s.logger.InfoContext(ctx, "completed a final ai turn without tools",
 			"conversation_id", conv.ID,
 			"model", s.ai.Model(),

@@ -10,6 +10,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/ai"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
 )
 
 func (t *toolset) prepareCancellation(
@@ -24,7 +25,7 @@ func (t *toolset) prepareCancellation(
 		return "", err
 	}
 
-	b, err := t.ownedBooking(ctx, s.customer.ID, args.Reference)
+	b, err := t.ownedBooking(ctx, s.customer, args.Reference)
 	if err != nil {
 		return "", err
 	}
@@ -80,7 +81,7 @@ func (t *toolset) confirmCancellation(ctx context.Context, s *session) (string, 
 		return "", errors.New("wait for the customer to confirm cancellation in a new message after seeing the summary")
 	}
 
-	b, err := t.ownedBooking(ctx, s.customer.ID, draft.Reference)
+	b, err := t.ownedBooking(ctx, s.customer, draft.Reference)
 	if err != nil {
 		return "", err
 	}
@@ -141,7 +142,7 @@ func (t *toolset) prepareReschedule(
 		return "", err
 	}
 
-	b, err := t.ownedBooking(ctx, s.customer.ID, args.Reference)
+	b, err := t.ownedBooking(ctx, s.customer, args.Reference)
 	if err != nil {
 		return "", err
 	}
@@ -220,7 +221,7 @@ func (t *toolset) confirmReschedule(ctx context.Context, s *session) (string, er
 		return "", errors.New("wait for the customer to confirm the reschedule in a new message after seeing the summary")
 	}
 
-	b, err := t.ownedBooking(ctx, s.customer.ID, draft.Reference)
+	b, err := t.ownedBooking(ctx, s.customer, draft.Reference)
 	if err != nil {
 		return "", err
 	}
@@ -279,12 +280,13 @@ func (t *toolset) confirmReschedule(ctx context.Context, s *session) (string, er
 	}
 }
 
-// ownedBooking deliberately reads through the customer-scoped repository.
+// ownedBooking reads current, ownership-scoped history and requires a local
+// private management proof before allowing a provider mutation.
 // Supplying another customer's valid reference therefore looks exactly like a
 // nonexistent reference and cannot disclose or mutate their appointment.
 func (t *toolset) ownedBooking(
 	ctx context.Context,
-	customerID string,
+	cust customer.Customer,
 	reference string,
 ) (booking.Booking, error) {
 	if t.bookings == nil {
@@ -292,12 +294,15 @@ func (t *toolset) ownedBooking(
 	}
 
 	reference = strings.TrimSpace(reference)
-	booked, err := t.bookings.ListBookings(ctx, customerID)
+	booked, err := t.customerBookings(ctx, cust)
 	if err != nil {
 		return booking.Booking{}, err
 	}
 	for _, b := range booked {
 		if b.ExternalID == reference {
+			if b.ManagementToken == "" {
+				return booking.Booking{}, fmt.Errorf("%w: this appointment requires staff assistance for changes; no online management proof is available", booking.ErrRejected)
+			}
 			return b, nil
 		}
 	}
