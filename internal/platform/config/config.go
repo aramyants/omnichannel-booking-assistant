@@ -390,10 +390,12 @@ func Load() (Config, error) {
 		cfg.LogLevel = level
 	}
 
-	timeout, err := time.ParseDuration(getenv("SHUTDOWN_TIMEOUT", "15s"))
+	// Cloud Run sends SIGKILL ten seconds after SIGTERM. Leave two seconds for
+	// closing adapters and exiting after request cleanup completes.
+	timeout, err := time.ParseDuration(getenv("SHUTDOWN_TIMEOUT", "8s"))
 	switch {
 	case err != nil:
-		errs = append(errs, fmt.Errorf("SHUTDOWN_TIMEOUT must be a duration such as 15s: %w", err))
+		errs = append(errs, fmt.Errorf("SHUTDOWN_TIMEOUT must be a duration such as 8s: %w", err))
 	case timeout <= 0:
 		errs = append(errs, fmt.Errorf("SHUTDOWN_TIMEOUT must be positive: got %s", timeout))
 	default:

@@ -128,3 +128,64 @@ func TestRunDrainsInFlightRequest(t *testing.T) {
 		t.Errorf("Run() returned error: %v", err)
 	}
 }
+
+func TestShutdownCancelsProviderWorkAndAllowsCleanupResponse(t *testing.T) {
+	started := make(chan struct{})
+	cleanup := make(chan bool, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /provider-call", func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		// Provider clients use the request context. They must stop when the
+		// instance terminates, instead of running past Cloud Run's kill window.
+		<-r.Context().Done()
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), time.Second)
+		defer cancel()
+		cleanup <- cleanupCtx.Err() == nil
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("retry this delivery"))
+	})
+	srv, err := New(t.Context(), "127.0.0.1:0", mux, discardLogger(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	runErr := make(chan error, 1)
+	go func() { runErr <- srv.Run(ctx) }()
+	type result struct {
+		status int
+		body   string
+		err    error
+	}
+	response := make(chan result, 1)
+	go func() {
+		resp, err := get(t.Context(), t, "http://"+srv.Addr()+"/provider-call")
+		if err != nil {
+			response <- result{err: err}
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, err := io.ReadAll(resp.Body)
+		response <- result{status: resp.StatusCode, body: string(body), err: err}
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("provider request did not start")
+	}
+	cancel()
+	select {
+	case got := <-response:
+		if got.err != nil || got.status != http.StatusServiceUnavailable || got.body != "retry this delivery" {
+			t.Fatalf("cancelled request did not finish with a retryable response: %+v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not cancel in-flight provider work")
+	}
+	if !<-cleanup {
+		t.Fatal("request cancellation also cancelled its durable cleanup context")
+	}
+	if err := <-runErr; err != nil {
+		t.Fatalf("cancelled handler did not drain cleanly: %v", err)
+	}
+}

@@ -104,7 +104,7 @@ func (s *Service) lockConversation(ctx context.Context, msg messaging.Envelope, 
 	defer ticker.Stop()
 	for {
 		claimed, err := s.processed.Claim(ctx, key, owner, s.now())
-		if err != nil {
+		if err != nil && !errors.Is(err, messaging.ErrDeliveryBusy) {
 			return nil, fmt.Errorf("lock the conversation: %w", err)
 		}
 		if claimed {

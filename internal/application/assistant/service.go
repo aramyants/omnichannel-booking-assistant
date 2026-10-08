@@ -86,8 +86,9 @@ type MessageRepository interface {
 // Every provider this system targets retries deliveries, and a retry that is
 // handled again produces a second reply and, later, a second appointment.
 type ProcessedEvents interface {
-	// Claim atomically acquires a short processing lease. It returns false when
-	// another request owns the delivery or it has already been completed.
+	// Claim atomically acquires a short processing lease. A completed delivery
+	// returns false; an unfinished lease returns messaging.ErrDeliveryBusy so
+	// providers keep retrying until its owner completes or the lease expires.
 	Claim(ctx context.Context, key, claimID string, at time.Time) (bool, error)
 
 	// Complete turns claimID's lease into a completed-delivery record.
@@ -286,19 +287,10 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 		return fmt.Errorf("claim the delivery: %w", err)
 	}
 	if !claimed {
-		s.logger.InfoContext(ctx, "dropped an in-flight or completed delivery",
+		s.logger.InfoContext(ctx, "dropped a completed delivery",
 			"dedupe_key", msg.DedupeKey())
 		return nil
 	}
-
-	turnKey := conversation.Key(msg.Provider, msg.ExternalThreadID)
-	if err := s.turns.RegisterTurn(ctx, turnKey, msg.ExternalMessageID, now); err != nil {
-		return fmt.Errorf("register the customer turn: %w", err)
-	}
-	// A newer fragment makes any model answer currently being composed for the
-	// same chat obsolete. This cancels it immediately when both requests land on
-	// this instance; the durable latest-turn check below covers other instances.
-	s.activeTurns.Supersede(turnKey)
 
 	// Errors before delivery leave no externally visible result, so release the
 	// lease and let the provider retry. After a reply is sent the lease is kept
@@ -323,6 +315,15 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 			s.releaseDelivery(ctx, msg.DedupeKey(), claimID)
 		}
 	}()
+
+	turnKey := conversation.Key(msg.Provider, msg.ExternalThreadID)
+	if err := s.turns.RegisterTurn(ctx, turnKey, msg.ExternalMessageID, now); err != nil {
+		return fmt.Errorf("register the customer turn: %w", err)
+	}
+	// A newer fragment makes any model answer currently being composed for the
+	// same chat obsolete. This cancels it immediately when both requests land on
+	// this instance; the durable latest-turn check below covers other instances.
+	s.activeTurns.Supersede(turnKey)
 
 	unlock, err := s.lockConversation(ctx, msg, claimID)
 	if err != nil {

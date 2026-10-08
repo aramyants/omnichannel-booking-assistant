@@ -24,8 +24,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.LogLevel != slog.LevelInfo {
 		t.Errorf("LogLevel = %v, want %v", cfg.LogLevel, slog.LevelInfo)
 	}
-	if cfg.ShutdownTimeout != 15*time.Second {
-		t.Errorf("ShutdownTimeout = %s, want 15s", cfg.ShutdownTimeout)
+	if cfg.ShutdownTimeout != 8*time.Second {
+		t.Errorf("ShutdownTimeout = %s, want 8s", cfg.ShutdownTimeout)
 	}
 	if got, want := cfg.Addr(), ":8080"; got != want {
 		t.Errorf("Addr() = %q, want %q", got, want)

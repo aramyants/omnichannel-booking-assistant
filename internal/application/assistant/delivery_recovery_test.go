@@ -1,12 +1,44 @@
 package assistant
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 )
+
+type failedTurnRegistration struct {
+	ConversationTurns
+	err error
+}
+
+func (r failedTurnRegistration) RegisterTurn(context.Context, string, string, time.Time) error {
+	return r.err
+}
+
+func TestFailedTurnRegistrationReleasesDeliveryForImmediateRetry(t *testing.T) {
+	sender := &fakeSender{}
+	svc, store := newTestService(t, sender)
+	registrationErr := errors.New("turn storage temporarily unavailable")
+	svc.turns = failedTurnRegistration{ConversationTurns: store, err: registrationErr}
+	msg := incoming("failed-turn-registration")
+	if err := svc.Handle(t.Context(), msg); !errors.Is(err, registrationErr) {
+		t.Fatalf("turn registration failure was hidden: %v", err)
+	}
+	if len(sender.sent) != 0 {
+		t.Fatal("a failed registration reached the sender")
+	}
+	svc.turns = store
+	if err := svc.Handle(t.Context(), msg); err != nil {
+		t.Fatalf("retry could not recover the customer message immediately: %v", err)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("recovery sent %d replies, want 1", len(sender.sent))
+	}
+}
 
 func TestTerminalSendOutcomeKeepsTheDeliveryClaim(t *testing.T) {
 	for _, outcome := range []error{messaging.ErrDeliveryUncertain, messaging.ErrDeliveryRejected} {

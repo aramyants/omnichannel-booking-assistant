@@ -254,7 +254,10 @@ func TestProcessedEvents(t *testing.T) {
 		t.Fatal("the first delivery did not acquire its claim")
 	}
 
-	claimed, _ = store.Claim(t.Context(), "telegram:4127", "claim-2", now)
+	claimed, err = store.Claim(t.Context(), "telegram:4127", "claim-2", now)
+	if !errors.Is(err, messaging.ErrDeliveryBusy) {
+		t.Fatalf("unfinished delivery must remain retryable: %v", err)
+	}
 	if claimed {
 		t.Error("a concurrent delivery stole an active claim")
 	}
@@ -263,7 +266,10 @@ func TestProcessedEvents(t *testing.T) {
 		t.Fatalf("Complete() returned error: %v", err)
 	}
 
-	claimed, _ = store.Claim(t.Context(), "telegram:4127", "claim-3", now)
+	claimed, err = store.Claim(t.Context(), "telegram:4127", "claim-3", now)
+	if err != nil {
+		t.Fatalf("completed delivery must be acknowledged: %v", err)
+	}
 	if claimed {
 		t.Error("a completed delivery became claimable")
 	}

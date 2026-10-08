@@ -26,7 +26,9 @@ const (
 
 	// writeTimeout caps how long a handler may take to write its response. It
 	// must exceed the slowest legitimate handler or responses are truncated.
-	writeTimeout = 30 * time.Second
+	// Customer turns allow two minutes for model/tool work. Leave time for
+	// transport feedback and claim cleanup before writing the webhook response.
+	writeTimeout = 3 * time.Minute
 
 	// idleTimeout caps how long a keep-alive connection may sit unused.
 	idleTimeout = 60 * time.Second
@@ -38,6 +40,7 @@ type Server struct {
 	listener        net.Listener
 	logger          *slog.Logger
 	shutdownTimeout time.Duration
+	cancelRequests  context.CancelFunc
 }
 
 // New binds addr and returns a Server ready to run.
@@ -52,10 +55,12 @@ func New(ctx context.Context, addr string, handler http.Handler, logger *slog.Lo
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", addr, err)
 	}
+	requestCtx, cancelRequests := context.WithCancel(context.WithoutCancel(ctx))
 
 	return &Server{
 		srv: &http.Server{
 			Handler:           handler,
+			BaseContext:       func(net.Listener) context.Context { return requestCtx },
 			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       readTimeout,
 			WriteTimeout:      writeTimeout,
@@ -65,6 +70,7 @@ func New(ctx context.Context, addr string, handler http.Handler, logger *slog.Lo
 		listener:        listener,
 		logger:          logger,
 		shutdownTimeout: shutdownTimeout,
+		cancelRequests:  cancelRequests,
 	}, nil
 }
 
@@ -75,10 +81,11 @@ func (s *Server) Addr() string {
 
 // Run serves requests until ctx is cancelled or the server fails.
 //
-// On cancellation it stops accepting new connections and waits up to the
-// configured shutdown timeout for in-flight requests to complete. It returns
-// nil when that drain finishes cleanly.
+// On cancellation it stops accepting new connections, cancels in-flight work
+// and waits up to the configured shutdown timeout for handlers to clean up and
+// return a retryable response. It returns nil when that drain finishes cleanly.
 func (s *Server) Run(ctx context.Context) error {
+	defer s.cancelRequests()
 	// Buffered so the goroutine can always send and exit, even if nobody is
 	// left to receive. An unbuffered channel here would leak the goroutine.
 	serveErr := make(chan error, 1)
@@ -100,6 +107,9 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	s.logger.Info("draining connections", "timeout", s.shutdownTimeout.String())
+	// Cloud Run allows ten seconds after SIGTERM. Slow provider calls must
+	// observe cancellation now, leaving the drain window for durable cleanup.
+	s.cancelRequests()
 
 	// ctx is already cancelled, so it cannot bound the drain. WithoutCancel
 	// keeps any values carried on ctx while dropping its cancellation.

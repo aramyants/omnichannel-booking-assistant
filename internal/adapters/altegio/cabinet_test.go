@@ -101,3 +101,40 @@ func TestUnavailableContactIsNotAnEmptyHistory(t *testing.T) {
 		})
 	}
 }
+
+func TestVerifiedInternationalPhoneHistory(t *testing.T) {
+	for _, tc := range []struct {
+		name, verified, stored string
+		searchPhone            any
+	}{
+		{"Armenia", "+37491123456", "37491123456", "37491123456"},
+		{"Russia", "+79161234567", "79161234567", "79161234567"},
+		{"Russia mixed endpoint format", "+79161234567", "79161234567", "+79161234567"},
+		{"Russia numeric client search", "+79161234567", "79161234567", int64(79161234567)},
+		{"United States", "+12025550123", "12025550123", "12025550123"},
+		{"United Kingdom", "+442079460018", "442079460018", "442079460018"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/company/"+testCompanyID+"/clients/search" {
+					var search clientSearchRequest
+					if json.NewDecoder(r.Body).Decode(&search) != nil || search.Filters[0].State.Value != tc.verified {
+						t.Error("lookup lost verified international contact")
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": []map[string]any{{"id": 77, "phone": tc.searchPhone}}})
+					return
+				}
+				if r.URL.Path != "/records/"+testCompanyID || r.URL.Query().Get("client_id") != "77" {
+					t.Errorf("unexpected lookup scope: %s", r.URL.Path)
+				}
+				company, _ := strconv.Atoi(testCompanyID)
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": []map[string]any{{"id": 123, "company_id": company, "datetime": "2026-10-08T16:00:00+04:00", "seance_length": 6600, "client": map[string]any{"id": 77, "name": "Client", "phone": tc.stored}, "staff": map[string]any{"id": 1, "name": "Galina"}, "services": []map[string]any{{"id": 2, "title": "Motion Relax 110"}}}}})
+			}))
+			defer server.Close()
+			got, err := newTestClient(t, server, WithLocation(yerevan(t))).ListPhoneBookings(t.Context(), tc.verified, time.Date(2026, 10, 8, 11, 0, 0, 0, time.UTC))
+			if err != nil || len(got) != 1 || got[0].ExternalID != "123" {
+				t.Fatalf("international history: bookings=%d err=%v", len(got), err)
+			}
+		})
+	}
+}

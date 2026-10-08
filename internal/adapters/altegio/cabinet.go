@@ -53,7 +53,7 @@ func (c *Client) ListPhoneBookings(ctx context.Context, rawPhone string, now tim
 				if record.Client == nil || record.Client.ID != client.ID {
 					return nil, fmt.Errorf("%w: appointment owner mismatch", booking.ErrUnavailable)
 				}
-				returned, err := customer.NormalizePhone(record.Client.Phone)
+				returned, err := normalizeAltegioPhone(record.Client.Phone)
 				if err != nil || returned != phone {
 					return nil, fmt.Errorf("%w: appointment phone mismatch", booking.ErrUnavailable)
 				}

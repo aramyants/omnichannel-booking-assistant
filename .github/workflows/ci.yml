@@ -32,8 +32,17 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Start Firestore emulator
+        run: docker compose up --wait --wait-timeout 120 firestore
+
       - name: Test
+        env:
+          FIRESTORE_EMULATOR_HOST: localhost:8200
         run: go test ./... -race -count=1
+
+      - name: Stop Firestore emulator
+        if: always()
+        run: docker compose down
 
       - name: Build
         run: go build ./...

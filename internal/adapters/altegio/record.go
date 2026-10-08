@@ -211,7 +211,27 @@ func clientPhone(raw json.RawMessage) (string, error) {
 			return "", err
 		}
 	}
-	return customer.NormalizePhone(value)
+	return normalizeAltegioPhone(value)
+}
+
+// Altegio's phone fields may contain international digits without a leading plus.
+// Keep that wire-format adaptation here: phone numbers typed by customers still
+// require an explicit country code unless they are Armenian national numbers.
+func normalizeAltegioPhone(raw string) (string, error) {
+	phone, err := customer.NormalizePhone(raw)
+	if err == nil {
+		return phone, nil
+	}
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", err
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return "", err
+		}
+	}
+	return customer.NormalizePhone("+" + value)
 }
 
 // toAppointment converts a domain request into Altegio's shape.

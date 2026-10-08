@@ -62,6 +62,24 @@ func openNotifications(ctx context.Context, cfg config.Config, store appStore, r
 		}
 	}
 	service := &notifications.Service{Repo: repo, Scheduler: scheduler, Reader: reader, Owned: store, Sender: nativeNotificationSender{tg: tg, wa: wa, account: account, sms: sms, store: store, logger: logger, location: cfg.Altegio.Location, renderer: newAppointmentMessages(cfg), bookingURL: cfg.BusinessProfile.BookingURL, websiteURL: cfg.BusinessProfile.WebsiteURL}, ActivatedAt: cfg.Notifications.ActivatedAt, WhatsAppTemplates: cfg.Notifications.WhatsAppTemplates, TelegramAccount: account != nil, BookingPermissionSince: cfg.Notifications.BookingPermissionSince, NativeLanguage: cfg.Notifications.NativeLanguage, SMSReady: sms != nil, SMSPermissionSince: cfg.Notifications.SMSPermissionSince}
+	if sms != nil {
+		service.SMSStatus = func(ctx context.Context, notice notifications.Notice) (string, error) {
+			phone, err := customer.NormalizePhone(notice.Snapshot.Phone)
+			if err != nil {
+				return "", errors.New("SMS receipt contact is unavailable")
+			}
+			status, err := sms.Status(ctx, nativeSMSMessageID(notice.ID, phone))
+			return string(status.State), err
+		}
+		service.SMSFailureAlert = func(ctx context.Context, recordID, eventID string) error {
+			logger.WarnContext(ctx, "SMS booking notice failed after acceptance", "record_id", recordID, "event_id", eventID)
+			if cfg.Telegram.StaffChatID == "" {
+				return nil
+			}
+			text := "An appointment notice was not delivered by SMS. Booking reference: " + recordID + ". Check the work phone's SMSGate queue, connection and SIM credit, then contact the customer in the business inbox. The assistant will not resend automatically."
+			return tg.Send(ctx, messaging.Outgoing{Provider: messaging.ProviderTelegram, ExternalThreadID: cfg.Telegram.StaffChatID, Text: text})
+		}
+	}
 	if wa != nil {
 		expected := map[string]bool{}
 		for key, name := range cfg.Notifications.WhatsAppTemplates {
@@ -252,12 +270,11 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 		}
 		// Keep the same provider ID across retries, while fitting the live API's
 		// ID limit. A timeout remains uncertain in the durable send ledger.
-		digest := sha256.Sum256([]byte("smsgate:" + notice.ID + ":" + target.Address))
 		validUntil := time.Now().UTC().Add(15 * time.Minute)
 		if notice.Purpose != notifications.BookingCancelled && b.StartsAt.Before(validUntil) {
 			validUntil = b.StartsAt
 		}
-		_, err := s.sms.Send(ctx, smsgate.Message{ID: fmt.Sprintf("%x", digest[:16]), Phone: target.Address,
+		_, err := s.sms.Send(ctx, smsgate.Message{ID: nativeSMSMessageID(notice.ID, target.Address), Phone: target.Address,
 			Text:       s.renderer.SMS(title, appointmentmessage.Appointment{StartsAt: b.StartsAt, Service: strings.Join(b.ServiceNames, ", "), Specialist: b.StaffName}, appointmentmessage.Language(lang)),
 			ValidUntil: validUntil, Priority: 0})
 		return errors.Is(err, smsgate.ErrRejected), err
@@ -310,6 +327,11 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 	var rejected *telegram.APIError
 	safe := errors.As(err, &rejected) && rejected.StatusCode >= 400 && rejected.StatusCode < 500 && rejected.Code != 429
 	return safe, err
+}
+
+func nativeSMSMessageID(eventID, phone string) string {
+	digest := sha256.Sum256([]byte("smsgate:" + eventID + ":" + phone))
+	return fmt.Sprintf("%x", digest[:16])
 }
 
 func (s nativeNotificationSender) recordTranscript(ctx context.Context, msg messaging.Outgoing, notice notifications.Notice, lang string) error {

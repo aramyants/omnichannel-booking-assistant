@@ -70,6 +70,9 @@ func (c *Client) nativeSnapshot(dto nativeRecord, numeric int64) (notifications.
 	if dto.Client != nil {
 		b.CustomerName = dto.Client.Name
 		phone = dto.Client.Phone
+		if normalized, err := normalizeAltegioPhone(phone); err == nil {
+			phone = normalized
+		}
 	}
 	for _, service := range dto.Services {
 		b.ServiceIDs = append(b.ServiceIDs, strconv.FormatInt(service.ID, 10))

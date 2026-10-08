@@ -96,11 +96,14 @@ func TestHandlerAcknowledgesUnparseableDeliveries(t *testing.T) {
 // TestHandlerAsksForRedeliveryWhenProcessingFails is the counterpart: a message
 // that parsed but could not be handled may succeed on a second attempt.
 func TestHandlerAsksForRedeliveryWhenProcessingFails(t *testing.T) {
-	messages := &recordingHandler{err: errors.New("telegram send failed")}
-	rec := post(t, newTestHandler(messages), "s3cret-token", fixture(t, "text_message.json"))
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d so Telegram redelivers", rec.Code, http.StatusInternalServerError)
+	for _, err := range []error{errors.New("telegram send failed"), messaging.ErrDeliveryBusy} {
+		t.Run(err.Error(), func(t *testing.T) {
+			messages := &recordingHandler{err: err}
+			rec := post(t, newTestHandler(messages), "s3cret-token", fixture(t, "text_message.json"))
+			if rec.Code != http.StatusInternalServerError {
+				t.Errorf("status = %d, want %d so Telegram redelivers", rec.Code, http.StatusInternalServerError)
+			}
+		})
 	}
 }
 

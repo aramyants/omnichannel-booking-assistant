@@ -7,8 +7,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 )
 
@@ -163,7 +165,13 @@ func (h *Handler) serveDelivery(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 					for _, status := range change.Value.Statuses {
-						if err := h.bookingStatuses(ctx, status.Reference, status.Recipient, status.State); err != nil {
+						// Authenticated WhatsApp addresses are international digits.
+						// Convert their wire format before checking appointment ownership.
+						phone, err := customer.NormalizePhone("+" + strings.TrimPrefix(status.Recipient, "+"))
+						if err != nil {
+							continue
+						}
+						if err := h.bookingStatuses(ctx, status.Reference, phone, status.State); err != nil {
 							h.logger.ErrorContext(ctx, "booking delivery receipt processing failed")
 							http.Error(w, "processing failed", http.StatusInternalServerError)
 							return

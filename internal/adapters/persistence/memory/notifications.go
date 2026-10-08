@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/notifications"
+	"sort"
 )
 
 func cloneNotification(entry notifications.Entry) (notifications.Entry, error) {
@@ -56,6 +57,27 @@ func (s *Store) PendingNotifications(_ context.Context) ([]notifications.Entry, 
 			return nil, err
 		}
 		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func (s *Store) PendingSMSNotifications(_ context.Context) ([]notifications.Entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var rows []notifications.Entry
+	for _, entry := range s.notificationEntries {
+		if entry.Kind != "event" || (entry.Outcome != "accepted_sms" && entry.Outcome != "uncertain_sms") {
+			continue
+		}
+		row, err := cloneNotification(entry)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].UpdatedAt.Before(rows[j].UpdatedAt) })
+	if len(rows) > 20 {
+		rows = rows[:20]
 	}
 	return rows, nil
 }

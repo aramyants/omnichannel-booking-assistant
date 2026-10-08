@@ -19,6 +19,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/reminder"
 )
 
@@ -415,6 +416,9 @@ func (s *Store) Claim(_ context.Context, key, claimID string, at time.Time) (boo
 
 	entry, ok := s.processed[key]
 	if ok && entry.expiresAt.After(at) {
+		if entry.processedAt.IsZero() {
+			return false, messaging.ErrDeliveryBusy
+		}
 		return false, nil
 	}
 
