@@ -301,14 +301,16 @@ func (c *Client) postResponses(ctx context.Context, payload, out any) error {
 		return fmt.Errorf("openai %s: encode request: %w", path, err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+	// The configured API URL is trusted deployment configuration (or a local
+	// test server). Customer messages and model output enter only the JSON body.
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body)) // #nosec G704 -- destination is operator configuration, not request input.
 	if err != nil {
 		return fmt.Errorf("openai %s: build request: %w", path, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) // #nosec G704 -- same fixed endpoint and trusted configured destination as above.
 	if err != nil {
 		return fmt.Errorf("openai %s: %w: %w", path, ai.ErrUnavailable, err)
 	}
