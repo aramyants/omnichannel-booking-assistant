@@ -139,9 +139,9 @@ func TestConcurrentRedeliveryIsClaimedOnce(t *testing.T) {
 	<-sender.entered
 
 	// The first request is still sending its reply. A concurrent copy must see
-	// its active lease and return without reaching the sender.
-	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
-		t.Fatalf("duplicate Handle() returned error: %v", err)
+	// its active lease and remain retryable without reaching the sender.
+	if err := svc.Handle(t.Context(), incoming("4127")); !errors.Is(err, messaging.ErrDeliveryBusy) {
+		t.Fatalf("duplicate Handle() must remain retryable: %v", err)
 	}
 	close(sender.release)
 	if err := <-firstDone; err != nil {
@@ -150,6 +150,9 @@ func TestConcurrentRedeliveryIsClaimedOnce(t *testing.T) {
 
 	if got := sender.calls.Load(); got != 1 {
 		t.Errorf("concurrent delivery produced %d replies, want 1", got)
+	}
+	if err := svc.Handle(t.Context(), incoming("4127")); err != nil {
+		t.Fatalf("completed redelivery must be acknowledged: %v", err)
 	}
 }
 

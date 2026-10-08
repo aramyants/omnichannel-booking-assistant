@@ -3,6 +3,7 @@ package notifications
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
 	"github.com/google/uuid"
@@ -39,8 +40,9 @@ func (s *Service) WhatsAppStatus(ctx context.Context, reference, rawPhone, state
 	}
 	deliveryKey := Key("delivery", event.Event.RecordID+":"+id)
 	failed := false
-	err = s.Repo.TransactNotifications(ctx, []string{deliveryKey}, func(rows map[string]*Entry) error {
-		row := rows[deliveryKey]
+	err = s.Repo.TransactNotifications(ctx, []string{key, deliveryKey}, func(rows map[string]*Entry) error {
+		failed = false
+		event, row := rows[key], rows[deliveryKey]
 		attempted := false
 		for _, channel := range row.Attempted {
 			if channel == string(WhatsApp) {
@@ -61,6 +63,18 @@ func (s *Service) WhatsAppStatus(ctx context.Context, reference, rawPhone, state
 		row.ProviderState = state
 		row.UpdatedAt = s.now()
 		failed = state == "failed"
+		if failed {
+			// Persist recoverable work before enqueueing. A Cloud Tasks outage
+			// must leave fallback visible to the periodic recovery worker.
+			prepareWhatsAppFallback(event, row, s.now())
+		} else if (state == "delivered" || state == "read") && row.State == "retryable_rejection" && row.Outcome == "rejected_whatsapp" {
+			// A later delivery receipt supersedes the earlier failure until a
+			// fallback send intent has been committed.
+			row.State, row.Outcome = "done", "accepted_whatsapp"
+			if event.State == "prepared" {
+				event.State, event.Outcome, event.UpdatedAt = "done", "accepted_whatsapp", s.now()
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -81,23 +95,28 @@ func (s *Service) resumeFailedWhatsApp(ctx context.Context, id string) error {
 	deliveryKey := Key("delivery", event.Event.RecordID+":"+id)
 	return s.Repo.TransactNotifications(ctx, []string{key, deliveryKey}, func(rows map[string]*Entry) error {
 		event, delivery := rows[key], rows[deliveryKey]
-		if delivery.ProviderState != "failed" ||
-			(delivery.Outcome != "accepted_whatsapp" && delivery.Outcome != "uncertain_whatsapp") {
-			return nil
-		}
 		if event.LeaseUntil.After(s.now()) {
-			return ErrBusy
-		}
-		if event.State != "done" && event.State != "prepared" {
+			if delivery.ProviderState == "failed" && (delivery.Outcome == "accepted_whatsapp" || delivery.Outcome == "uncertain_whatsapp") {
+				return ErrBusy
+			}
 			return nil
 		}
-		if event.State == "done" && event.Outcome != "accepted_whatsapp" && event.Outcome != "uncertain_whatsapp" {
-			return nil
-		}
-		event.State = "prepared"
-		event.Outcome = ""
-		delivery.State = "retryable_rejection"
-		delivery.Outcome = "rejected_whatsapp"
+		prepareWhatsAppFallback(event, delivery, s.now())
 		return nil
 	})
+}
+
+func prepareWhatsAppFallback(event, delivery *Entry, now time.Time) {
+	if delivery.ProviderState != "failed" ||
+		(delivery.Outcome != "accepted_whatsapp" && delivery.Outcome != "uncertain_whatsapp") {
+		return
+	}
+	if event.State != "done" && event.State != "prepared" {
+		return
+	}
+	if event.State == "done" && event.Outcome != "accepted_whatsapp" && event.Outcome != "uncertain_whatsapp" {
+		return
+	}
+	event.State, event.Outcome, event.UpdatedAt = "prepared", "", now
+	delivery.State, delivery.Outcome, delivery.UpdatedAt = "retryable_rejection", "rejected_whatsapp", now
 }

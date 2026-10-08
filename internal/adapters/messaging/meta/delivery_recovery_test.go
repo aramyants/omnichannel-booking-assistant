@@ -57,6 +57,14 @@ func TestTerminalSendFailureAcknowledgesTheWebhook(t *testing.T) {
 	}
 }
 
+func TestBusyDeliveryKeepsTheWebhookRetryable(t *testing.T) {
+	body := fixture(t, "whatsapp_text.json")
+	h := newHandler(&recordingHandler{err: fmt.Errorf("claim: %w", messaging.ErrDeliveryBusy)}, t)
+	if response := post(t, h, sign(body), body); response.Code != http.StatusInternalServerError {
+		t.Fatalf("unfinished delivery must not be acknowledged: %d", response.Code)
+	}
+}
+
 type recoveryTransport func(*http.Request) (*http.Response, error)
 
 func (f recoveryTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

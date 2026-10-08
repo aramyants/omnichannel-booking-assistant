@@ -355,18 +355,49 @@ func TestConcurrentTaskDeliveriesSendOnlyOnce(t *testing.T) {
 	task := plan(t, svc, store, now.Add(72*time.Hour))
 	now = task.RunAt
 
-	results := make(chan error, 2)
-	go func() { results <- svc.Deliver(t.Context(), task.ReminderID) }()
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- svc.Deliver(t.Context(), task.ReminderID) }()
 	<-sender.entered
-	go func() { results <- svc.Deliver(t.Context(), task.ReminderID) }()
+	if err := svc.Deliver(t.Context(), task.ReminderID); !errors.Is(err, messaging.ErrDeliveryBusy) {
+		t.Errorf("concurrent task must remain retryable: %v", err)
+	}
 	close(sender.release)
-	for range 2 {
-		if err := <-results; err != nil {
-			t.Errorf("Deliver() returned error: %v", err)
-		}
+	if err := <-firstDone; err != nil {
+		t.Errorf("Deliver() returned error: %v", err)
+	}
+	if err := svc.Deliver(t.Context(), task.ReminderID); err != nil {
+		t.Errorf("completed task must be acknowledged: %v", err)
 	}
 	if sender.count() != 1 {
 		t.Errorf("concurrent tasks sent %d reminders, want 1", sender.count())
+	}
+}
+
+func TestTaskRetryRecoversAnExpiredLeaseAfterWorkerCrash(t *testing.T) {
+	now := testNow
+	scheduler := &fakeScheduler{}
+	sender := &fakeSender{}
+	svc, store := newTestService(t, &now, scheduler, sender)
+	task := plan(t, svc, store, now.Add(72*time.Hour))
+	now = task.RunAt
+	if _, owned, err := store.ClaimReminder(t.Context(), task.ReminderID, "crashed-worker", now, now.Add(claimDuration)); err != nil || !owned {
+		t.Fatalf("could not simulate the crashed worker's lease: owned=%t err=%v", owned, err)
+	}
+	if err := svc.Deliver(t.Context(), task.ReminderID); !errors.Is(err, messaging.ErrDeliveryBusy) {
+		t.Fatalf("task must retry while the crashed worker's lease is active: %v", err)
+	}
+	if sender.count() != 0 {
+		t.Fatal("retry sent before the crashed worker's lease expired")
+	}
+	now = now.Add(claimDuration + time.Second)
+	if err := svc.Deliver(t.Context(), task.ReminderID); err != nil {
+		t.Fatalf("expired lease could not be recovered: %v", err)
+	}
+	if sender.count() != 1 {
+		t.Fatalf("crash recovery sent %d reminders, want 1", sender.count())
+	}
+	if err := svc.Deliver(t.Context(), task.ReminderID); err != nil || sender.count() != 1 {
+		t.Fatalf("completed crash recovery was repeated: err=%v sent=%d", err, sender.count())
 	}
 }
 

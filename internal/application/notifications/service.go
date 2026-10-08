@@ -50,24 +50,25 @@ type Notice struct {
 
 // Entry is private durable integration state. No provider bodies are retained.
 type Entry struct {
-	Health            messaging.ChannelHealth `firestore:"health,omitempty"`
-	Verification      PhoneChallenge          `firestore:"verification,omitempty"`
-	Kind              string                  `firestore:"kind"`
-	State             string                  `firestore:"state"`
-	Event             Event                   `firestore:"event"`
-	Contact           Contact                 `firestore:"contact"`
-	Notice            Notice                  `firestore:"notice"`
-	Fingerprint       string                  `firestore:"fingerprint"`
-	ChangedAt         time.Time               `firestore:"changed_at"`
-	LeaseOwner        string                  `firestore:"lease_owner"`
-	LeaseUntil        time.Time               `firestore:"lease_until"`
-	Order             string                  `firestore:"order"`
-	Outcome           string                  `firestore:"outcome"`
-	Attempted         []string                `firestore:"attempted"`
-	UpdatedAt         time.Time               `firestore:"updated_at"`
-	SessionCiphertext []byte                  `firestore:"session_ciphertext,omitempty"`
-	NextLookupAt      time.Time               `firestore:"next_lookup_at,omitempty"`
-	ProviderState     string                  `firestore:"provider_state,omitempty"`
+	Health              messaging.ChannelHealth `firestore:"health,omitempty"`
+	Verification        PhoneChallenge          `firestore:"verification,omitempty"`
+	Kind                string                  `firestore:"kind"`
+	State               string                  `firestore:"state"`
+	Event               Event                   `firestore:"event"`
+	Contact             Contact                 `firestore:"contact"`
+	Notice              Notice                  `firestore:"notice"`
+	Fingerprint         string                  `firestore:"fingerprint"`
+	ChangedAt           time.Time               `firestore:"changed_at"`
+	LeaseOwner          string                  `firestore:"lease_owner"`
+	LeaseUntil          time.Time               `firestore:"lease_until"`
+	Order               string                  `firestore:"order"`
+	Outcome             string                  `firestore:"outcome"`
+	Attempted           []string                `firestore:"attempted"`
+	UpdatedAt           time.Time               `firestore:"updated_at"`
+	SessionCiphertext   []byte                  `firestore:"session_ciphertext,omitempty"`
+	NextLookupAt        time.Time               `firestore:"next_lookup_at,omitempty"`
+	ProviderState       string                  `firestore:"provider_state,omitempty"`
+	SMSFailureAlertedAt time.Time               `firestore:"sms_failure_alerted_at,omitempty"`
 }
 type Repository interface {
 	TransactNotifications(context.Context, []string, func(map[string]*Entry) error) error
@@ -104,6 +105,10 @@ type Service struct {
 	NativeLanguage         string
 	SMSReady               bool
 	SMSPermissionSince     time.Time
+	SMSStatus              func(context.Context, Notice) (string, error)
+	// A true rejection flag proves the staff alert was not accepted. Ambiguous
+	// failures preserve the durable alert reservation and must not be repeated.
+	SMSFailureAlert func(context.Context, string, string) (rejected bool, err error)
 }
 
 func Key(kind, id string) string { return fmt.Sprintf("%s_%x", kind, sha256.Sum256([]byte(id))) }
@@ -147,24 +152,26 @@ func (s *Service) schedule(ctx context.Context, id, attempt string) error {
 	return s.Scheduler.ScheduleNotification(ctx, Key("native", id+":"+attempt), id, s.now().Add(2*time.Second))
 }
 func (s *Service) Reconcile(ctx context.Context) error {
-	if s.Health != nil {
-		if err := s.Health.Refresh(ctx); err != nil {
-			return err
-		}
-	}
 	entries, err := s.Repo.PendingNotifications(ctx)
 	if err != nil {
 		return err
 	}
+	var recoveryErr error
 	for _, row := range entries {
 		if row.Kind != "event" || row.LeaseUntil.After(s.now()) {
 			continue
 		}
 		if err = s.schedule(ctx, row.Event.ID, s.now().Truncate(5*time.Minute).Format(time.RFC3339)); err != nil {
-			return err
+			recoveryErr = errors.Join(recoveryErr, err)
 		}
 	}
-	return nil
+	// Repair the durable backlog before an independent provider health probe.
+	// A Graph outage must not prevent Telegram/SMS work from being scheduled.
+	recoveryErr = errors.Join(recoveryErr, s.reconcileSMS(ctx))
+	if s.Health != nil {
+		recoveryErr = errors.Join(recoveryErr, s.Health.Refresh(ctx))
+	}
+	return recoveryErr
 }
 func (s *Service) Deliver(ctx context.Context, id string) error {
 	if err := s.resumeFailedWhatsApp(ctx, id); err != nil {
@@ -270,6 +277,9 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 	}
 	if fingerprint(latest) != row.Notice.Fingerprint {
 		return s.finish(ctx, key, owner, "superseded")
+	}
+	if latest.Booking.Status != booking.StatusCancelled && !latest.Booking.StartsAt.After(s.now()) {
+		return s.finish(ctx, key, owner, "appointment_started")
 	}
 	phone, err := customer.NormalizePhone(latest.Phone)
 	if err != nil {
@@ -393,7 +403,7 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 			if priorOutcome == "" {
 				priorOutcome = "already_attempted_or_uncertain"
 			}
-			return s.finish(ctx, key, owner, priorOutcome)
+			return s.finish(ctx, key, owner, priorOutcome, deliveryKey)
 		}
 		// Once this intent is durable, a timeout is ambiguous and is never repeated.
 		rejected, sendErr := s.Sender.SendNotification(ctx, target, row.Notice, lang)
@@ -415,7 +425,7 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 			return err
 		}
 		if sendErr == nil || !rejected || i == len(targets)-1 {
-			return s.finish(ctx, key, owner, outcome)
+			return s.finish(ctx, key, owner, outcome, deliveryKey)
 		}
 	}
 	return nil
@@ -459,8 +469,9 @@ func (s *Service) BlockPhone(ctx context.Context, rawPhone string) error {
 		return nil
 	})
 }
-func (s *Service) finish(ctx context.Context, key, owner, outcome string) error {
-	return s.Repo.TransactNotifications(ctx, []string{key}, func(rows map[string]*Entry) error {
+func (s *Service) finish(ctx context.Context, key, owner, outcome string, deliveryKeys ...string) error {
+	keys := append([]string{key}, deliveryKeys...)
+	return s.Repo.TransactNotifications(ctx, keys, func(rows map[string]*Entry) error {
 		row := rows[key]
 		if row.LeaseOwner != owner {
 			return ErrBusy
@@ -468,6 +479,11 @@ func (s *Service) finish(ctx context.Context, key, owner, outcome string) error 
 		row.State = "done"
 		row.Outcome = outcome
 		row.UpdatedAt = s.now()
+		if len(deliveryKeys) > 0 {
+			// A receipt can arrive while the provider call is returning. Preserve
+			// its confirmed failure even if this worker just recorded acceptance.
+			prepareWhatsAppFallback(row, rows[deliveryKeys[0]], s.now())
+		}
 		return nil
 	})
 }

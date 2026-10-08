@@ -86,13 +86,17 @@ type testSender struct {
 	uncertain        bool
 	rejectWhatsApp   bool
 	uncertainChannel Channel
+	beforeReturn     func(Target, Notice)
 }
 
-func (s *testSender) SendNotification(_ context.Context, t Target, _ Notice, language string) (bool, error) {
+func (s *testSender) SendNotification(_ context.Context, t Target, notice Notice, language string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.channels = append(s.channels, t.Channel)
 	s.languages = append(s.languages, language)
+	if s.beforeReturn != nil {
+		s.beforeReturn(t, notice)
+	}
 	if s.uncertain || s.uncertainChannel == t.Channel {
 		return false, errors.New("timeout after send")
 	}

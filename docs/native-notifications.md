@@ -49,12 +49,40 @@ whichever comes first. No uncertain send is retried. `accepted_sms` means queued
 by SMSGate, not received by the client; provider status can be queried by the
 stable ID. Keep the phone powered, online, and supplied with carrier SMS credit.
 
+The five-minute recovery job also checks accepted or uncertain SMS by that same
+provider ID. It records queued, processed, sent, delivered and failed states;
+confirmed failure or cancellation reserves a staff alert and never
+resends the customer's notice. Checks are leased, paced and limited to 20 oldest
+events per run; each read rotates the event so unavailable results cannot starve
+newer checks. Observation ends after 24 hours. A missing/unknown status is recorded
+as unconfirmed, never guessed as delivery or failure. Multipart `Delivered` can
+refer to one part, so it remains observed during that window for later failure.
+Decoded Telegram 4xx rejections of the staff alert retry after five minutes using
+the stored SMS failure evidence; `sms_alert_retryable` never means retry the SMS.
+An ambiguous alert result or crash after its reservation is not replayed. The
+configured staff chat is required for a Telegram alert; sanitized warning logs
+also retain the booking/event reference.
+
+Before deploying this monitor, run `GCP_PROJECT_ID=emotion-concept
+./deployments/gcp/ensure-sms-index.sh` and verify the index is READY. The required
+COLLECTION composite index is `kind ASCENDING, outcome ASCENDING, updated_at
+ASCENDING` on `native_booking_notifications`; its definition is checked in at
+`deployments/firestore.indexes.json`.
+
 WhatsApp native notices carry a client-data-free native event reference. The
 signed webhook for the configured business number records sent/delivered/read/
 failed receipts. A confirmed failure requeues the original event, skips routes
 already attempted and proceeds to the remaining route. It rechecks the booking
 and withdrawal before sending. Unknown outcomes do not trigger SMS. Read or
 delivered receipts cannot be overwritten by an older failure.
+
+Fallback eligibility is persisted before Cloud Tasks enqueueing, so a queue
+outage is repaired by the periodic recovery action. A failed receipt arriving
+before the send call returns is also preserved. A later delivered/read receipt
+cancels a fallback that has not recorded its send intent. Delayed confirmations
+and changes expire at the appointment start. Queue recovery runs before the
+independent WhatsApp health probe, and attempts all eligible pending events even
+if one enqueue or the health probe fails.
 
 Incoming SMS stays in the phone's normal Messages app. This release does not
 turn on an SMS AI assistant or connect Altegio's separate login/OTP provider.

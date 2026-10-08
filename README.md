@@ -60,7 +60,8 @@ application layer depends on the domain, and the domain depends on neither.
 
 The gateway handles the message before acknowledging it. A short atomic
 processing lease prevents concurrent redelivery from producing two replies;
-failures release the lease so the provider can retry, and abandoned leases
+unfinished deliveries return a retryable error instead of being acknowledged.
+Failures release the lease so the provider can retry, and abandoned leases
 expire after a crash.
 
 ## Operating behaviour
@@ -80,8 +81,9 @@ dropped connection the caller sees as a network failure. Request bodies are
 capped at 1 MiB.
 
 Every provider retries deliveries, so the first request atomically claims the
-delivery and a concurrent copy is dropped. A delivery is marked handled only
-after its reply is out: marking it earlier would mean a failure part-way through
+delivery and a concurrent copy remains retryable until that work finishes. A
+delivery is marked handled only after its reply is out: marking it earlier would
+mean a failure part-way through
 loses the message, because the retry would be discarded as a duplicate.
 
 A customer is not the same thing as a messaging account. Accounts are stored as
@@ -102,9 +104,13 @@ Firestore and refuses to start with memory storage, because conversations,
 confirmation drafts and delivery claims must survive restarts and be shared by
 all Cloud Run instances.
 
-On `SIGTERM` the server stops accepting connections and waits for in-flight
-requests to finish, so a deploy cannot turn a half-processed webhook into a
-duplicate booking.
+On `SIGTERM` the server stops accepting connections, cancels in-flight provider
+calls, and gives handlers a bounded window to release unfinished claims or record
+accepted sends. Cloud Run allows ten seconds before forcefully killing the
+process; the default drain budget is eight seconds. Durable leases and provider
+retries recover interrupted work. An external send and a database write cannot
+be atomic, so shutdown does not guarantee that ambiguous provider outcomes are
+impossible.
 
 ## Requirements
 
@@ -143,7 +149,7 @@ found, rather than failing later inside a request.
 | `APP_ENV` | yes | | `development`, `staging` or `production` |
 | `PORT` | no | `8080` | TCP port to listen on |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn` or `error` |
-| `SHUTDOWN_TIMEOUT` | no | `15s` | How long in-flight requests may take to drain |
+| `SHUTDOWN_TIMEOUT` | no | `8s` | How long cancelled requests may take to clean up; keep below Cloud Run's ten-second termination window |
 | `PUBLIC_BASE_URL` | no | | This service's public https origin, used to register webhooks |
 | `TELEGRAM_BOT_TOKEN` | no | | Enables the Telegram channel when set |
 | `TELEGRAM_WEBHOOK_SECRET` | with token | | Shared secret Telegram echoes on every delivery |

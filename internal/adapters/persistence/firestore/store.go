@@ -593,6 +593,9 @@ func (s *Store) Claim(ctx context.Context, key, claimID string, at time.Time) (b
 				return err
 			}
 			if doc.ExpiresAt.After(at) {
+				if doc.ProcessedAt.IsZero() {
+					return messaging.ErrDeliveryBusy
+				}
 				return nil
 			}
 		} else if status.Code(err) != codes.NotFound {
@@ -908,6 +911,9 @@ func (s *Store) ClaimReminder(
 		owned   bool
 	)
 	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		// A conflicting commit retries this callback. Its final attempt alone
+		// determines ownership, even if an earlier attempt prepared a claim.
+		owned = false
 		snapshot, err := tx.Get(ref)
 		if status.Code(err) == codes.NotFound {
 			return reminder.ErrNotFound

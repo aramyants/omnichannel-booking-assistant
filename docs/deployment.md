@@ -108,6 +108,15 @@ account. The public Cloud Run service validates that identity inside the
 reminder route; provider webhook routes continue to use their own signatures or
 shared secrets.
 
+Cloud Run sends `SIGKILL` ten seconds after `SIGTERM`, according to its
+[container runtime contract](https://docs.cloud.google.com/run/docs/container-contract#instance-shutdown).
+The gateway cancels in-flight provider calls when shutdown starts and defaults
+to an eight-second drain for durable claim cleanup and retryable HTTP responses.
+Keep `SHUTDOWN_TIMEOUT` below ten seconds on Cloud Run; an explicitly configured
+value remains supported for other hosting environments. Provider sends and
+Firestore writes cannot share a transaction, so a forced shutdown can still
+leave an uncertain delivery outcome.
+
 `FIRESTORE_LOCATION` defaults to `GCP_REGION`. Choose it carefully on the first
 run because a Firestore database's location cannot be changed later.
 
@@ -219,8 +228,8 @@ gcloud run services update-traffic omnichannel-booking-assistant \
 
 ## Rotating a credential
 
-The studio's Altegio replacement uses `altegio-app2554-partner-token:1` and
-`altegio-app2554-user-token:1` as a pinned pair in `cloudbuild.yaml`. The Cloud
+The studio's Altegio replacement uses `altegio-app2555-partner-token:1` and
+`altegio-app2555-user-token:1` as a pinned pair in `cloudbuild.yaml`. The Cloud
 Run runtime identity has Secret Accessor on those two resources. Prepare and
 verify both new versions before updating the deployment pair; keep older
 versions and revision bindings for rollback.

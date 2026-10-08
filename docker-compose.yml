@@ -5,7 +5,7 @@
 
 services:
   firestore:
-    image: google/cloud-sdk:emulators
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
     command: >
       gcloud emulators firestore start
       --host-port=0.0.0.0:8200

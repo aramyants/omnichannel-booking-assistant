@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/adapters/messaging/telegram"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/notifications"
 	"io"
 	"log/slog"
@@ -10,6 +11,27 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestTelegramStaffAlertRetriesOnlyDefiniteRejections(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		err      error
+		rejected bool
+	}{
+		{"accepted", nil, false},
+		{"rate limited", &telegram.APIError{StatusCode: 429, Code: 429}, true},
+		{"blocked", &telegram.APIError{StatusCode: 403, Code: 403}, true},
+		{"unreadable error", &telegram.APIError{StatusCode: 400}, false},
+		{"server error", &telegram.APIError{StatusCode: 503, Code: 503}, false},
+		{"transport unknown", context.DeadlineExceeded, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := telegramAlertRejected(test.err); got != test.rejected {
+				t.Fatalf("definite rejection=%v, want %v", got, test.rejected)
+			}
+		})
+	}
+}
 
 type ingestSpy struct {
 	calls int

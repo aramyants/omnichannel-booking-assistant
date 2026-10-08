@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "native_booking_notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "kind", "order": "ASCENDING" },
+        { "fieldPath": "outcome", "order": "ASCENDING" },
+        { "fieldPath": "updated_at", "order": "ASCENDING" }
+      ]
+    }
+  ]
+}

@@ -423,8 +423,8 @@ func TestProcessedEvents(t *testing.T) {
 	}
 
 	claimed, err = store.Claim(t.Context(), key, "claim-2", testNow)
-	if err != nil {
-		t.Fatalf("second Claim() returned error: %v", err)
+	if !errors.Is(err, messaging.ErrDeliveryBusy) {
+		t.Fatalf("unfinished delivery must remain retryable: %v", err)
 	}
 	if claimed {
 		t.Error("a concurrent delivery stole an active claim")

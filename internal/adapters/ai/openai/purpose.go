@@ -26,7 +26,7 @@ func (c *Client) CheckPurpose(ctx context.Context, messages []ai.Message) (ai.Pu
 			Schema: json.RawMessage(`{"type":"object","properties":{"purpose":{"type":"string","enum":["studio","appointments","unrelated"]}},"required":["purpose"],"additionalProperties":false}`)}},
 	}
 	var parsed responsesResponse
-	if err := c.post(ctx, "/responses", payload, &parsed); err != nil {
+	if err := c.postResponses(ctx, payload, &parsed); err != nil {
 		return "", err
 	}
 	if parsed.Error != nil || parsed.Status != "completed" {

@@ -270,7 +270,12 @@ func (s *Service) Deliver(ctx context.Context, reminderID string) error {
 		return fmt.Errorf("deliver reminder: claim: %w", err)
 	}
 	if !owned {
-		return nil
+		if claimed.Terminal() {
+			return nil
+		}
+		// A crashed owner leaves this lease until it expires. Acknowledging a
+		// concurrent task would remove the wake-up needed to recover that work.
+		return messaging.ErrDeliveryBusy
 	}
 
 	release := true

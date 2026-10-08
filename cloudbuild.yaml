@@ -13,12 +13,41 @@ substitutions:
   _ALTEGIO_USER_SECRET: altegio-app2555-user-token
 
 steps:
+  - id: start-firestore
+    name: gcr.io/cloud-builders/docker
+    args:
+      - run
+      - --detach
+      - --name=firestore
+      - --network=cloudbuild
+      - gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+      - gcloud
+      - emulators
+      - firestore
+      - start
+      - --host-port=0.0.0.0:8200
+      - --project=test-project
+
   - id: test
     name: golang:1.27
     entrypoint: bash
+    env:
+      - FIRESTORE_EMULATOR_HOST=firestore:8200
     args:
       - -ceu
       - |
+        ready=false
+        for attempt in {1..60}; do
+          if (echo > /dev/tcp/firestore/8200) 2>/dev/null; then
+            ready=true
+            break
+          fi
+          sleep 1
+        done
+        if [[ "$$ready" != true ]]; then
+          echo "Firestore emulator did not become ready"
+          exit 1
+        fi
         unformatted="$$(gofmt -l .)"
         if [[ -n "$$unformatted" ]]; then
           echo "These files are not gofmt-formatted:"
@@ -66,7 +95,7 @@ steps:
       # Preserve the form's request activation time: never enroll older bookings.
       # Preserve runtime WhatsApp readiness. Ordinary releases must not re-enable
       # proactive WhatsApp sends while the studio account is restricted by Meta.
-      - "--update-env-vars=^|^BUILD_VERSION=$SHORT_SHA|OPENAI_MODEL=gpt-6.1-sol|OPENAI_REASONING_EFFORT=high|OPENAI_MAX_OUTPUT_TOKENS=8192|NATIVE_NOTIFICATIONS_ENABLED=true|NATIVE_TELEGRAM_ACCOUNT_READY=true|NATIVE_BOOKING_PERMISSION_SINCE=2026-10-05T19:21:45Z|NATIVE_NOTIFICATION_LANGUAGE=hy|NATIVE_SMS_READY=true|NATIVE_SMS_PERMISSION_SINCE=2026-10-06T09:40:06Z|NATIVE_NOTIFICATIONS_ACTIVATED_AT=2026-10-05T17:35:00Z|BUSINESS_ADDRESS_EN=Myasnikyan 1/6, Yerevan|BUSINESS_ADDRESS_RU=Мясникян 1/6, Ереван|BUSINESS_ADDRESS_HY=Մյասնիկյան 1/6, Երևան|BUSINESS_PHONE=+37494768067|BUSINESS_WEBSITE_URL=https://www.motionconcept.rest/|BUSINESS_BOOKING_URL=https://book.altegio.me/company/1389810/|BUSINESS_INSTAGRAM_URL=https://www.instagram.com/e.motion.concept/|BUSINESS_FACEBOOK_URL=https://www.facebook.com/profile.php?id=61593274220346|BUSINESS_TELEGRAM_URL=https://t.me/emotion_concept_bot|BUSINESS_WHATSAPP_URL=https://wa.me/37494768067|BUSINESS_TIKTOK_URL=https://www.tiktok.com/@emotion.concept|BUSINESS_YOUTUBE_URL=https://www.youtube.com/@emotion.concept|BUSINESS_MAP_URL=https://maps.app.goo.gl/oSW4ZYFcf66H75Wa9|BUSINESS_YANDEX_MAP_URL=https://yandex.com/maps/-/CXezAUML"
+      - "--update-env-vars=^|^BUILD_VERSION=$SHORT_SHA|SHUTDOWN_TIMEOUT=8s|OPENAI_MODEL=gpt-6.1-sol|OPENAI_REASONING_EFFORT=high|OPENAI_MAX_OUTPUT_TOKENS=8192|NATIVE_NOTIFICATIONS_ENABLED=true|NATIVE_TELEGRAM_ACCOUNT_READY=true|NATIVE_BOOKING_PERMISSION_SINCE=2026-10-05T19:21:45Z|NATIVE_NOTIFICATION_LANGUAGE=hy|NATIVE_SMS_READY=true|NATIVE_SMS_PERMISSION_SINCE=2026-10-06T09:40:06Z|NATIVE_NOTIFICATIONS_ACTIVATED_AT=2026-10-05T17:35:00Z|BUSINESS_ADDRESS_EN=Myasnikyan 1/6, Yerevan|BUSINESS_ADDRESS_RU=Мясникян 1/6, Ереван|BUSINESS_ADDRESS_HY=Մյասնիկյան 1/6, Երևան|BUSINESS_PHONE=+37494768067|BUSINESS_WEBSITE_URL=https://www.motionconcept.rest/|BUSINESS_BOOKING_URL=https://book.altegio.me/company/1389810/|BUSINESS_INSTAGRAM_URL=https://www.instagram.com/e.motion.concept/|BUSINESS_FACEBOOK_URL=https://www.facebook.com/profile.php?id=61593274220346|BUSINESS_TELEGRAM_URL=https://t.me/emotion_concept_bot|BUSINESS_WHATSAPP_URL=https://wa.me/37494768067|BUSINESS_TIKTOK_URL=https://www.tiktok.com/@emotion.concept|BUSINESS_YOUTUBE_URL=https://www.youtube.com/@emotion.concept|BUSINESS_MAP_URL=https://maps.app.goo.gl/oSW4ZYFcf66H75Wa9|BUSINESS_YANDEX_MAP_URL=https://yandex.com/maps/-/CXezAUML"
       - --quiet
 
   - id: verify-candidate
