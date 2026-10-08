@@ -37,6 +37,15 @@ func TestSMSReceiptBacklogIncludesHistoricalAcceptanceAndExcludesTerminal(t *tes
 		t.Fatal("historical accepted SMS missing from receipt query")
 	}
 	if err := s.TransactNotifications(ctx, []string{key}, func(rows map[string]*notifications.Entry) error {
+		rows[key].Outcome, rows[key].ProviderState = "sms_alert_retryable", "sms_failed"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !find() {
+		t.Fatal("definitely rejected staff alert missing from receipt query")
+	}
+	if err := s.TransactNotifications(ctx, []string{key}, func(rows map[string]*notifications.Entry) error {
 		rows[key].Outcome, rows[key].SMSFailureAlertedAt = "failed_sms", testNow
 		return nil
 	}); err != nil {

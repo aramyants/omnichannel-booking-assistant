@@ -106,7 +106,9 @@ type Service struct {
 	SMSReady               bool
 	SMSPermissionSince     time.Time
 	SMSStatus              func(context.Context, Notice) (string, error)
-	SMSFailureAlert        func(context.Context, string, string) error
+	// A true rejection flag proves the staff alert was not accepted. Ambiguous
+	// failures preserve the durable alert reservation and must not be repeated.
+	SMSFailureAlert func(context.Context, string, string) (rejected bool, err error)
 }
 
 func Key(kind, id string) string { return fmt.Sprintf("%s_%x", kind, sha256.Sum256([]byte(id))) }

@@ -51,12 +51,17 @@ stable ID. Keep the phone powered, online, and supplied with carrier SMS credit.
 
 The five-minute recovery job also checks accepted or uncertain SMS by that same
 provider ID. It records queued, processed, sent, delivered and failed states;
-confirmed failure or cancellation produces one reserved staff alert and never
+confirmed failure or cancellation reserves a staff alert and never
 resends the customer's notice. Checks are leased, paced and limited to 20 oldest
 events per run; each read rotates the event so unavailable results cannot starve
 newer checks. Observation ends after 24 hours. A missing/unknown status is recorded
 as unconfirmed, never guessed as delivery or failure. Multipart `Delivered` can
 refer to one part, so it remains observed during that window for later failure.
+Decoded Telegram 4xx rejections of the staff alert retry after five minutes using
+the stored SMS failure evidence; `sms_alert_retryable` never means retry the SMS.
+An ambiguous alert result or crash after its reservation is not replayed. The
+configured staff chat is required for a Telegram alert; sanitized warning logs
+also retain the booking/event reference.
 
 Before deploying this monitor, run `GCP_PROJECT_ID=emotion-concept
 ./deployments/gcp/ensure-sms-index.sh` and verify the index is READY. The required

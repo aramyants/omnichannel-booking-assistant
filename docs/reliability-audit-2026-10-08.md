@@ -25,7 +25,9 @@ was performed during diagnosis.
 ## Changes
 
 - Read-only SMS status reconciliation uses the original stable provider ID,
-  durable leases and paced oldest-first checks. Failures alert staff once;
+  durable leases and paced oldest-first checks. Failures reserve a staff alert;
+  definitely rejected staff alerts retry after five minutes while preserving
+  final SMS failure evidence. Ambiguous staff alert acceptance is not replayed;
   missing receipts remain unconfirmed. No unknown send or old confirmation is
   replayed. Multipart delivered status does not prove every part arrived.
 - Native queue recovery proceeds independently of WhatsApp health checks and
@@ -41,6 +43,16 @@ was performed during diagnosis.
 - GitHub CI and Cloud Build now start the official Firestore emulator before
   their race suites, rather than silently skipping storage integration tests.
 
+## Verification
+
+A read-only replay through the repaired adapter against production Altegio,
+using the time of the reported failure, successfully returned the actual
+appointment. No customer send or booking write was used to verify the lookup.
+Local tests, vet, build and vulnerability checks passed. Linux CI additionally
+passed the race suite with Firestore integration tests enabled. The production
+SMS receipt composite index is READY; the five-minute recovery scheduler is
+enabled and the task queue is running. Final release checks are recorded in PR #38.
+
 ## Operational requirements and limits
 
 SMS delivery requires the commissioned phone to stay powered, connected, able
@@ -48,6 +60,11 @@ to run SMSGate in the background, and funded for carrier SMS. A software flag
 cannot establish those conditions. Queued, SMSC accepted, and recipient-delivered
 are distinct outcomes. The monitor observes for 24 hours and retains sanitized
 provider state; it does not guarantee delivery during a device/carrier outage.
+
+Staff alerts require the configured Telegram staff chat. Their intent is reserved
+before sending: a crash or ambiguous Telegram response can leave acceptance
+unconfirmed, so those alerts are not automatically repeated. A decoded Telegram
+4xx rejection proves non-acceptance and remains eligible for paced retry.
 
 Provision the SMS receipt composite index with
 `deployments/gcp/ensure-sms-index.sh` before release. Existing consent cutoffs,

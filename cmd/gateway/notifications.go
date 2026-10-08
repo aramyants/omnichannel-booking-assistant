@@ -71,13 +71,14 @@ func openNotifications(ctx context.Context, cfg config.Config, store appStore, r
 			status, err := sms.Status(ctx, nativeSMSMessageID(notice.ID, phone))
 			return string(status.State), err
 		}
-		service.SMSFailureAlert = func(ctx context.Context, recordID, eventID string) error {
+		service.SMSFailureAlert = func(ctx context.Context, recordID, eventID string) (bool, error) {
 			logger.WarnContext(ctx, "SMS booking notice failed after acceptance", "record_id", recordID, "event_id", eventID)
 			if cfg.Telegram.StaffChatID == "" {
-				return nil
+				return false, nil
 			}
 			text := "An appointment notice was not delivered by SMS. Booking reference: " + recordID + ". Check the work phone's SMSGate queue, connection and SIM credit, then contact the customer in the business inbox. The assistant will not resend automatically."
-			return tg.Send(ctx, messaging.Outgoing{Provider: messaging.ProviderTelegram, ExternalThreadID: cfg.Telegram.StaffChatID, Text: text})
+			err := tg.Send(ctx, messaging.Outgoing{Provider: messaging.ProviderTelegram, ExternalThreadID: cfg.Telegram.StaffChatID, Text: text})
+			return telegramAlertRejected(err), err
 		}
 	}
 	if wa != nil {
@@ -137,6 +138,13 @@ func openNotifications(ctx context.Context, cfg config.Config, store appStore, r
 		logger.Error("native notification recovery failed")
 	}
 	return service, hook, task, func() { _ = scheduler.Close() }, nil
+}
+
+func telegramAlertRejected(err error) bool {
+	var rejected *telegram.APIError
+	// Code is populated only for a decoded Bot API rejection. An unreadable
+	// response also uses APIError, but leaves Code zero and remains ambiguous.
+	return errors.As(err, &rejected) && rejected.Code >= 400 && rejected.Code < 500
 }
 
 type notificationIngester interface {

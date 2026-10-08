@@ -66,7 +66,7 @@ func (s *Store) PendingSMSNotifications(_ context.Context) ([]notifications.Entr
 	defer s.mu.Unlock()
 	var rows []notifications.Entry
 	for _, entry := range s.notificationEntries {
-		if entry.Kind != "event" || (entry.Outcome != "accepted_sms" && entry.Outcome != "uncertain_sms") {
+		if entry.Kind != "event" || (entry.Outcome != "accepted_sms" && entry.Outcome != "uncertain_sms" && entry.Outcome != "sms_alert_retryable") {
 			continue
 		}
 		row, err := cloneNotification(entry)

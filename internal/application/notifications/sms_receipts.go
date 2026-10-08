@@ -10,15 +10,15 @@ import (
 	"github.com/google/uuid"
 )
 
-// SMSDeliveryRepository reads only accepted/uncertain SMS events. It includes
-// historical events so existing queued messages can acquire their final status.
+// SMSDeliveryRepository reads accepted/uncertain SMS events and definitely
+// rejected staff alerts. Historical events can acquire their final status.
 type SMSDeliveryRepository interface {
 	PendingSMSNotifications(context.Context) ([]Entry, error)
 }
 
 func awaitingSMS(row Entry) bool {
 	return row.Kind == "event" && row.State == "done" &&
-		(row.Outcome == "accepted_sms" || row.Outcome == "uncertain_sms")
+		(row.Outcome == "accepted_sms" || row.Outcome == "uncertain_sms" || row.Outcome == "sms_alert_retryable")
 }
 
 func (s *Service) reconcileSMS(ctx context.Context) error {
@@ -48,9 +48,12 @@ func (s *Service) reconcileSMS(ctx context.Context) error {
 func (s *Service) checkSMS(ctx context.Context, id string) error {
 	key, owner, now := Key("event", id), uuid.NewString(), s.now()
 	claimed := false
+	alertOnly := false
+	var recordID string
 	var notice Notice
 	if err := s.Repo.TransactNotifications(ctx, []string{key}, func(rows map[string]*Entry) error {
 		claimed = false
+		alertOnly = false
 		row := rows[key]
 		if !awaitingSMS(*row) || row.LeaseUntil.After(now) || row.NextLookupAt.After(now) {
 			return nil
@@ -59,14 +62,29 @@ func (s *Service) checkSMS(ctx context.Context, id string) error {
 		// Rotate even failed reads through the bounded query. One unavailable
 		// provider message must not starve newer delivery checks indefinitely.
 		row.UpdatedAt, row.NextLookupAt = now, now.Add(5*time.Minute)
+		if row.Outcome == "sms_alert_retryable" {
+			if s.SMSFailureAlert == nil {
+				row.LeaseOwner, row.LeaseUntil = "", time.Time{}
+				return nil
+			}
+			// The provider failure is already known. Reserve the next alert
+			// before calling Telegram; do not depend on a later SMS status read.
+			row.Outcome = smsFailureOutcome(row.ProviderState)
+			row.SMSFailureAlertedAt = now
+			row.LeaseOwner, row.LeaseUntil = "", time.Time{}
+			recordID, claimed, alertOnly = row.Event.RecordID, true, true
+			return nil
+		}
 		notice, claimed = row.Notice, true
 		return nil
 	}); err != nil || !claimed {
 		return err
 	}
+	if alertOnly {
+		return s.sendSMSFailureAlert(ctx, key, recordID, id, now)
+	}
 	state, readErr := s.SMSStatus(ctx, notice)
 	alert := false
-	var recordID string
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
 	err := s.Repo.TransactNotifications(cleanupCtx, []string{key}, func(rows map[string]*Entry) error {
@@ -115,10 +133,47 @@ func (s *Service) checkSMS(ctx context.Context, id string) error {
 		return err
 	}
 	if alert {
-		// Alert intent is durable first. Unknown acceptance never spams staff.
-		if err := s.SMSFailureAlert(cleanupCtx, recordID, id); err != nil {
-			return fmt.Errorf("SMS failure alert requires attention: %w", err)
+		if err := s.sendSMSFailureAlert(ctx, key, recordID, id, now); err != nil {
+			return err
 		}
 	}
 	return readErr
+}
+
+func smsFailureOutcome(providerState string) string {
+	if providerState == "sms_cancelled" {
+		return "cancelled_sms"
+	}
+	return "failed_sms"
+}
+
+func (s *Service) sendSMSFailureAlert(ctx context.Context, key, recordID, id string, reservedAt time.Time) error {
+	// Give the alert its own budget after the Firestore reservation. Sharing
+	// the transaction's remaining deadline can manufacture an ambiguous send.
+	alertCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	rejected, alertErr := s.SMSFailureAlert(alertCtx, recordID, id)
+	cancel()
+	if alertErr == nil {
+		return nil
+	}
+	if rejected {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cleanupCancel()
+		err := s.Repo.TransactNotifications(cleanupCtx, []string{key}, func(rows map[string]*Entry) error {
+			row := rows[key]
+			if !row.SMSFailureAlertedAt.Equal(reservedAt) || (row.Outcome != "failed_sms" && row.Outcome != "cancelled_sms") {
+				return nil
+			}
+			// Only a definite non-acceptance releases this reservation. Keep
+			// the final SMS failure evidence while pacing another staff alert.
+			row.Outcome = "sms_alert_retryable"
+			row.SMSFailureAlertedAt = time.Time{}
+			return nil
+		})
+		if err != nil {
+			return errors.Join(fmt.Errorf("SMS failure alert requires attention: %w", alertErr), err)
+		}
+	}
+	// Unknown acceptance retains the reservation so retries cannot spam staff.
+	return fmt.Errorf("SMS failure alert requires attention: %w", alertErr)
 }

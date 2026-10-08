@@ -89,7 +89,7 @@ func (s *Store) PendingNotifications(ctx context.Context) ([]notifications.Entry
 func (s *Store) PendingSMSNotifications(ctx context.Context) ([]notifications.Entry, error) {
 	docs, err := s.client.Collection(notificationCollection).
 		Where("kind", "==", "event").
-		Where("outcome", "in", []string{"accepted_sms", "uncertain_sms"}).
+		Where("outcome", "in", []string{"accepted_sms", "uncertain_sms", "sms_alert_retryable"}).
 		OrderBy("updated_at", firestore.Asc).Limit(20).Documents(ctx).GetAll()
 	if err != nil {
 		return nil, err

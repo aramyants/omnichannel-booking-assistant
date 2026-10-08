@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,12 +68,12 @@ func TestSMSFailedReceiptAlertsOnceAndNeverResends(t *testing.T) {
 	s.Scheduler = scheduler
 	s.SMSStatus = func(context.Context, Notice) (string, error) { return "Failed", nil }
 	alerts := 0
-	s.SMSFailureAlert = func(_ context.Context, recordID, eventID string) error {
+	s.SMSFailureAlert = func(_ context.Context, recordID, eventID string) (bool, error) {
 		alerts++
 		if recordID != "42" || eventID != id || repo.rows[Key("event", id)].SMSFailureAlertedAt.IsZero() {
 			t.Fatal("alert was not durably reserved for the failed message")
 		}
-		return errors.New("alert acceptance unknown")
+		return false, errors.New("alert acceptance unknown")
 	}
 	if err := s.Reconcile(t.Context()); err == nil {
 		t.Fatal("lost alert failure")
@@ -83,6 +84,79 @@ func TestSMSFailedReceiptAlertsOnceAndNeverResends(t *testing.T) {
 	row := repo.rows[Key("event", id)]
 	if row.Outcome != "failed_sms" || row.ProviderState != "sms_failed" || alerts != 1 || len(scheduler.events) != 0 {
 		t.Fatalf("confirmed failure lost or resent: row=%+v alerts=%d tasks=%v", row, alerts, scheduler.events)
+	}
+}
+
+func TestSMSDefinitelyRejectedStaffAlertRetriesWithoutReadingOrResendingSMS(t *testing.T) {
+	for _, state := range []string{"Failed", "Cancelled"} {
+		t.Run(state, func(t *testing.T) {
+			s, repo, id := smsReceiptFixture(t)
+			reads, alerts := 0, 0
+			s.SMSStatus = func(context.Context, Notice) (string, error) {
+				reads++
+				return state, nil
+			}
+			s.SMSFailureAlert = func(context.Context, string, string) (bool, error) {
+				alerts++
+				if alerts == 1 {
+					return true, errors.New("Telegram definitely rejected the alert")
+				}
+				return false, nil
+			}
+			if err := s.Reconcile(t.Context()); err == nil {
+				t.Fatal("definite alert rejection was hidden")
+			}
+			row := repo.rows[Key("event", id)]
+			if row.Outcome != "sms_alert_retryable" || row.ProviderState != "sms_"+strings.ToLower(state) || !row.SMSFailureAlertedAt.IsZero() {
+				t.Fatalf("failure evidence or retry intent lost: %+v", row)
+			}
+			if err := s.Reconcile(t.Context()); err != nil || alerts != 1 {
+				t.Fatalf("alert retry ignored pacing: alerts=%d err=%v", alerts, err)
+			}
+			at := s.now().Add(5 * time.Minute)
+			s.Now = func() time.Time { return at }
+			if err := s.Reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			row = repo.rows[Key("event", id)]
+			if reads != 1 || alerts != 2 || row.Outcome != smsFailureOutcome(row.ProviderState) || row.SMSFailureAlertedAt.IsZero() {
+				t.Fatalf("staff retry re-read SMS or lost failure: reads=%d alerts=%d row=%+v", reads, alerts, row)
+			}
+			if err := s.Reconcile(t.Context()); err != nil || alerts != 2 {
+				t.Fatalf("accepted staff alert was repeated: alerts=%d err=%v", alerts, err)
+			}
+		})
+	}
+}
+
+func TestSMSRejectedAlertRetryIsReservedAgainstConcurrentChecks(t *testing.T) {
+	s, repo, id := smsReceiptFixture(t)
+	row := repo.rows[Key("event", id)]
+	row.Outcome, row.ProviderState = "sms_alert_retryable", "sms_failed"
+	repo.rows[Key("event", id)] = row
+	s.SMSStatus = func(context.Context, Notice) (string, error) {
+		t.Fatal("staff alert retry re-read already-confirmed SMS failure")
+		return "", nil
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	s.SMSFailureAlert = func(context.Context, string, string) (bool, error) {
+		close(entered)
+		<-release
+		return false, nil
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.Reconcile(t.Context()) }()
+	<-entered
+	if err := s.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	row = repo.rows[Key("event", id)]
+	if row.Outcome != "failed_sms" || row.SMSFailureAlertedAt.IsZero() {
+		t.Fatalf("staff alert reservation was lost: %+v", row)
 	}
 }
 
