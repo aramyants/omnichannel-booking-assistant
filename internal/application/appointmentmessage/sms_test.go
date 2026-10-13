@@ -17,3 +17,14 @@ func TestSMSPreservesLocalTimeAndCallbackWithinThreeUnicodeSegments(t *testing.T
 		}
 	}
 }
+
+func TestSMSWithoutTreatmentKeepsSpecialistWithoutDanglingSeparator(t *testing.T) {
+	r := New(Business{Phone: "+37494768067"}, time.UTC)
+	a := Appointment{StartsAt: time.Date(2026, 10, 11, 11, 0, 0, 0, time.UTC), Specialist: "Test specialist"}
+	for _, lang := range []Language{English, Armenian, Russian} {
+		text := r.SMS("Appointment update", a, lang)
+		if !strings.Contains(text, "\nTest specialist\n") || strings.Contains(text, " · ") || !strings.Contains(text, "11.10.2026 11:00") {
+			t.Fatalf("SMS for an appointment without treatment lost its facts: %q", text)
+		}
+	}
+}

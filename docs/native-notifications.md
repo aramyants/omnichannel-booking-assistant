@@ -1,5 +1,11 @@
 # Native booking notifications
 
+Altegio's native browser OTP and review SMS require an approved SMS provider.
+Support confirmed that our private app cannot provide this connection without
+partnership approval and Marketplace moderation. See the
+[13 October provider status](altegio-sms-provider-status.md). The backend flows
+described below are separate from that native provider integration.
+
 Altegio form and administrator bookings enter `POST /webhooks/altegio` and are
 queued in Cloud Tasks. The worker reads the current record with private Altegio
 credentials scoped to the studio. Webhook bodies cannot supply recipients or

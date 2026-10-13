@@ -289,7 +289,10 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 	}
 	details := strings.Join(b.ServiceNames, ", ")
 	if b.StaffName != "" {
-		details += " · " + b.StaffName
+		if details != "" {
+			details += " · "
+		}
+		details += b.StaffName
 	}
 	when := local.Format("02.01.2006 · 15:04")
 	if target.Channel == notifications.WhatsApp {

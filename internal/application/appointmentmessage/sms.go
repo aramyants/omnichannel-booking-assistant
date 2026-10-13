@@ -12,7 +12,10 @@ func (r Renderer) SMS(title string, a Appointment, lang Language) string {
 	lines := []string{"E-Motion Concept", smsField(title, 42), a.StartsAt.In(r.location).Format("02.01.2006 15:04")}
 	details := smsField(a.Service, 45)
 	if a.Specialist != "" {
-		details += " · " + smsField(a.Specialist, 20)
+		if details != "" {
+			details += " · "
+		}
+		details += smsField(a.Specialist, 20)
 	}
 	if details != "" {
 		lines = append(lines, details)

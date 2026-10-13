@@ -2,6 +2,7 @@ package altegio
 
 import (
 	"errors"
+	"fmt"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"net/http"
 	"net/http/httptest"
@@ -69,5 +70,40 @@ func TestProviderPhoneAdaptationDoesNotGuessMalformedValues(t *testing.T) {
 		if phone, err := normalizeAltegioPhone(raw); err == nil {
 			t.Errorf("accepted malformed provider phone %q as %q", raw, phone)
 		}
+	}
+}
+
+func TestNativeRecordWithoutTreatmentPreservesAppointmentAndRequiredFacts(t *testing.T) {
+	for _, tc := range []struct {
+		name, services, datetime string
+		length, staff            int
+		wantErr                  bool
+	}{
+		{"empty treatment list", `,"services":[]`, "2026-10-11T15:00:00+04:00", 3600, 1, false},
+		{"null treatment list", `,"services":null`, "2026-10-11T15:00:00+04:00", 3600, 1, false},
+		{"omitted treatment list", "", "2026-10-11T15:00:00+04:00", 3600, 1, false},
+		{"missing time", `,"services":[]`, "", 3600, 1, true},
+		{"missing duration", `,"services":[]`, "2026-10-11T15:00:00+04:00", 0, 1, true},
+		{"missing specialist", `,"services":[]`, "2026-10-11T15:00:00+04:00", 3600, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = fmt.Fprintf(w, `{"success":true,"data":{"id":123,"company_id":%s,"datetime":%q,"seance_length":%d,"client":{"name":"Test client","phone":"37491123456"},"staff":{"id":%d,"name":"Test specialist"}%s}}`, testCompanyID, tc.datetime, tc.length, tc.staff, tc.services)
+			}))
+			defer server.Close()
+			snap, err := newTestClient(t, server).ReadNativeBooking(t.Context(), "123")
+			if tc.wantErr {
+				if !errors.Is(err, booking.ErrUnavailable) {
+					t.Fatalf("missing required facts accepted: %v", err)
+				}
+				return
+			}
+			if err != nil || snap.Booking.Duration != time.Hour || snap.Booking.StaffName != "Test specialist" || snap.Phone != "+37491123456" {
+				t.Fatalf("valid appointment without treatment lost: snapshot=%+v error=%v", snap, err)
+			}
+			if len(snap.Booking.ServiceIDs) != 0 || len(snap.Booking.ServiceNames) != 0 {
+				t.Fatal("invented a treatment for an empty calendar field")
+			}
+		})
 	}
 }

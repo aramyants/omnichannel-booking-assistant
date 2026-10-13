@@ -78,7 +78,10 @@ func (c *Client) nativeSnapshot(dto nativeRecord, numeric int64) (notifications.
 		b.ServiceIDs = append(b.ServiceIDs, strconv.FormatInt(service.ID, 10))
 		b.ServiceNames = append(b.ServiceNames, service.Title)
 	}
-	if b.StartsAt.IsZero() || (!dto.Deleted && (dto.Length <= 0 || dto.Staff.ID <= 0 || len(dto.Services) == 0)) {
+	// Staff can reserve a real appointment before adding its treatment. The
+	// calendar's time, duration and specialist still establish that appointment;
+	// absent treatment names must stay absent in its customer-facing copy.
+	if b.StartsAt.IsZero() || (!dto.Deleted && (dto.Length <= 0 || dto.Staff.ID <= 0)) {
 		return notifications.Snapshot{}, fmt.Errorf("%w: incomplete native appointment", booking.ErrUnavailable)
 	}
 	return notifications.Snapshot{Booking: b, Phone: phone, ChangedAt: parse(dto.Changed), APIID: dto.APIID, Online: dto.Online}, nil

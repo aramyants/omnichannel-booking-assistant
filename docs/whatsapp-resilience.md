@@ -31,8 +31,11 @@ continuity; they cannot guarantee that Meta will never restrict the account.
 The messaging assistant's verified-phone cabinet and the native Altegio web
 cabinet are separate entry points into the same live booking data. SMSGate is
 commissioned for eligible notices and the assistant's phone verification.
-Native Altegio login remains unavailable until Altegio activates the private SMS
-provider and supplies its production send/activation contract and sender list.
+Native Altegio login requires an approved SMS provider. Altegio confirmed on
+13 October that a private application cannot act as that provider: our own
+service needs partnership approval and Marketplace moderation, or the branch
+must use an existing approved provider. See
+[the current provider decision](altegio-sms-provider-status.md).
 Do not simulate native OTP delivery from a booking-created webhook.
 
 Reference: [Altegio web cabinet requirements](https://alteg.io/en/support/knowledge-base/4903552434461-Personal-account-in-Online-booking-widget).
