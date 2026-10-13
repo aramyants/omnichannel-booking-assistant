@@ -108,38 +108,60 @@ build image now require Go 1.27.2; `golang.org/x/net` is updated to v0.60.0
 with its required dependency versions. Keep the vulnerability gate enabled.
 See [Go's advisory and fixed versions](https://pkg.go.dev/vuln/GO-2026-6617).
 
-## Partnership inquiry — prepared, not sent
+## Authorized vendor outreach — sent and verified
 
-To: partner@alteg.io
+The owner authorized handling the vendor correspondence. Three inquiries were
+sent from **emotionconceptstudio@gmail.com** on 13 October 2026, and Gmail's
+"Message sent" confirmation and the resulting conversation text were checked
+for each. These are requests for eligibility, technical requirements and quotes;
+no tariff change, paid-service activation or contract was accepted.
 
-Subject: SMS aggregator partnership for E-Motion Concept — developer 2830
+| Recipient | Sent time (Asia/Yerevan) | Request and verified conversation |
+| --- | --- | --- |
+| partner@alteg.io | 16:13 | [SMS aggregator eligibility and native Armenia SMS — developer 2830 / branch 1389810](https://mail.google.com/mail/u/0/?tab=rm&ogbl#sent/KtbxLrjjBDrXSgDsSpFTjZKHSCSpjkfwxV): physical-SIM eligibility, public/multitenant requirements, moderation documents/fees/timeline, production contract and sandbox, and an approved Armenian provider fallback. Referenced ticket 141720495 and requested an integration owner/ticket reference. |
+| ivan.popov@messaggio.com | 16:14 | [Reply to Messaggio (WhatsApp, Viber, SMS)](https://mail.google.com/mail/u/0/?tab=rm&ogbl#search/from%3Aivan.popov%40messaggio.com+subject%3AMessaggio/FMfcgzQhWfTQdKQgCRMrkTlvnjNXCFdH): native browser OTP and review invitations, Armenian/Russian Unicode, all Armenian networks and ported numbers, SMS-only costs, eligibility, sender moderation, receipts and activation steps. The inbound sender was mailed-by and signed-by messaggio.com. |
+| 444@ucom.am | 16:15 | [Automated booking SMS eligibility on Ucom studio SIM](https://mail.google.com/mail/u/0/?tab=rm&ogbl#sent/QgrcJHrtxBgWhWjLsMvRPfQCbmgqRHFfncG): permitted Android/SIM automation, transactional versus review-invitation conditions, quotas/rate limits, Unicode segment pricing, network coverage and any required corporate/A2P route while retaining the studio number. Requested referral to the business/SMS team and a ticket reference. |
 
-Hello Altegio partnership team,
+The Gmail connector belongs to a different personal mailbox, so these messages
+were sent through the signed-in studio Gmail UI. No gateway credentials,
+customer data, original thread attachments or phone diagnostics were forwarded.
+Local screenshots of the sent conversations are in
+`docs/evidence/sms-outreach-2026-10-13/`; PNG files are already excluded by
+`.gitignore` and are not deployment inputs.
 
-Your API team directed us to you in resolved ticket 141720495. We operate
-E-Motion Concept Massage Studio, branch 1389810. Developer 2830 owns active
-apps 2554 (notifications) and 2555 (AI booking assistant).
+Messaggio's official Altegio guide describes legal-entity onboarding, sender
+moderation and a provider authorization key/sender code. Its Armenia OTP page
+advertises a separate monthly OTP-generation product; the inquiry specifically
+asks whether Altegio-generated codes can use ordinary SMS delivery without
+that subscription. Published indicative operator prices are not an accepted
+quote and do not establish current coverage, routing or total studio costs.
 
-We would like to understand the requirements for registering our notification
-service as an approved SMS aggregator. Our existing backend uses SMSGate on a
-dedicated Android work phone and SIM for transactional studio messages, with
-explicit device/SIM selection, expiry, duplicate prevention and status tracking.
+### Next implementation gates
 
-Please confirm whether this delivery model is eligible, whether moderation
-requires offering the service to other businesses, the required documents,
-costs and expected review stages. If eligible, please provide the production
-send/authentication contract, activation and sender-list requirements, delivery
-status/parts/amount/currency schema, and a supported test environment for native
-browser verification and review requests.
+1. Obtain Altegio's written eligibility decision and supported contract for the
+   studio-owned gateway. If it is ineligible or substantially delayed, assess
+   Messaggio's native SMS quote against confirmed Armenian coverage and costs.
+2. Obtain Ucom's written conditions for the existing SIM delivery model. A
+   successful self-test alone does not establish tariff permission.
+3. Resolve the provider's eligibility, sender registration, fees and contractual
+   terms before activating a paid route. Store any production credentials through
+   the existing secret-management process, never in this document or Gmail replies.
+4. Configure only the selected native SMS provider for branch 1389810. Validate a
+   fresh browser OTP on a consenting studio test number, supported expiry and
+   delivery reporting, then a controlled review request without replaying old
+   customer events. Preserve the existing assistant channel integrations and
+   prevent duplicate notices across native and backend delivery paths.
 
-We will confirm application-generated SMS support with our mobile operator
-before committing to this delivery model.
-
-Thank you,
-E-Motion Concept Massage Studio
+No native SMS activation is implied by sending these inquiries. A focused
+studio-mailbox check after sending found no immediate replies from the three
+contacts. Vendor eligibility and final quotes remain pending; no unattended
+mailbox monitoring has been configured.
 
 ## References
 
 - [Altegio SMS aggregator onboarding](https://alteg.io/en/support/knowledge-base/6746468657949/)
+- [Messaggio native Altegio integration](https://messaggio.com/guides/integration-with-altegio/)
+- [Messaggio Armenia OTP and indicative SMS pricing](https://messaggio.com/sms-verification-otp-service-provider/armenia/)
+- [Ucom official support contact](https://www.ucom.am/en/help)
 - [SMSGate sending and explicit SIM selection](https://docs.sms-gate.app/features/sending-messages/)
 - [Backend notification configuration](native-notifications.md)
