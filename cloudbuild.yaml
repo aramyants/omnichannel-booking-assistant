@@ -29,7 +29,7 @@ steps:
       - --project=test-project
 
   - id: test
-    name: golang:1.27
+    name: golang:1.27.2
     entrypoint: bash
     env:
       - FIRESTORE_EMULATOR_HOST=firestore:8200

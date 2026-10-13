@@ -86,6 +86,12 @@ deduplication and send-reconciliation rules remain in force. Release validation
 must check that the pending backlog clears through normal task processing;
 do not manually resend these events.
 
+The release's vulnerability scan also identified Go runtime and networking
+issues published on 8 October. The module, Cloud Build test image and Docker
+build image now require Go 1.27.2; `golang.org/x/net` is updated to v0.60.0
+with its required dependency versions. Keep the vulnerability gate enabled.
+See [Go's advisory and fixed versions](https://pkg.go.dev/vuln/GO-2026-6617).
+
 ## Partnership inquiry — prepared, not sent
 
 To: partner@alteg.io
