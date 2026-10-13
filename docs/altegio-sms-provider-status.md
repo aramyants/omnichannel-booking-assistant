@@ -62,10 +62,21 @@ A first diagnostic request using Python's default user-agent returned a
 Cloudflare HTTP 403; the production-compatible probe passed. Do not interpret
 that first result as an invalid credential or rotate credentials on that basis.
 
-USB ADB detects the connected phone but currently reports `unauthorized`.
-Android approval is needed before inspecting the actual SIM, app permissions
-and device settings. No phone setting, cloud credential or customer delivery
-was changed by these checks.
+The owner subsequently authorized USB ADB on 13 October. The connected Samsung
+SM-A175F reports Ucom on loaded SIM 1, LTE registration and no second SIM.
+SMSGate 1.77.1 retains its SMS/phone-state permissions and battery exemption;
+Cloud mode and Start on boot are enabled, and the local server remains disabled.
+The app was reopened and then put in the background for a controlled delivery
+check. Cloud credentials and SIM selection did not require changes.
+
+One clearly labeled, single-part ASCII test SMS was sent through production
+credentials to the studio work number itself, using an explicit device/SIM,
+a unique persisted ID and a two-minute expiry. Both message and recipient
+receipts returned **Delivered** for ID `fbcda5bda5064dc4b16f47c03ce7c244`.
+The POST was not repeated. This verifies the tested delivery path after the
+Ucom change; it does not certify delivery to every customer network or satisfy
+Altegio's native provider approval requirements. No customer booking or review
+request was used for the test.
 
 ## Empty-treatment notification retry
 
@@ -85,6 +96,11 @@ facts, and SMS copy in all three supported languages. Normal consent, expiry,
 deduplication and send-reconciliation rules remain in force. Release validation
 must check that the pending backlog clears through normal task processing;
 do not manually resend these events.
+
+Release **16c208c** passed CI and Cloud Build's race/emulator, vet and
+vulnerability checks, and is serving 100% of production traffic. The public
+health endpoint reports that version. The two pending notification events
+cleared through normal processing, with zero pending rows in the final read.
 
 The release's vulnerability scan also identified Go runtime and networking
 issues published on 8 October. The module, Cloud Build test image and Docker
