@@ -1,4 +1,4 @@
-# Altegio native SMS provider — 13 October 2026
+# Altegio native SMS provider — checked 15 October 2026
 
 ## Confirmed support decision
 
@@ -152,10 +152,110 @@ quote and do not establish current coverage, routing or total studio costs.
    customer events. Preserve the existing assistant channel integrations and
    prevent duplicate notices across native and backend delivery paths.
 
-No native SMS activation is implied by sending these inquiries. A focused
-studio-mailbox check after sending found no immediate replies from the three
-contacts. Vendor eligibility and final quotes remain pending; no unattended
-mailbox monitoring has been configured.
+No native SMS activation is implied by sending these inquiries. The initial
+13 October mailbox check found no immediate replies. Subsequent replies and
+follow-up actions are recorded below; no unattended mailbox monitoring has
+been configured.
+
+## 15 October: replies, verification blocker and follow-up
+
+The studio mailbox was checked across Altegio, Messaggio, Ucom and mailer-daemon
+messages since 12 October. No delivery-failure message appeared in that search.
+
+- Ucom replied on 13 October at 23:58 that it does not currently offer an
+  organizational bulk-SMS service. This does **not** answer whether ordinary
+  SMS automation on the existing Android SIM is allowed, and must not be
+  treated as either permission or a ban on that model. A verified reply was
+  sent in the same thread on 15 October, explicitly asking the SIM/tariff
+  question, transactional versus review conditions and a business-team referral.
+- Messaggio's Ivan Popov replied on 13, 14 and 15 October with the same request
+  to start through WhatsApp or Telegram. No eligibility decision, quote or
+  activation requirements were supplied. Studio-profile Telegram Web is signed
+  out; no message was sent there. No Android device was attached to ADB during
+  this audit. The Messaggio portal is also signed out and its continuation text
+  accepts contractual terms; no account, contract or paid route was activated.
+- Altegio's partnership inquiry has no reply. A verified follow-up was sent in
+  that thread on 15 October, requesting a named integration owner, yes/no
+  eligibility decision, supported contract or an approved Armenian alternative,
+  ticket reference and expected response date.
+- A new [Messaggio team inquiry](https://mail.google.com/mail/u/0/?tab=rm&ogbl#sent/KtbxLwglqKSzBjbcNLGDKpqHbTCTRJGmwg)
+  was sent and verified at 11:52 on 15 October to info@messaggio.com,
+  support@messaggio.com and ivan.popov@messaggio.com. The two team addresses
+  were confirmed on Messaggio's official contact page. It requests onboarding
+  by email and a named owner, with native OTP/review coverage, legal-entity
+  eligibility, full SMS-only costs, sender registration and activation steps.
+- A second approved-provider option was contacted through the address in
+  SMS.to's official Altegio integration guide: support@sms.to. The verified
+  [SMS.to inquiry](https://mail.google.com/mail/u/0/?tab=rm&ogbl#sent/KtbxLwHDghdCmlLsRWwVWzgswgmDdMcHSV)
+  was sent at 11:53 on 15 October for Armenian network/ported-number coverage,
+  native browser OTP/review delivery, sender rules, tests, full costs and
+  qualification/activation requirements. No spending or contract was committed.
+
+### Native web phone verification is disabled by Altegio
+
+The signed-in branch client-field settings at
+`/online_booking/1389810/settings/client_fields` show the checkbox
+**"Подтверждать номер клиента по SMS"** (confirm the client's phone by SMS)
+unchecked and disabled. The adjacent notice states that the settings are
+available when an SMS aggregator is connected. The phone field is mandatory,
+but mandatory entry is not proof of ownership. Push-notification verification
+is checked separately and does not enable browser SMS verification.
+
+The private app's SMS sender remains **"Не выбрано"** (not selected). These
+controls establish the current native blocker; no disabled controls, arbitrary
+sender values or undocumented activation calls were used to bypass it.
+
+The shortest supported route is a qualified existing provider and usable sender,
+followed by enabling this SMS-verification setting and verifying a fresh code on
+a consenting studio test number. Native review SMS also needs the usable route.
+The studio-owned aggregator partnership remains a separate, longer-term option.
+
+### Assistant verification is separate from first-booking verification
+
+Production still serves revision `omnichannel-booking-assistant-00102-but` at
+100%, and `/health` returns version `16c208c`. `NATIVE_NOTIFICATIONS_ENABLED`
+and `NATIVE_SMS_READY` are true. Both `SMSGATE_CREDENTIALS_JSON` and
+`ALTEGIO_WEBHOOK_SECRET` use pinned Secret Manager version 1. An authenticated
+SMSGate device read matched the configured phone and explicit SIM 1, with a
+reported check-in of `2026-10-15T10:32:03+03:00`. No fresh customer SMS or
+native OTP was sent in this audit; this read does not replace the 13 October
+controlled delivery evidence.
+
+The assistant `/verify` flow protects appointment-history access and
+management. It uses expiring, single-use six-digit codes bound to channel and
+account, persisted phone/account budgets and attempt limits, HMAC-only storage,
+and transcript redaction. WhatsApp's authenticated address and Telegram's own
+contact are also accepted ownership proofs. A typed booking contact alone is
+not verification. The audit found that the prior `prepare_booking` and
+`confirm_booking` creation flow did not require this proof.
+
+The recommended verify-once policy was selected after presenting the scope
+question and receiving no alternative during the audit. The new assistant
+creation gate checks proof for the **exact booking phone** both when preparing
+and confirming, including drafts from older releases and alternate WhatsApp
+booking numbers. It saves the validated proposal, offers its existing phone as
+a one-tap SMS request (or Telegram own-contact verification), and sends no SMS
+until the customer requests it. Successful matching proof restores the service,
+duration, price, specialist, time, name and phone summary, then asks for a fresh
+booking confirmation. A code is never treated as booking consent. A different
+proved phone or invalid/expired selection cannot restore that proposal.
+
+Firestore persists the pending-verification marker and price snapshot. The
+marker is workflow state, not proof; request-scoped verified ownership is still
+required at creation. Profile merges preserve only this chat's matching pending
+proposal. Existing expiry, attempts, send budgets, transcript redaction and
+send-uncertainty rules remain in place. This backend policy does not enable
+Altegio's disabled native web checkbox or confer carrier/aggregator approval.
+
+The original focused verification checks and the full local Go test/vet suite
+passed on 15 October. New regression checks cover Instagram/Facebook SMS to
+booking completion, Telegram profile-merge continuation, matching and alternate
+WhatsApp phones, older drafts, wrong-phone proof, unavailable SMS and code
+redaction. The Firestore draft round-trip test also checks the persisted fields
+when the emulator is available. Production release validation must pass the
+race/emulator and vulnerability gates and confirm the exact live version before
+claiming deployment. Local evidence is saved under
+`docs/evidence/sms-followup-2026-10-15/` (ignored PNGs).
 
 ## References
 
@@ -163,5 +263,7 @@ mailbox monitoring has been configured.
 - [Messaggio native Altegio integration](https://messaggio.com/guides/integration-with-altegio/)
 - [Messaggio Armenia OTP and indicative SMS pricing](https://messaggio.com/sms-verification-otp-service-provider/armenia/)
 - [Ucom official support contact](https://www.ucom.am/en/help)
+- [Messaggio official sales and support addresses](https://messaggio.com/contacts/)
+- [SMS.to official Altegio activation guide](https://support.sms.to/support/solutions/articles/43000693902-altegio)
 - [SMSGate sending and explicit SIM selection](https://docs.sms-gate.app/features/sending-messages/)
 - [Backend notification configuration](native-notifications.md)

@@ -862,7 +862,11 @@ func (s *Service) openConversation(
 
 	if s.identity != nil && conv.CustomerID != cust.ID {
 		conv.CustomerID = cust.ID
-		conv.Draft = nil
+		// Own-contact verification can merge this chat into an existing profile
+		// before its continuation arrives. Retain only its matching proposal.
+		if conv.Draft == nil || !conv.Draft.AwaitingPhoneVerification || conv.Draft.Phone != cust.VerifiedPhone {
+			conv.Draft = nil
+		}
 		conv.BookingChange = nil
 	}
 	// A message arriving on a finished conversation starts it again rather

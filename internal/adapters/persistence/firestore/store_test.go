@@ -207,17 +207,19 @@ func TestDraftSurvivesARoundTrip(t *testing.T) {
 	}
 
 	opened.Draft = &booking.Draft{
-		IdempotencyKey:        "key-1",
-		ServiceIDs:            []string{"1001"},
-		ServiceNames:          []string{"Women's haircut"},
-		StaffID:               "501",
-		StaffName:             "Mariam",
-		StartsAt:              testNow.Add(48 * time.Hour),
-		Duration:              time.Hour,
-		Phone:                 "+37411223344",
-		CustomerName:          "Anna Petrosyan",
-		PreparedAt:            testNow,
-		PreparedFromMessageID: "message-1",
+		IdempotencyKey:            "key-1",
+		ServiceIDs:                []string{"1001"},
+		ServiceNames:              []string{"Women's haircut"},
+		PriceLabel:                "12000 AMD",
+		AwaitingPhoneVerification: true,
+		StaffID:                   "501",
+		StaffName:                 "Mariam",
+		StartsAt:                  testNow.Add(48 * time.Hour),
+		Duration:                  time.Hour,
+		Phone:                     "+37411223344",
+		CustomerName:              "Anna Petrosyan",
+		PreparedAt:                testNow,
+		PreparedFromMessageID:     "message-1",
 	}
 	if err := store.Save(t.Context(), opened); err != nil {
 		t.Fatalf("Save() returned error: %v", err)
@@ -232,6 +234,9 @@ func TestDraftSurvivesARoundTrip(t *testing.T) {
 	}
 	if loaded.Draft.IdempotencyKey != "key-1" {
 		t.Errorf("key = %q", loaded.Draft.IdempotencyKey)
+	}
+	if !loaded.Draft.AwaitingPhoneVerification || loaded.Draft.PriceLabel != "12000 AMD" {
+		t.Fatal("verification continuation or price snapshot did not survive persistence")
 	}
 	if loaded.Draft.PreparedFromMessageID != "message-1" {
 		t.Errorf("prepared-from message = %q", loaded.Draft.PreparedFromMessageID)

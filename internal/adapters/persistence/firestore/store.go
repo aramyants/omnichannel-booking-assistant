@@ -185,17 +185,19 @@ func (s *Store) FindOrCreateByChannelIdentity(
 }
 
 type draftDoc struct {
-	IdempotencyKey        string    `firestore:"idempotency_key"`
-	ServiceIDs            []string  `firestore:"service_ids"`
-	ServiceNames          []string  `firestore:"service_names"`
-	StaffID               string    `firestore:"staff_id"`
-	StaffName             string    `firestore:"staff_name"`
-	StartsAt              time.Time `firestore:"starts_at"`
-	DurationSecs          int64     `firestore:"duration_seconds"`
-	Phone                 string    `firestore:"phone"`
-	CustomerName          string    `firestore:"customer_name"`
-	PreparedAt            time.Time `firestore:"prepared_at"`
-	PreparedFromMessageID string    `firestore:"prepared_from_message_id"`
+	IdempotencyKey            string    `firestore:"idempotency_key"`
+	ServiceIDs                []string  `firestore:"service_ids"`
+	ServiceNames              []string  `firestore:"service_names"`
+	PriceLabel                string    `firestore:"price_label,omitempty"`
+	AwaitingPhoneVerification bool      `firestore:"awaiting_phone_verification,omitempty"`
+	StaffID                   string    `firestore:"staff_id"`
+	StaffName                 string    `firestore:"staff_name"`
+	StartsAt                  time.Time `firestore:"starts_at"`
+	DurationSecs              int64     `firestore:"duration_seconds"`
+	Phone                     string    `firestore:"phone"`
+	CustomerName              string    `firestore:"customer_name"`
+	PreparedAt                time.Time `firestore:"prepared_at"`
+	PreparedFromMessageID     string    `firestore:"prepared_from_message_id"`
 }
 
 type changeDraftDoc struct {
@@ -257,17 +259,19 @@ func toConversationDoc(conv conversation.Conversation) conversationDoc {
 
 	if conv.Draft != nil {
 		doc.Draft = &draftDoc{
-			IdempotencyKey:        conv.Draft.IdempotencyKey,
-			ServiceIDs:            conv.Draft.ServiceIDs,
-			ServiceNames:          conv.Draft.ServiceNames,
-			StaffID:               conv.Draft.StaffID,
-			StaffName:             conv.Draft.StaffName,
-			StartsAt:              conv.Draft.StartsAt,
-			DurationSecs:          int64(conv.Draft.Duration.Seconds()),
-			Phone:                 conv.Draft.Phone,
-			CustomerName:          conv.Draft.CustomerName,
-			PreparedAt:            conv.Draft.PreparedAt,
-			PreparedFromMessageID: conv.Draft.PreparedFromMessageID,
+			IdempotencyKey:            conv.Draft.IdempotencyKey,
+			ServiceIDs:                conv.Draft.ServiceIDs,
+			ServiceNames:              conv.Draft.ServiceNames,
+			PriceLabel:                conv.Draft.PriceLabel,
+			AwaitingPhoneVerification: conv.Draft.AwaitingPhoneVerification,
+			StaffID:                   conv.Draft.StaffID,
+			StaffName:                 conv.Draft.StaffName,
+			StartsAt:                  conv.Draft.StartsAt,
+			DurationSecs:              int64(conv.Draft.Duration.Seconds()),
+			Phone:                     conv.Draft.Phone,
+			CustomerName:              conv.Draft.CustomerName,
+			PreparedAt:                conv.Draft.PreparedAt,
+			PreparedFromMessageID:     conv.Draft.PreparedFromMessageID,
 		}
 	}
 	if conv.BookingChange != nil {
@@ -306,17 +310,19 @@ func fromConversationDoc(doc conversationDoc) conversation.Conversation {
 
 	if doc.Draft != nil {
 		conv.Draft = &booking.Draft{
-			IdempotencyKey:        doc.Draft.IdempotencyKey,
-			ServiceIDs:            doc.Draft.ServiceIDs,
-			ServiceNames:          doc.Draft.ServiceNames,
-			StaffID:               doc.Draft.StaffID,
-			StaffName:             doc.Draft.StaffName,
-			StartsAt:              doc.Draft.StartsAt,
-			Duration:              time.Duration(doc.Draft.DurationSecs) * time.Second,
-			Phone:                 doc.Draft.Phone,
-			CustomerName:          doc.Draft.CustomerName,
-			PreparedAt:            doc.Draft.PreparedAt,
-			PreparedFromMessageID: doc.Draft.PreparedFromMessageID,
+			IdempotencyKey:            doc.Draft.IdempotencyKey,
+			ServiceIDs:                doc.Draft.ServiceIDs,
+			ServiceNames:              doc.Draft.ServiceNames,
+			PriceLabel:                doc.Draft.PriceLabel,
+			AwaitingPhoneVerification: doc.Draft.AwaitingPhoneVerification,
+			StaffID:                   doc.Draft.StaffID,
+			StaffName:                 doc.Draft.StaffName,
+			StartsAt:                  doc.Draft.StartsAt,
+			Duration:                  time.Duration(doc.Draft.DurationSecs) * time.Second,
+			Phone:                     doc.Draft.Phone,
+			CustomerName:              doc.Draft.CustomerName,
+			PreparedAt:                doc.Draft.PreparedAt,
+			PreparedFromMessageID:     doc.Draft.PreparedFromMessageID,
 		}
 	}
 	if doc.BookingChange != nil {

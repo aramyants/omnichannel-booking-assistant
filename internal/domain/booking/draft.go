@@ -26,6 +26,7 @@ type Draft struct {
 
 	ServiceIDs   []string
 	ServiceNames []string
+	PriceLabel   string
 	StaffID      string
 	StaffName    string
 	StartsAt     time.Time
@@ -35,6 +36,10 @@ type Draft struct {
 	// not reliably supply it, so it is asked for and stored here.
 	Phone        string
 	CustomerName string
+
+	// AwaitingPhoneVerification resumes this chat's proposal after ownership
+	// proof. This flag is workflow state, never proof or booking authorization.
+	AwaitingPhoneVerification bool
 
 	PreparedAt time.Time
 

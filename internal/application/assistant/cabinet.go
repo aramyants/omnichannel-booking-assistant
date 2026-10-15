@@ -134,6 +134,9 @@ func (s *Service) cabinetReply(ctx context.Context, sess *session, msg messaging
 		if sess.customer.VerifiedPhone == "" {
 			return s.tools.verificationPrompt(ctx, sess), true, nil
 		}
+		if reply, ok := s.resumeVerifiedBooking(sess, sess.customer.VerifiedPhone); ok {
+			return reply, true, nil
+		}
 		return s.appointmentList(ctx, sess), true, nil
 	}
 	state, err := s.identity.Pending(ctx, msg.Provider, msg.ExternalUserID)
@@ -170,8 +173,11 @@ func (s *Service) cabinetReply(ctx context.Context, sess *session, msg messaging
 		}
 		sess.customer.VerifiedPhone = phone
 		sess.conv.CustomerID = sess.customer.ID
-		sess.conv.Draft = nil
 		sess.conv.BookingChange = nil
+		if reply, ok := s.resumeVerifiedBooking(sess, phone); ok {
+			return reply, true, nil
+		}
+		sess.conv.Draft = nil
 		return s.appointmentList(ctx, sess), true, nil
 	}
 	if state == "phone" {

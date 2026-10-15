@@ -839,6 +839,7 @@ func (t *toolset) prepareBooking(ctx context.Context, s *session, call ai.ToolCa
 		IdempotencyKey:        "omnichannel-" + id.New(),
 		ServiceIDs:            []string{service.ID},
 		ServiceNames:          []string{service.Name},
+		PriceLabel:            service.PriceLabel(),
 		StaffID:               staff.ID,
 		StaffName:             staff.Name,
 		StartsAt:              startsAt,
@@ -861,6 +862,11 @@ func (t *toolset) prepareBooking(ctx context.Context, s *session, call ai.ToolCa
 
 	s.conv.Draft = &draft
 	s.conv.BookingChange = nil
+	if t.identity != nil && s.customer.VerifiedPhone != draft.Phone {
+		s.finalReply = t.bookingVerificationPrompt(ctx, s)
+		return encode(map[string]any{"prepared": false, "booked": false, "verified": false,
+			"instruction": "Phone ownership must be verified before booking. The selection is saved; follow the application verification prompt. Nothing is booked."})
+	}
 
 	// The one question in the whole exchange with exactly two answers.
 	s.offerFixed(offerBookingConfirmation)
@@ -895,6 +901,13 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 	}
 	if draft.PreparedFromMessageID == s.incomingMessageID {
 		return "", errors.New("wait for the customer to confirm in a new message after seeing the summary")
+	}
+	// Also protects proposals persisted before phone verification was required,
+	// and a booking phone different from this channel's authenticated address.
+	if t.identity != nil && s.customer.VerifiedPhone != draft.Phone {
+		s.finalReply = t.bookingVerificationPrompt(ctx, s)
+		return encode(map[string]any{"booked": false, "verified": false,
+			"instruction": "Verify ownership of the exact booking phone before confirming. Nothing is booked."})
 	}
 	// Also guard drafts persisted by an older release before coordination rules
 	// existed, and services whose live classification changed after preparation.

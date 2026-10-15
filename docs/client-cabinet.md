@@ -28,6 +28,20 @@ phone and enter one SMS code; their appointments then open automatically.
 /verify relinks a different booking phone; /verify_cancel stops verification.
 Linking cabinet access does not enable notification subscriptions.
 
+New assistant bookings also require ownership proof for the exact booking
+phone. A typed number or booking name does not satisfy it. Matching WhatsApp
+addresses and verified Telegram contacts proceed without another SMS; an
+unverified or alternate phone requires proof. The assistant saves the selected
+appointment, offers the existing phone as a one-tap SMS request, and restores
+its details after successful verification. It still asks for a fresh booking
+confirmation; entering the code does not book anything. A mismatched phone or
+expired proposal cannot resume the selection. The pending marker and price
+snapshot survive Firestore storage and verified profile merges.
+
+This policy belongs to chat bookings. Altegio's native browser form has a
+separate SMS-verification switch, currently disabled until an approved native
+SMS provider is connected; see [provider status](altegio-sms-provider-status.md).
+
 Existing bot-created bookings retain their private management proof and can be
 changed after the shared confirmation step. Form/staff bookings without this
 proof are visible, with changes routed to a colleague. No broader calendar
