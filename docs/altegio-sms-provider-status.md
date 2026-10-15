@@ -191,6 +191,15 @@ messages since 12 October. No delivery-failure message appeared in that search.
   native browser OTP/review delivery, sender rules, tests, full costs and
   qualification/activation requirements. No spending or contract was committed.
 
+The follow-up produced real ticket references: **Messaggio MSGPG-459** and
+**SMS.to 481353**. Messaggio support referred the request to Ivan, who then
+asked by email at 11:58 about destinations and monthly volume. A verified
+reply at 12:06 requested an initial Armenian route and comparative quotes for
+250, 500 and 1,000 SMS segments/month. These are non-binding planning tiers,
+not claimed actual usage or a minimum-spend commitment. The reply repeats the
+need for Unicode segment charging, all fees and native OTP/review activation.
+Final eligibility, pricing and usable provider credentials remain outstanding.
+
 ### Native web phone verification is disabled by Altegio
 
 The signed-in branch client-field settings at
@@ -212,14 +221,22 @@ The studio-owned aggregator partnership remains a separate, longer-term option.
 
 ### Assistant verification is separate from first-booking verification
 
-Production still serves revision `omnichannel-booking-assistant-00102-but` at
-100%, and `/health` returns version `16c208c`. `NATIVE_NOTIFICATIONS_ENABLED`
+At the start of this audit, production served revision
+`omnichannel-booking-assistant-00102-but` at 100%, and `/health` returned version
+`16c208c`. `NATIVE_NOTIFICATIONS_ENABLED`
 and `NATIVE_SMS_READY` are true. Both `SMSGATE_CREDENTIALS_JSON` and
 `ALTEGIO_WEBHOOK_SECRET` use pinned Secret Manager version 1. An authenticated
 SMSGate device read matched the configured phone and explicit SIM 1, with a
-reported check-in of `2026-10-15T10:32:03+03:00`. No fresh customer SMS or
-native OTP was sent in this audit; this read does not replace the 13 October
-controlled delivery evidence.
+reported check-in of `2026-10-15T10:32:03+03:00`.
+
+A fresh, labeled ASCII delivery test was subsequently sent to the studio work
+number itself with verification priority 100, explicit device/SIM, delivery
+reporting and a two-minute expiry. A unique ID was persisted before the single
+POST. Acceptance returned HTTP 202; reconciliation returned **Delivered** for
+both message and recipient, ID `4ccafe4897a042b2b865ee5add27345c`. The POST
+was not repeated, no booking was created and no customer recipient or native
+Altegio OTP was used. This proves that tested transport, not every operator's
+coverage, handset code entry, carrier permission or native provider activation.
 
 The assistant `/verify` flow protects appointment-history access and
 management. It uses expiring, single-use six-digit codes bound to channel and
@@ -256,6 +273,27 @@ when the emulator is available. Production release validation must pass the
 race/emulator and vulnerability gates and confirm the exact live version before
 claiming deployment. Local evidence is saved under
 `docs/evidence/sms-followup-2026-10-15/` (ignored PNGs).
+
+### Verified release on 15 October
+
+Commit **7a90e08** is deployed as
+`omnichannel-booking-assistant-00105-viq` at **100% traffic**. The public health
+endpoint returns `{"status":"ok","version":"7a90e08"}`. The final service
+read confirms native notifications and SMS readiness remain true, with SMSGate
+Secret Manager version 1 preserved.
+
+- [CI run 38703117204](https://github.com/aramyants/omnichannel-booking-assistant/actions/runs/38703117204)
+  completed successfully, including lint, vet, the full Linux race suite with
+  the Firestore emulator, build and vulnerability scan.
+- [Cloud Build 2370e486-d1a0-4de1-b117-50a00a0b9655](https://console.cloud.google.com/cloud-build/builds/2370e486-d1a0-4de1-b117-50a00a0b9655?project=42375605468)
+  completed successfully. All seven steps passed, including its independent
+  test/security gate, candidate deployment, health/version probe and promotion.
+
+The live chat booking policy is now verify-once ownership of the exact booking
+phone, using SMS for unverified/alternate phones and existing trusted channel
+proof where available. The native web SMS-verification checkbox remains disabled
+pending approved provider activation. No human handset code-entry test or native
+browser OTP test is claimed by the controlled transport test or automated suite.
 
 ## References
 

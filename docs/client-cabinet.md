@@ -42,6 +42,12 @@ This policy belongs to chat bookings. Altegio's native browser form has a
 separate SMS-verification switch, currently disabled until an approved native
 SMS provider is connected; see [provider status](altegio-sms-provider-status.md).
 
+The new-booking ownership gate was released on 15 October 2026 as `7a90e08`,
+revision `omnichannel-booking-assistant-00105-viq`, verified at 100% traffic after
+the CI and production race/emulator/security gates passed. The studio SMSGate
+transport also returned Delivered for a fresh, labeled self-test. This does not
+claim native Altegio browser OTP activation or manual handset code-entry testing.
+
 Existing bot-created bookings retain their private management proof and can be
 changed after the shared confirmation step. Form/staff bookings without this
 proof are visible, with changes routed to a colleague. No broader calendar
