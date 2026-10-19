@@ -140,8 +140,10 @@ type Booking struct {
 	StartsAt time.Time
 	Duration time.Duration
 	Status   Status
-	// Attended is an explicit native visit mark, required for verified reviews.
+	// Attended and NoShow preserve explicit native attendance marks. A past
+	// booking may be reviewed without an arrival mark, but never after a no-show.
 	Attended bool
+	NoShow   bool
 	// TreatmentDuration excludes the provider's private cleanup buffer when
 	// it is explicitly present on an administrative record.
 	TreatmentDuration time.Duration

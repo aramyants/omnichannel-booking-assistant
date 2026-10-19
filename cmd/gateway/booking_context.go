@@ -210,7 +210,7 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 }
 
 func reviewEligible(b booking.Booking, now time.Time) bool {
-	return b.Status != booking.StatusCancelled && b.Attended && b.StaffID != "" && b.Duration > 0 && !b.StartsAt.IsZero() && !b.StartsAt.Before(now.Add(-90*24*time.Hour)) && !b.StartsAt.Add(b.Duration).After(now)
+	return b.Status != booking.StatusCancelled && !b.NoShow && b.StaffID != "" && b.StaffID != "0" && b.Duration > 0 && !b.StartsAt.IsZero() && !b.StartsAt.Before(now.Add(-90*24*time.Hour)) && !b.StartsAt.Add(b.Duration).After(now)
 }
 func reviewVisit(b booking.Booking) map[string]any {
 	return map[string]any{"id": b.ExternalID, "staffId": b.StaffID, "staffName": b.StaffName, "serviceName": strings.Join(b.ServiceNames, ", "), "datetime": b.StartsAt.Format(time.RFC3339)}

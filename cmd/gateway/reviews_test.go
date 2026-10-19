@@ -38,14 +38,16 @@ func TestReviewCheckNeverAcceptsAnotherVerifiedPhone(t *testing.T) {
 	}
 }
 
-func TestReviewsRequireExplicitAttendanceAfterTheVisit(t *testing.T) {
+func TestReviewsAcceptPastOwnedBookingsWithoutAnArrivalMark(t *testing.T) {
 	now := time.Now()
 	b := booking.Booking{ExternalID: "42", StaffID: "2", StartsAt: now.Add(-2 * time.Hour), Duration: time.Hour, Status: booking.StatusConfirmed, Attended: true}
-	for _, mode := range []string{"attended", "waiting", "future", "ongoing", "cancelled", "expired", "no specialist"} {
+	for _, mode := range []string{"attended", "confirmed only", "no show", "future", "ongoing", "cancelled", "expired", "no specialist", "zero specialist", "zero duration"} {
 		c := b
 		switch mode {
-		case "waiting":
+		case "confirmed only":
 			c.Attended = false
+		case "no show":
+			c.NoShow = true
 		case "future":
 			c.StartsAt = now.Add(time.Hour)
 		case "ongoing":
@@ -56,8 +58,12 @@ func TestReviewsRequireExplicitAttendanceAfterTheVisit(t *testing.T) {
 			c.StartsAt = now.Add(-91 * 24 * time.Hour)
 		case "no specialist":
 			c.StaffID = ""
+		case "zero specialist":
+			c.StaffID = "0"
+		case "zero duration":
+			c.Duration = 0
 		}
-		if reviewEligible(c, now) != (mode == "attended") {
+		if reviewEligible(c, now) != (mode == "attended" || mode == "confirmed only") {
 			t.Fatal(mode)
 		}
 	}

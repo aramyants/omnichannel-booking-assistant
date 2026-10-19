@@ -97,6 +97,7 @@ func (c *Client) nativeSnapshot(dto nativeRecord, numeric int64) (notifications.
 		b.Status = booking.StatusCancelled
 	}
 	b.Attended = dto.Attendance == 1
+	b.NoShow = dto.Attendance == -1
 	phone := ""
 	if dto.Client != nil {
 		b.CustomerName = dto.Client.Name
