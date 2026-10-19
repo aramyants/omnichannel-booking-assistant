@@ -73,6 +73,22 @@ func TestProviderPhoneAdaptationDoesNotGuessMalformedValues(t *testing.T) {
 	}
 }
 
+func TestNativeCalendarDurationExcludesOnlyAnExplicitTechnicalBreak(t *testing.T) {
+	for _, pause := range []int64{0, 900, -1, 5700, 6000} {
+		dto := nativeRecord{ID: 123, CompanyID: 12345, Datetime: "2026-10-20T16:00:00+04:00", Length: 5700, TechnicalBreak: pause}
+		dto.Staff.ID = 1
+		client := &Client{companyID: "12345", location: time.UTC}
+		snap, err := client.nativeSnapshot(dto, 123)
+		want := 95 * time.Minute
+		if pause == 900 {
+			want = 80 * time.Minute
+		}
+		if err != nil || snap.Booking.Duration != 95*time.Minute || snap.Booking.CalendarDuration() != want {
+			t.Fatalf("pause=%d duration=%v calendar=%v error=%v", pause, snap.Booking.Duration, snap.Booking.CalendarDuration(), err)
+		}
+	}
+}
+
 func TestNativeRecordWithoutTreatmentPreservesAppointmentAndRequiredFacts(t *testing.T) {
 	for _, tc := range []struct {
 		name, services, datetime string

@@ -10,6 +10,7 @@ import type { Database, D1Statement, Env, Runtime } from '../src/types.ts';
 import { runNotifications } from '../src/notifications.ts';
 import { allowedDestination, destinationCodes } from '../src/sms.ts';
 import { origin, verifyTurnstile } from '../src/security.ts';
+import { createHmac } from 'node:crypto';
 
 class SQLiteD1 implements Database {
  db=new DatabaseSync(':memory:');
@@ -25,11 +26,51 @@ class SQLiteD1 implements Database {
  }
  async batch(statements:D1Statement[]){this.db.exec('BEGIN');try{const result=[];for(const s of statements)result.push(await s.run());this.db.exec('COMMIT');return result;}catch(e){this.db.exec('ROLLBACK');throw e;}}
 }
+
+test('optional contact fields validate and reach only the booking payload without native email sends',async()=>{
+ const f=fixture();await f.verified();
+ const base={serviceId:'13827004',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Test Guest',consent:true};
+ for(const extras of [{email:'bad email'},{email:22},{comment:'x'.repeat(1001)},{comment:'<script>test</script>'}])assert.equal((await f.request('/drafts',{...base,...extras})).response.status,400);
+ assert.equal(f.counts.createCalls,0);
+ const draft=await f.request('/drafts',{...base,email:'  client@example.com  ',comment:'Please focus on shoulders.'},{'X-Booking-Language':'en'});
+ assert.equal(draft.response.status,200);assert.equal(draft.value.draft.locale,'en');
+ const result=await f.request('/appointments',{draftId:draft.value.draft.id});assert.equal(result.response.status,200);
+ assert.equal(f.createPayload?.email,'client@example.com');assert.match(String(f.createPayload?.comment),/Please focus on shoulders/);assert.equal(f.createPayload?.notify_by_email,0);
+});
+test('OTP text follows the supported customer language',async()=>{
+ for(const [lang,pattern] of [['en',/booking code/],['ru',/код/],['hy',/կոդը/]] as const){
+  const f=fixture();await f.session();const requested=await f.request('/verification/request',{phone:'+37491123456',turnstileToken:'test-token-accepted'},{'X-Booking-Language':lang});assert.equal(requested.response.status,200);
+  assert.match(f.smsTexts[0],pattern);assert(f.smsTexts[0].length<=201);
+ }
+});
+test('shared bridge authenticates exact bodies and hands web confirmation to one sender',async()=>{
+ const f=fixture();f.env.ECOSYSTEM_GATEWAY_ORIGIN='https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app';f.env.SMS_CONFIRMATIONS_ENABLED='true';
+ const provider=f.runtime.fetch;const actions:string[]=[];
+ f.runtime.fetch=async(input,init)=>{
+  if(String(input).includes('/internal/booking-context')){
+   const headers=init!.headers as Record<string,string>,body=String(init!.body),time=headers['X-Emotion-Time'];
+   const key=createHmac('sha256',f.env.ALTEGIO_USER_TOKEN!).update('emotion-ecosystem-auth-v1').digest();
+   assert.equal(headers['X-Emotion-Signature'],createHmac('sha256',key).update(time+'\nPOST\n/internal/booking-context\n'+body).digest('hex'));
+   const data=JSON.parse(body);actions.push(data.action);assert.equal(data.phone,'+37491123456');
+   return Response.json({locale:'en',...(data.action==='confirmed'?{calendarUrl:f.env.PUBLIC_ORIGIN+'/calendar/6789?key='+'a'.repeat(43)+'&lang=en'}:{})});
+  }
+  return provider(input,init);
+ };
+ await f.verified();const draft=await f.draft();assert.equal(draft.value.draft.locale,'en');
+ const result=await f.request('/appointments',{draftId:draft.value.draft.id});assert.equal(result.value.status,'confirmed');assert(result.value.appointment.calendarUrl);
+ await f.request('/appointments',{draftId:draft.value.draft.id});assert.deepEqual(actions,['prepare','confirmed']);
+ assert.equal(f.counts.sentSms,1);assert.match(String(f.createPayload?.api_id),/^emotion-web-v2-/);
+});
+test('failed shared preferences cannot create an appointment with conflicting notification settings',async()=>{
+ const f=fixture();await f.verified();f.env.ECOSYSTEM_GATEWAY_ORIGIN='https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app';const provider=f.runtime.fetch;
+ f.runtime.fetch=async(input,init)=>String(input).includes('/internal/booking-context')?new Response('Unavailable',{status:503}):provider(input,init);
+ assert.equal((await f.draft()).response.status,503);assert.equal(f.counts.createCalls,0);
+});
 function fixture(){
  const db=new SQLiteD1();
  const env:Env={DB:db,PUBLIC_ORIGIN:'https://booking.example.com',SESSION_SECRET:'test-only-secret-that-is-over-thirty-two-characters',ALTEGIO_PARTNER_TOKEN:'test-partner',ALTEGIO_USER_TOKEN:'test-private-user',ALTEGIO_COMPANY_ID:'1389810',TURNSTILE_SECRET:'test-turnstile',TURNSTILE_SITE_KEY:'test-sitekey',SMSGATE_CREDENTIALS_JSON:JSON.stringify({username:'test',password:'fake',device_id:'test-device',sim_number:1}),SMS_DAILY_CAP:'10',SMS_MONTHLY_CAP:'100',SMS_ALLOWED_COUNTRY_CODES:'374',BOOKING_ENABLED:'true'};
  let time=Date.parse('2026-10-20T08:00:00+04:00'),csrf='',cookie='',otp='',createCalls=0,checkCalls=0,turnstileHostname='booking.example.com',createMode='ok',createHook:undefined|(()=>Promise<void>);
- let sentSms=0,receiptReads=0,price=18000,slotSeconds=4800,receiptState='Delivered',smsMode='ok',liveDeleted=false,liveStart='2026-10-21T12:00:00+04:00',liveReadFails=false,currentPhone='+37491123456';
+ let createPayload:Record<string,unknown>|undefined;const smsTexts:string[]=[];let sentSms=0,receiptReads=0,price=18000,slotSeconds=4800,receiptState='Delivered',smsMode='ok',liveDeleted=false,liveStart='2026-10-21T12:00:00+04:00',liveReadFails=false,currentPhone='+37491123456';
  const runtime:Runtime={now:()=>time,fetch:async(input:RequestInfo|URL,init?:RequestInit)=>{
   // workerd rejects redirect:'error' before sending; Node's native fetch does not.
   assert.equal(init?.redirect,'manual','all provider fetches must use Workers-supported manual redirects');
@@ -37,7 +78,7 @@ function fixture(){
   if(url.startsWith('https://api.alteg.io/')&&!url.includes('/record/'))assert.equal((init!.headers as Record<string,string>).Authorization,'Bearer test-partner','private credentials must not reach public catalog or booking endpoints');
   if(url.includes('siteverify'))return Response.json({success:true,hostname:turnstileHostname,action:'booking_otp'});
   if(url.includes('sms-gate.app')&&!init?.body){receiptReads++;return Response.json({id:url.split('/').at(-1),state:receiptState});}
-  if(url.includes('sms-gate.app')){const data=JSON.parse(init!.body as string);sentSms++;otp=data.textMessage.text.match(/\b\d{6}\b/)?.[0]||'';if(smsMode==='timeout')throw new Error('simulated sms timeout');return Response.json({id:data.id,state:'Pending'},{status:202});}
+  if(url.includes('sms-gate.app')){const data=JSON.parse(init!.body as string);sentSms++;smsTexts.push(data.textMessage.text);otp=data.textMessage.text.match(/\b\d{6}\b/)?.[0]||'';if(smsMode==='timeout')throw new Error('simulated sms timeout');return Response.json({id:data.id,state:'Pending'},{status:202});}
   if(url.includes('/book_services/'))return Response.json({success:true,data:{category:[{id:1,title:'Motion Relax'},{id:2,title:'Add More Time'}],services:[{id:13827004,title:'80 min',active:1,category_id:1,price_min:price,price_max:price,seance_length:url.includes('staff_id')?4800:null,comment:'<p>Relax</p>'},{id:13827268,title:'20 min',active:1,category_id:2,price_min:5000,price_max:5000}]}});
   if(url.includes('/book_staff/'))return Response.json({success:true,data:[{id:99,name:'Test Specialist',specialization:'Massage',bookable:true,fired:0,avatar:'https://assets.alteg.io/masters/sm/test.png',avatar_big:'https://assets.alteg.io/masters/origin/test.png'},{id:100,name:'Unavailable',bookable:false}]});
   if(url.includes('/book_dates/'))return Response.json({success:true,data:{booking_dates:['2026-10-21']}});
@@ -45,7 +86,7 @@ function fixture(){
   if(url.includes('/book_check/')){checkCalls++;return Response.json({success:true,data:{}});}
   if(url.includes('/book_record/')&&(!init?.method||init.method==='GET')){if(liveReadFails)throw new Error('calendar unavailable');return Response.json({success:true,data:{id:6789,datetime:liveStart,length:slotSeconds,deleted:liveDeleted,staff:{id:99,name:'Test Specialist'},services:[{id:13827004,title:'80 min'}]}});}
   if(url.includes('/record/')){assert.equal((init!.headers as Record<string,string>).Authorization,'Bearer test-partner, User test-private-user');return Response.json({success:true,data:{id:6789,company_id:1389810,deleted:liveDeleted,client:{phone:currentPhone}}});}
-  if(url.includes('/book_record/')){createCalls++;if(createHook)await createHook();if(createMode==='timeout')throw new Error('simulated timeout');if(createMode==='500')return new Response('bad',{status:500});return Response.json({success:true,data:[{record_id:6789,record_hash:'private-do-not-leak'}]});}
+  if(url.includes('/book_record/')){createPayload=JSON.parse(String(init?.body));createCalls++;if(createHook)await createHook();if(createMode==='timeout')throw new Error('simulated timeout');if(createMode==='500')return new Response('bad',{status:500});return Response.json({success:true,data:[{record_id:6789,record_hash:'private-do-not-leak'}]});}
   throw new Error('unexpected fake endpoint '+url);
  }};
  async function request(path:string,data?:unknown,headers:Record<string,string>={}){
@@ -55,7 +96,7 @@ function fixture(){
  async function session(){const result=await request('/session',{});assert.equal(result.response.status,200);csrf=result.value.csrfToken;cookie=result.response.headers.get('set-cookie')!.split(';')[0];return result;}
  async function verified(){await session();assert.equal((await request('/verification/request',{phone:'+37491123456',turnstileToken:'test-token-accepted'})).response.status,200);assert.match(otp,/^\d{6}$/);assert.equal((await request('/verification/confirm',{code:otp})).response.status,200);}
  async function draft(){return request('/drafts',{serviceId:'13827004',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Test Guest',consent:true});}
- return {db,env,runtime,request,session,verified,draft,get counts(){return {createCalls,checkCalls,sentSms,receiptReads};},get otp(){return otp;},get cookie(){return cookie;},get csrf(){return csrf;},advance(seconds:number){time+=seconds*1000;},set hostname(v:string){turnstileHostname=v;},set createMode(v:string){createMode=v;},set price(v:number){price=v;},set slotSeconds(v:number){slotSeconds=v;},set receiptState(v:string){receiptState=v;},set smsMode(v:string){smsMode=v;},set liveDeleted(v:boolean){liveDeleted=v;},set liveStart(v:string){liveStart=v;},set liveReadFails(v:boolean){liveReadFails=v;},set currentPhone(v:string){currentPhone=v;},set createHook(v:(()=>Promise<void>)|undefined){createHook=v;}};
+ return {db,env,runtime,request,session,verified,draft,get createPayload(){return createPayload;},get smsTexts(){return smsTexts;},get counts(){return {createCalls,checkCalls,sentSms,receiptReads};},get otp(){return otp;},get cookie(){return cookie;},get csrf(){return csrf;},advance(seconds:number){time+=seconds*1000;},set hostname(v:string){turnstileHostname=v;},set createMode(v:string){createMode=v;},set price(v:number){price=v;},set slotSeconds(v:number){slotSeconds=v;},set receiptState(v:string){receiptState=v;},set smsMode(v:string){smsMode=v;},set liveDeleted(v:boolean){liveDeleted=v;},set liveStart(v:string){liveStart=v;},set liveReadFails(v:boolean){liveReadFails=v;},set currentPhone(v:string){currentPhone=v;},set createHook(v:(()=>Promise<void>)|undefined){createHook=v;}};
 }
 test('sessions use secure cookies, exact origin and CSRF; no session ID in response',async()=>{
  const f=fixture(),s=await f.session();

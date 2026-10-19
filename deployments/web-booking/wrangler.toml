@@ -19,6 +19,7 @@ not_found_handling = "404-page"
 [vars]
 # Set to the exact deployed HTTPS origin before enabling this application.
 PUBLIC_ORIGIN = "https://book.motionconcept.rest"
+ECOSYSTEM_GATEWAY_ORIGIN = "https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app"
 # Public DNS and HTTPS for book are active; old entry points redirect.
 LEGACY_BOOKING_ACTIVE = "false"
 ALTEGIO_COMPANY_ID = "1389810"

@@ -128,7 +128,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if b.Status != booking.StatusConfirmed || b.Duration <= 0 || h.now().After(b.StartsAt.Add(b.Duration).Add(24*time.Hour)) {
+	if b.Status != booking.StatusConfirmed || b.Duration <= 0 || h.now().After(b.StartsAt.Add(b.CalendarDuration()).Add(24*time.Hour)) {
 		http.Error(w, p.expired, http.StatusGone)
 		return
 	}
@@ -144,8 +144,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(ICS(b, title, address, description, h.now())))
 		return
 	}
-	google := url.Values{"action": {"TEMPLATE"}, "text": {title}, "dates": {stamp(b.StartsAt) + "/" + stamp(b.StartsAt.Add(b.Duration))}, "details": {description}, "location": {address}}
-	outlook := url.Values{"path": {"/calendar/action/compose"}, "rru": {"addevent"}, "subject": {title}, "startdt": {b.StartsAt.UTC().Format(time.RFC3339)}, "enddt": {b.StartsAt.Add(b.Duration).UTC().Format(time.RFC3339)}, "body": {description}, "location": {address}}
+	google := url.Values{"action": {"TEMPLATE"}, "text": {title}, "dates": {stamp(b.StartsAt) + "/" + stamp(b.StartsAt.Add(b.CalendarDuration()))}, "details": {description}, "location": {address}}
+	outlook := url.Values{"path": {"/calendar/action/compose"}, "rru": {"addevent"}, "subject": {title}, "startdt": {b.StartsAt.UTC().Format(time.RFC3339)}, "enddt": {b.StartsAt.Add(b.CalendarDuration()).UTC().Format(time.RFC3339)}, "body": {description}, "location": {address}}
 	download := *r.URL
 	q := download.Query()
 	q.Set("format", "ics")
@@ -185,7 +185,7 @@ func escape(s string) string {
 // 75 octets. No client name, phone number, private link or management proof.
 func ICS(b booking.Booking, title, address, description string, now time.Time) string {
 	uid := sha256.Sum256([]byte("calendar-uid:" + b.ID))
-	lines := []string{"BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Motion Concept//Appointments//EN", "CALSCALE:GREGORIAN", "BEGIN:VEVENT", fmt.Sprintf("UID:%x@motionconcept.rest", uid[:16]), "DTSTAMP:" + stamp(now), "DTSTART:" + stamp(b.StartsAt), "DTEND:" + stamp(b.StartsAt.Add(b.Duration)), "SUMMARY:" + escape(title), "LOCATION:" + escape(address), "DESCRIPTION:" + escape(description), "STATUS:CONFIRMED", "TRANSP:OPAQUE", "BEGIN:VALARM", "TRIGGER:-PT24H", "ACTION:DISPLAY", "DESCRIPTION:" + escape(title), "END:VALARM", "END:VEVENT", "END:VCALENDAR"}
+	lines := []string{"BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Motion Concept//Appointments//EN", "CALSCALE:GREGORIAN", "BEGIN:VEVENT", fmt.Sprintf("UID:%x@motionconcept.rest", uid[:16]), "DTSTAMP:" + stamp(now), "DTSTART:" + stamp(b.StartsAt), "DTEND:" + stamp(b.StartsAt.Add(b.CalendarDuration())), "SUMMARY:" + escape(title), "LOCATION:" + escape(address), "DESCRIPTION:" + escape(description), "STATUS:CONFIRMED", "TRANSP:OPAQUE", "BEGIN:VALARM", "TRIGGER:-PT24H", "ACTION:DISPLAY", "DESCRIPTION:" + escape(title), "END:VALARM", "END:VEVENT", "END:VCALENDAR"}
 	var out strings.Builder
 	for _, line := range lines {
 		for len(line) > 75 {

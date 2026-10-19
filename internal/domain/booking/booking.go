@@ -140,6 +140,9 @@ type Booking struct {
 	StartsAt time.Time
 	Duration time.Duration
 	Status   Status
+	// TreatmentDuration excludes the provider's private cleanup buffer when
+	// it is explicitly present on an administrative record.
+	TreatmentDuration time.Duration
 
 	CreatedAt time.Time
 }
@@ -147,6 +150,12 @@ type Booking struct {
 // EndsAt returns when the appointment finishes.
 func (b Booking) EndsAt() time.Time {
 	return b.StartsAt.Add(b.Duration)
+}
+func (b Booking) CalendarDuration() time.Duration {
+	if b.TreatmentDuration > 0 && b.TreatmentDuration <= b.Duration {
+		return b.TreatmentDuration
+	}
+	return b.Duration
 }
 
 // Request is an appointment the application wants created.

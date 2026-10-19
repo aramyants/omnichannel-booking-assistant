@@ -5,6 +5,7 @@ import { body, configured, constantEqual, cookie, hash, hmac, ip, normalizePhone
 import { allowedDestination, credentials, destinationCodes, sendSms, smsReceipt } from './sms.ts';
 import { Store } from './store.ts';
 import { runNotifications } from './notifications.ts';
+import {ecosystemContext,otpMessage} from './ecosystem.ts';
 
 const prefix='/api/booking';
 const responseHeaders={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY'};
@@ -69,6 +70,11 @@ async function smsReservation(store:Store,env:Env,runtime:Runtime,session:Sessio
  return {id,expiry};
 }
 async function optionalConfirmation(store:Store,env:Env,runtime:Runtime,session:Session,request:Request,draft:Draft,appointment:Appointment):Promise<void> {
+ if(env.ECOSYSTEM_GATEWAY_ORIGIN){
+  const result=await ecosystemContext(env,runtime,{action:'confirmed',phone:draft.phone,recordId:appointment.id});
+  if(result.calendarUrl){appointment.calendarUrl=result.calendarUrl;await store.appointmentDetails(draft.id,appointment);}
+  return;
+ }
  if(env.SMS_CONFIRMATIONS_ENABLED!=='true')return;
  const {id,expiry}=await smsReservation(store,env,runtime,session,request,'confirmation',undefined,draft.phone,draft.id);
  const text=`E-Motion Concept: booking confirmed ${appointment.datetime.slice(0,10)} at ${appointment.datetime.slice(11,16)}. Ref ${appointment.id}. Questions: +37494768067.`;
@@ -119,6 +125,13 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    const path=/^\/(?:en\/|hy\/)?(?:privacy|terms|data-deletion)\/?$/.test(url.pathname)?url.pathname:'/';
    return new Response(null,{status:308,headers:{Location:env.PUBLIC_ORIGIN+path,'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
   }
+  if(url.origin===env.PUBLIC_ORIGIN&&url.pathname.startsWith('/calendar/')&&env.ECOSYSTEM_GATEWAY_ORIGIN){
+   if(!['GET','HEAD'].includes(request.method)||!/^\/calendar\/[1-9]\d{0,14}$/.test(url.pathname))return new Response('Not found',{status:404});
+   const target=new URL(env.ECOSYSTEM_GATEWAY_ORIGIN+url.pathname);for(const field of ['key','lang','format']){const value=url.searchParams.get(field);if(value)target.searchParams.set(field,value);}
+   if(!/^[A-Za-z0-9_-]{43}$/.test(target.searchParams.get('key')||''))return new Response('Not found',{status:404});
+   const result=await runtime.fetch(target,{method:request.method,headers:{Accept:request.headers.get('Accept')||'text/html'},redirect:'manual',signal:AbortSignal.timeout(12000)});
+   const headers=new Headers(result.headers);headers.set('Cache-Control','private, no-store');headers.set('Referrer-Policy','no-referrer');return new Response(result.body,{status:result.status,headers});
+  }
   if(request.method==='GET'&&env.PUBLIC_ORIGIN==='https://book.motionconcept.rest'){
    const bookingEntry=url.pathname==='/'||/^\/(?:booking|(?:hy|ru|en)\/booking)\/?$/.test(url.pathname);
    if(url.hostname==='booking.motionconcept.rest'&&env.LEGACY_BOOKING_ACTIVE!=='true')return new Response(null,{status:308,headers:{Location:env.PUBLIC_ORIGIN+(bookingEntry?'/':url.pathname),'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
@@ -144,7 +157,8 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    let raw=cookie(request),session=/^[a-f0-9]{64}$/.test(raw)?await store.session(await hash(raw),now):null;
    if(!session){await store.rate('session-ip:'+ipHash,10,3600,now);await store.rate('session-global',100,60,now);raw=randomToken();session=await store.newSession(await hash(raw),now);}
    const unresolved=session.phone?await store.unresolvedPhone(session.phone):null;
-   return json({csrfToken:await hmac(env.SESSION_SECRET,'csrf:'+raw),phoneVerified:!!session.phone,...(session.phone?{phone:session.phone}:{}),...(unresolved?.session_id===session.id?{unresolvedDraftId:unresolved.id}:{})},200,{'Set-Cookie':setCookie(raw)});
+   const preference=session.phone?await ecosystemContext(env,runtime,{action:'context',phone:session.phone,locale:requestLanguage(request),explicit:request.headers.get('X-Booking-Language-Source')==='explicit'}):undefined;
+   return json({csrfToken:await hmac(env.SESSION_SECRET,'csrf:'+raw),phoneVerified:!!session.phone,...(session.phone?{phone:session.phone,preferredLocale:preference?.locale}:{}),...(unresolved?.session_id===session.id?{unresolvedDraftId:unresolved.id}:{})},200,{'Set-Cookie':setCookie(raw)});
   }
   const client=new Altegio(env,runtime);
   if(request.method==='GET'&&['/services','/staff','/dates','/slots'].includes(path)){
@@ -162,6 +176,11 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
   if(request.method==='GET'&&path.startsWith('/appointments/'))return json(await status(store,session,validDraftId(path.slice('/appointments/'.length)),now));
   if(request.method!=='POST')throw new Failure('not_found',404);
   const data=await body(request);
+  if(path==='/preferences'){
+   onlyKeys(data,[]);if(!session.phone)throw new Failure('verification_required',403);
+   const preference=await ecosystemContext(env,runtime,{action:'context',phone:session.phone,locale:requestLanguage(request),explicit:request.headers.get('X-Booking-Language-Source')==='explicit'});
+   return json({preferredLocale:preference.locale});
+  }
   if(path==='/verification/request'){
    onlyKeys(data,['phone','turnstileToken']);
    if(env.BOOKING_ENABLED!=='true')throw new Failure('booking_paused',503,'Online booking is temporarily unavailable. Please contact the studio.');
@@ -170,7 +189,7 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    credentials(env);await verifyTurnstile(data.turnstileToken,request,env,runtime);
    const otp=code(),digest=await hmac(env.SESSION_SECRET,`otp:${session.id}:${phone}:${otp}`);
    const reservation=await smsReservation(store,env,runtime,session,request,'otp',digest,phone);
-   const receipt=await sendSms(env,runtime,reservation.id,phone,`E-Motion Concept: ${otp} is your booking access code. Expires in 5 minutes. Do not share it.`,reservation.expiry);
+   const receipt=await sendSms(env,runtime,reservation.id,phone,otpMessage(otp,requestLanguage(request)),reservation.expiry);
    await store.smsStatus(reservation.id,receipt);
    if(['rejected','Failed','Cancelled'].includes(receipt))throw new Failure('sms_unavailable',503,'The code could not be sent. Please contact the studio or try later.');
    return json({status:'pending',expiresIn:300});
@@ -185,13 +204,19 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    return json({phoneVerified:true,phone:attempt.otp_phone});
   }
   if(path==='/drafts'){
-   onlyKeys(data,['serviceId','staffId','datetime','name','consent']);
+   onlyKeys(data,['serviceId','staffId','datetime','name','consent','email','comment']);
    if(!session.phone)throw new Failure('verification_required',403,'Verify your booking phone first.');
    if(data.consent!==true)throw new Failure('consent_required',400,'Please confirm the booking request.');
    const name=safeText(data.name,120);
    if(!name||name.length<2||typeof data.name!=='string'||data.name.length>120||/[<>\u0000-\u001f]/.test(data.name))throw new Failure('invalid_name',400,'Enter your first and last name.');
    await store.rate('draft-session:'+session.id,10,3600,now);
    const summary=await client.summary(identifier(data.serviceId),identifier(data.staffId),localDatetime(data.datetime,runtime.now()),name,randomToken(16));
+   const email=typeof data.email==='string'?data.email.trim():'';
+   const comment=typeof data.comment==='string'?data.comment.trim():'';
+   if((data.email!==undefined&&typeof data.email!=='string')||email.length>254||(email&&!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email))||/[\u0000-\u001f\u007f]/.test(email))throw new Failure('invalid_email');
+   if((data.comment!==undefined&&typeof data.comment!=='string')||comment.length>1000||/[<>\u0000-\u0008\u000b-\u001f\u007f]/.test(comment))throw new Failure('invalid_comment');
+   const preference=await ecosystemContext(env,runtime,{action:'prepare',phone:session.phone,locale:requestLanguage(request),explicit:request.headers.get('X-Booking-Language-Source')==='explicit',consent:true});
+   summary.locale=preference.locale;summary.email=email;summary.comment=comment;
    await store.saveDraft(session,summary,now);const {reservedMinutes:_privateReservation,...publicSummary}=summary;return json({draft:publicSummary,phoneVerified:true});
   }
   if(path==='/appointments'){

@@ -17,6 +17,8 @@ export interface Env {
  SMS_CONFIRMATIONS_ENABLED?: string; BOOKING_ENABLED?: string;
  SMS_REMINDERS_ENABLED?: string;
  SMS_ALLOWED_COUNTRY_CODES?: string;
+ ECOSYSTEM_GATEWAY_ORIGIN?: string;
+ ECOSYSTEM_CONTEXT_KEY?: string;
 }
 export interface Session {
  id: string; created_at: number; expires_at: number; phone: string | null;
@@ -27,10 +29,12 @@ export interface Summary {
  datetime: string; name: string; durationMinutes: number; price: string;
  reservedMinutes: number;
  priceMin: number; priceMax: number; currency: string; consent: true;
+ locale?:'ru'|'en'|'hy'; email?:string; comment?:string;
 }
 export interface Appointment {
  id: string; serviceName: string; staffName: string; datetime: string; durationMinutes: number; price: string;
  priceMin: number; priceMax: number;
+ calendarUrl?:string;
 }
 export interface Draft {
  id: string; session_id: string; phone: string; summary: string;

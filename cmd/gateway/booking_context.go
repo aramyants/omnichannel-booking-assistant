@@ -59,7 +59,7 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 		}
 		decoder := json.NewDecoder(strings.NewReader(string(raw)))
 		decoder.DisallowUnknownFields()
-		if decoder.Decode(&body) != nil {
+		if decoder.Decode(&body) != nil || decoder.Decode(new(any)) != io.EOF {
 			http.Error(w, "Bad request", 400)
 			return
 		}
@@ -68,7 +68,7 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 			http.Error(w, "Bad request", 400)
 			return
 		}
-		if body.Action != "context" && body.Action != "prepare" && body.Action != "confirmed" {
+		if body.Action != "context" && body.Action != "prepare" && body.Action != "confirmed" && body.Action != "record-context" {
 			http.Error(w, "Bad request", 400)
 			return
 		}
@@ -89,14 +89,25 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 				return nil
 			})
 		}
-		output := map[string]string{"locale": lang}
-		if body.Action == "confirmed" {
+		output := map[string]any{"locale": lang}
+		if body.Action == "confirmed" || body.Action == "record-context" {
 			if _, parseErr := strconv.ParseUint(body.RecordID, 10, 64); parseErr != nil {
 				http.Error(w, "Bad request", 400)
 				return
 			}
 			snap, readErr := service.Reader.ReadNativeBooking(r.Context(), body.RecordID)
-			if readErr != nil || snap.Phone != phone || !strings.HasPrefix(snap.APIID, "emotion-web-v2-") {
+			if readErr != nil {
+				http.Error(w, "Unavailable", 503)
+				return
+			}
+			owned := strings.HasPrefix(snap.APIID, "emotion-web-v2-") || (body.Action == "record-context" && strings.HasPrefix(snap.APIID, "omnichannel-web-"))
+			eligible := snap.Phone == phone && owned && snap.Booking.Status == booking.StatusConfirmed && snap.Booking.StartsAt.After(time.Now())
+			if body.Action == "record-context" {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"locale": lang, "eligible": eligible})
+				return
+			}
+			if !eligible {
 				http.Error(w, "Unavailable", 503)
 				return
 			}

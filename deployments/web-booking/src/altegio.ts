@@ -151,8 +151,8 @@ export class Altegio {
  async check(summary:Summary):Promise<void> { await this.call('/book_check/'+this.env.ALTEGIO_COMPANY_ID,'POST',{appointments:[this.appointment(summary)]}); }
  async create(summary:Summary,phone:string):Promise<{id:string;managementHash:string}> {
   const result=await this.call('/book_record/'+this.env.ALTEGIO_COMPANY_ID,'POST',{
-   phone,fullname:summary.name,email:'',comment:'Booked through the E-Motion Concept owned booking page. Name supplied: '+summary.name,
-   appointments:[this.appointment(summary)],api_id:'omnichannel-web-'+summary.id,notify_by_sms:0,notify_by_email:0
+   phone,fullname:summary.name,email:summary.email||'',comment:'E-Motion web booking. '+(summary.comment||''),
+   appointments:[this.appointment(summary)],api_id:(this.env.ECOSYSTEM_GATEWAY_ORIGIN?'emotion-web-v2-':'omnichannel-web-')+summary.id,notify_by_sms:0,notify_by_email:0
   },true);
   if (!Array.isArray(result) || result.length!==1 || !result[0] || !Number.isSafeInteger(Number(result[0].record_id)) || Number(result[0].record_id)<=0) throw new Failure('outcome_unknown',503);
   return {id:String(result[0].record_id),managementHash:typeof result[0].record_hash==='string'?result[0].record_hash:''};

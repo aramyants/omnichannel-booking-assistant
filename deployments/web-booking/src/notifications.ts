@@ -3,6 +3,7 @@ import { hmac, normalizePhone, randomToken, smsCap } from './security.ts';
 import { allowedDestination, credentials, sendSms, smsReceipt } from './sms.ts';
 import { Store } from './store.ts';
 import type { Appointment, Draft, Env, Runtime, Summary } from './types.ts';
+import {ecosystemContext,locale,reminderMessage} from './ecosystem.ts';
 
 function samePhone(raw:string,expected:string):boolean{
  try{return normalizePhone(raw.startsWith('+')?raw:'+'+raw)===expected;}catch{return false;}
@@ -35,7 +36,11 @@ async function reminder(env:Env,runtime:Runtime,store:Store,draft:Draft,now:numb
   }
   // The public capability response can omit its current recipient. Never infer
   // that it is still the original phone after a receptionist reassigns a visit.
-  if(await client.currentPhone(appointment.id)!==draft.phone){await store.reminderState(draft.id,'checking','skipped',now);return;}
+  if(env.ECOSYSTEM_GATEWAY_ORIGIN){
+   const context=await ecosystemContext(env,runtime,{action:'record-context',phone:draft.phone,recordId:appointment.id});
+   if(context.eligible!==true){await store.reminderState(draft.id,'checking','skipped',now);return;}
+   summary.locale=context.locale;
+  }else if(await client.currentPhone(appointment.id)!==draft.phone){await store.reminderState(draft.id,'checking','skipped',now);return;}
  }catch{
   // No customer send intent exists yet; retry only the read within the due window.
   await store.reminderState(draft.id,'checking','pending',now);return;
@@ -47,7 +52,7 @@ async function reminder(env:Env,runtime:Runtime,store:Store,draft:Draft,now:numb
  // The unique outbox row is now the irreversible send reservation. A crash or
  // timeout after it can never produce another reminder POST.
  await store.reminderState(draft.id,'checking','sending',now);
- const text=`E-Motion Concept: reminder for your visit ${summary.datetime.slice(0,10)} at ${summary.datetime.slice(11,16)}. Ref ${appointment.id}. Questions: +37494768067.`;
+ const text=reminderMessage(summary.datetime,locale(summary.locale));
  const receipt=await sendSms(env,runtime,id,draft.phone,text,expiry,0);
  await store.smsStatus(id,receipt);await store.reminderState(draft.id,'sending','done',now);
 }

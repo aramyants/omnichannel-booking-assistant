@@ -679,19 +679,20 @@ func (s *Store) Release(ctx context.Context, key, claimID string) error {
 }
 
 type bookingDoc struct {
-	ID              string    `firestore:"id"`
-	ExternalID      string    `firestore:"external_id"`
-	ManagementToken string    `firestore:"management_token"`
-	CustomerID      string    `firestore:"customer_id"`
-	ServiceIDs      []string  `firestore:"service_ids"`
-	StaffID         string    `firestore:"staff_id"`
-	CustomerName    string    `firestore:"customer_name,omitempty"`
-	ServiceNames    []string  `firestore:"service_names,omitempty"`
-	StaffName       string    `firestore:"staff_name,omitempty"`
-	StartsAt        time.Time `firestore:"starts_at"`
-	DurationSecs    int64     `firestore:"duration_seconds"`
-	Status          string    `firestore:"status"`
-	CreatedAt       time.Time `firestore:"created_at"`
+	TreatmentDurationSecs int64     `firestore:"treatment_duration_seconds,omitempty"`
+	ID                    string    `firestore:"id"`
+	ExternalID            string    `firestore:"external_id"`
+	ManagementToken       string    `firestore:"management_token"`
+	CustomerID            string    `firestore:"customer_id"`
+	ServiceIDs            []string  `firestore:"service_ids"`
+	StaffID               string    `firestore:"staff_id"`
+	CustomerName          string    `firestore:"customer_name,omitempty"`
+	ServiceNames          []string  `firestore:"service_names,omitempty"`
+	StaffName             string    `firestore:"staff_name,omitempty"`
+	StartsAt              time.Time `firestore:"starts_at"`
+	DurationSecs          int64     `firestore:"duration_seconds"`
+	Status                string    `firestore:"status"`
+	CreatedAt             time.Time `firestore:"created_at"`
 }
 
 // SaveBooking records an appointment.
@@ -700,19 +701,20 @@ type bookingDoc struct {
 // the same appointment twice updates one record rather than creating two.
 func (s *Store) SaveBooking(ctx context.Context, b booking.Booking) error {
 	_, err := s.client.Collection(collectionBookings).Doc(b.ExternalID).Set(ctx, bookingDoc{
-		ID:              b.ID,
-		ExternalID:      b.ExternalID,
-		ManagementToken: b.ManagementToken,
-		CustomerID:      b.CustomerID,
-		ServiceIDs:      b.ServiceIDs,
-		StaffID:         b.StaffID,
-		CustomerName:    b.CustomerName,
-		ServiceNames:    b.ServiceNames,
-		StaffName:       b.StaffName,
-		StartsAt:        b.StartsAt,
-		DurationSecs:    int64(b.Duration.Seconds()),
-		Status:          string(b.Status),
-		CreatedAt:       b.CreatedAt,
+		TreatmentDurationSecs: int64(b.TreatmentDuration.Seconds()),
+		ID:                    b.ID,
+		ExternalID:            b.ExternalID,
+		ManagementToken:       b.ManagementToken,
+		CustomerID:            b.CustomerID,
+		ServiceIDs:            b.ServiceIDs,
+		StaffID:               b.StaffID,
+		CustomerName:          b.CustomerName,
+		ServiceNames:          b.ServiceNames,
+		StaffName:             b.StaffName,
+		StartsAt:              b.StartsAt,
+		DurationSecs:          int64(b.Duration.Seconds()),
+		Status:                string(b.Status),
+		CreatedAt:             b.CreatedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("firestore: record a booking: %w", err)
@@ -736,7 +738,7 @@ func (s *Store) FindBooking(ctx context.Context, reference string) (booking.Book
 	if err := snapshot.DataTo(&doc); err != nil {
 		return booking.Booking{}, err
 	}
-	return booking.Booking{ID: doc.ID, ExternalID: doc.ExternalID, ManagementToken: doc.ManagementToken, CustomerID: doc.CustomerID, ServiceIDs: doc.ServiceIDs, StaffID: doc.StaffID, CustomerName: doc.CustomerName, ServiceNames: doc.ServiceNames, StaffName: doc.StaffName, StartsAt: doc.StartsAt, Duration: time.Duration(doc.DurationSecs) * time.Second, Status: booking.Status(doc.Status), CreatedAt: doc.CreatedAt}, nil
+	return booking.Booking{ID: doc.ID, ExternalID: doc.ExternalID, ManagementToken: doc.ManagementToken, CustomerID: doc.CustomerID, ServiceIDs: doc.ServiceIDs, StaffID: doc.StaffID, CustomerName: doc.CustomerName, ServiceNames: doc.ServiceNames, StaffName: doc.StaffName, StartsAt: doc.StartsAt, Duration: time.Duration(doc.DurationSecs) * time.Second, TreatmentDuration: time.Duration(doc.TreatmentDurationSecs) * time.Second, Status: booking.Status(doc.Status), CreatedAt: doc.CreatedAt}, nil
 }
 
 // ListBookings returns a customer's appointments, soonest first.
@@ -768,19 +770,20 @@ func (s *Store) ListBookings(ctx context.Context, customerID string) ([]booking.
 			return nil, fmt.Errorf("firestore: read booking: %w", err)
 		}
 		bookings = append(bookings, booking.Booking{
-			ID:              doc.ID,
-			ExternalID:      doc.ExternalID,
-			ManagementToken: doc.ManagementToken,
-			CustomerID:      doc.CustomerID,
-			ServiceIDs:      doc.ServiceIDs,
-			StaffID:         doc.StaffID,
-			CustomerName:    doc.CustomerName,
-			ServiceNames:    doc.ServiceNames,
-			StaffName:       doc.StaffName,
-			StartsAt:        doc.StartsAt,
-			Duration:        time.Duration(doc.DurationSecs) * time.Second,
-			Status:          booking.Status(doc.Status),
-			CreatedAt:       doc.CreatedAt,
+			ID:                doc.ID,
+			ExternalID:        doc.ExternalID,
+			ManagementToken:   doc.ManagementToken,
+			CustomerID:        doc.CustomerID,
+			ServiceIDs:        doc.ServiceIDs,
+			StaffID:           doc.StaffID,
+			CustomerName:      doc.CustomerName,
+			ServiceNames:      doc.ServiceNames,
+			StaffName:         doc.StaffName,
+			StartsAt:          doc.StartsAt,
+			Duration:          time.Duration(doc.DurationSecs) * time.Second,
+			TreatmentDuration: time.Duration(doc.TreatmentDurationSecs) * time.Second,
+			Status:            booking.Status(doc.Status),
+			CreatedAt:         doc.CreatedAt,
 		})
 	}
 

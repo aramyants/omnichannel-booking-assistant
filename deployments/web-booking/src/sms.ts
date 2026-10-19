@@ -27,8 +27,8 @@ export function allowedDestination(phone:string,env:Env):void {
 }
 export async function sendSms(env:Env,runtime:Runtime,id:string,phone:string,text:string,expiry:number,priority=100):Promise<string> {
  const config=credentials(env);
- // Every web SMS is deliberately a single GSM-7 ASCII segment. Never truncate codes.
- if(!/^[\x20-\x7e]+$/.test(text) || text.length>160)throw new Failure('sms_unavailable',503);
+ // Bounded localized Unicode text. Never truncate a verification code or URL.
+ if(!text.trim()||/[\u0000-\u0008\u000b-\u001f\u007f]/.test(text)||text.length>201)throw new Failure('sms_unavailable',503);
  try {
   const response=await runtime.fetch('https://api.sms-gate.app/3rdparty/v1/messages',{
    method:'POST',headers:{'Authorization':'Basic '+btoa(config.username+':'+config.password),'Content-Type':'application/json','User-Agent':'E-Motion-Owned-Booking/1.0'},

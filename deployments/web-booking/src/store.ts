@@ -97,6 +97,7 @@ export class Store {
    SELECT ?,'pending',?,?,? WHERE EXISTS(SELECT 1 FROM drafts WHERE id=? AND status='confirmed')`).bind(id,reminderDue,reminderDue+900,now,id));
   await this.db.batch(statements);
  }
+ async appointmentDetails(id:string,appointment:unknown):Promise<void>{await this.db.prepare("UPDATE drafts SET appointment=? WHERE id=? AND status='confirmed'").bind(JSON.stringify(appointment),id).run();}
  async cleanup(now:number):Promise<void> {
   await this.db.batch([
    this.db.prepare('DELETE FROM sessions WHERE expires_at<?').bind(now),

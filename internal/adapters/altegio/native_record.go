@@ -12,16 +12,17 @@ import (
 )
 
 type nativeRecord struct {
-	ID        int64  `json:"id"`
-	CompanyID int64  `json:"company_id"`
-	Datetime  string `json:"datetime"`
-	Length    int64  `json:"seance_length"`
-	Deleted   bool   `json:"deleted"`
-	Created   string `json:"create_date"`
-	Changed   string `json:"last_change_date"`
-	APIID     string `json:"api_id"`
-	Online    bool   `json:"online"`
-	Client    *struct {
+	ID             int64  `json:"id"`
+	CompanyID      int64  `json:"company_id"`
+	Datetime       string `json:"datetime"`
+	Length         int64  `json:"seance_length"`
+	TechnicalBreak int64  `json:"technical_break_duration"`
+	Deleted        bool   `json:"deleted"`
+	Created        string `json:"create_date"`
+	Changed        string `json:"last_change_date"`
+	APIID          string `json:"api_id"`
+	Online         bool   `json:"online"`
+	Client         *struct {
 		ID    int64  `json:"id"`
 		Name  string `json:"name"`
 		Phone string `json:"phone"`
@@ -63,6 +64,9 @@ func (c *Client) nativeSnapshot(dto nativeRecord, numeric int64) (notifications.
 		return time.Time{}
 	}
 	b := booking.Booking{ExternalID: strconv.FormatInt(numeric, 10), StartsAt: parse(dto.Datetime), Duration: time.Duration(dto.Length) * time.Second, CreatedAt: parse(dto.Created), StaffID: strconv.FormatInt(dto.Staff.ID, 10), StaffName: dto.Staff.Name, Status: booking.StatusConfirmed}
+	if dto.TechnicalBreak > 0 && dto.TechnicalBreak < dto.Length {
+		b.TreatmentDuration = time.Duration(dto.Length-dto.TechnicalBreak) * time.Second
+	}
 	if dto.Deleted {
 		b.Status = booking.StatusCancelled
 	}

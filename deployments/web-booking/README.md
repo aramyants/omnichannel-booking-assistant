@@ -12,8 +12,8 @@ old booking entries to the clean root. `e-motion.rest` and `www.e-motion.rest` a
 redirect there. The main landing domain links directly to this origin and uses
 the separate `emotion-studio-site` static Worker.
 
-Standalone Worker + D1 + static assets. The existing Go service, chat assistants,
-secrets, reminders and Cloud Run configuration are unchanged. Browser booking
+Worker + D1 + static assets with the existing Go service as the shared verified
+language, calendar and durable confirmation owner. Browser booking
 uses deterministic code; it makes no AI calls. Infrastructure is intended for a
 Cloudflare **Free** account with no paid plan or paid add-ons. Free quotas may
 stop the application; they are not an assurance of unlimited operation.
@@ -46,21 +46,23 @@ secret facility; never commit credentials or a `.dev.vars` file:
 | `ALTEGIO_USER_TOKEN` | Required only for enabled reminders: server-only current recipient check on the exact owned record; public APIs never receive it |
 | `ALTEGIO_COMPANY_ID` | `1389810` |
 | `ALTEGIO_CURRENCY` | `AMD` |
+| `ECOSYSTEM_GATEWAY_ORIGIN` | Exact existing Cloud Run origin for the signed internal bridge |
+| `ECOSYSTEM_CONTEXT_KEY` | Domain-separated server signing key; secret binding, never browser-visible |
 | `TURNSTILE_SECRET` | Secret verification key for this widget |
 | `TURNSTILE_SITE_KEY` | Public widget key; returned by `/config` |
 | `SMSGATE_CREDENTIALS_JSON` | Existing pinned JSON: `username`, `password`, `device_id`, integer `sim_number`, optional official `api_base_url` |
 | `SMS_ALLOWED_COUNTRY_CODES` | `374` by default; explicit `*` permits all metadata-valid international numbers; a comma-separated full calling-code allowlist is also supported |
-| `SMS_DAILY_CAP` | Positive single-part send cap, `0` to disable, or explicit `unlimited` |
-| `SMS_MONTHLY_CAP` | Positive single-part send cap, `0` to disable, or explicit `unlimited` |
+| `SMS_DAILY_CAP` | Positive message send cap, `0` to disable, or explicit `unlimited` |
+| `SMS_MONTHLY_CAP` | Positive message send cap, `0` to disable, or explicit `unlimited` |
 | `SMS_CONFIRMATIONS_ENABLED` | `false` by default; opt-in SMS confirmation route |
 | `SMS_REMINDERS_ENABLED` | `false` by default; one consented reminder about two hours before an owned web appointment |
 | `BOOKING_ENABLED` | `false` until review and deployment validation complete |
 
 The SMS caps cover verification and optional confirmation together, in Yerevan
 calendar days/months. Reserved, rejected and uncertain sends all consume budget.
-Every web SMS is one ASCII GSM-7 segment. Caps limit message volume, **not a
-verified monetary spend**: Ucom tariff permission, included allowance and price
-remain external facts to establish. Use zero caps while those facts are unclear.
+Localized SMS is bounded at 201 UTF-16 units, up to three concatenated Unicode
+parts. Caps count messages rather than carrier segments or monetary spend.
+The owner has confirmed the SIM's automated and international SMS coverage.
 The owner's explicit `unlimited` value removes only daily/monthly business-volume
 caps. It is represented by SQL NULL and does not turn missing/invalid config into
 unlimited mode. Phone/session/IP cooldowns, OTP attempts and Turnstile remain active.
@@ -172,11 +174,13 @@ specialist's duration remains authoritative at preparation. Any longer calendar
 slot is stored separately as a private reservation length and rechecked; it is
 not presented as a longer treatment or asserted to be a particular kind of buffer.
 
-The code ports the live Go client's required `Accept` header, `fullname`, explicit
-empty `email`, selected service array, timezone and disabled native notification
-flags. `api_id` uses `omnichannel-web-<draftId>`, preserving the existing Go
-notification worker's owned-booking suppression. It is a correlation field, not
-provider-guaranteed idempotency.
+The code uses the live Go client's required `Accept` header, `fullname`, optional
+validated email and comments, selected service, timezone and disabled native
+notification flags. With the shared bridge enabled, `api_id` is
+`emotion-web-v2-<draftId>` and Go owns the confirmation, using a deterministic
+event and delivery ledger. The legacy standalone mode retains
+`omnichannel-web-<draftId>`. The correlation field is not provider-guaranteed
+idempotency.
 
 D1 atomically changes `ready → checking → sending` before the single external
 creation POST. Concurrent clicks only read that intent. Lost responses, transport
@@ -200,7 +204,7 @@ or uncertain SMS cannot make an existing appointment look failed. Every five
 minutes, the scheduled worker reads at most three outstanding provider message
 IDs, recording Pending/Processed/Sent/Delivered/Failed/Cancelled without resending.
 Unknown reads remain unconfirmed and cannot become a guessed delivery or failure.
-Monitoring ends after 24 hours. Messages are single-part ASCII, so a confirmed
+Monitoring ends after 24 hours. Localized messages are never truncated; a confirmed
 provider Delivered status is retained as that provider receipt. Outbox records
 remain private operator evidence; automatic staff alerts are not implemented.
 

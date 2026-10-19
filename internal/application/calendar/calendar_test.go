@@ -39,6 +39,15 @@ func calendarRequest(h http.Handler, link string) *httptest.ResponseRecorder {
 	mux.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, link, nil))
 	return rec
 }
+func TestCustomerCalendarExcludesExplicitPrivateTechnicalBreak(t *testing.T) {
+	b := calendarBooking()
+	b.Duration = 95 * time.Minute
+	b.TreatmentDuration = 80 * time.Minute
+	exported := ICS(b, "Motion Relax", "Yerevan", "", b.StartsAt.Add(-time.Hour))
+	if !strings.Contains(exported, "DTEND:20260924T122000Z") || strings.Contains(exported, "DTEND:20260924T123500Z") {
+		t.Fatal(exported)
+	}
+}
 
 func TestPrivateCalendarLinksAndExports(t *testing.T) {
 	b := calendarBooking()
