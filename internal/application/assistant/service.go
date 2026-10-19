@@ -937,10 +937,12 @@ func (s *Service) reply(
 	for _, tag := range []string{"en", "ru", "hy"} {
 		if strings.TrimSpace(msg.Content.Text) == "/language "+tag || strings.HasSuffix(strings.TrimSpace(msg.Content.Text), " · /language "+tag) {
 			sess.language = languageOfTag(tag)
+			sess.conv.PreferredLanguage = tag
 			if sess.customer.VerifiedPhone != "" && s.preferredLanguage != nil {
 				if _, err := s.preferredLanguage(ctx, sess.customer.VerifiedPhone, tag, true); err != nil {
 					return "", err
 				}
+				sess.conv.PreferredLanguage = ""
 			}
 			return map[string]string{"en": "English selected. Your verified booking notifications will use English.", "ru": "Выбран русский язык. Уведомления по подтверждённому номеру будут на русском.", "hy": "Ընտրված է հայերենը։ Հաստատված համարի ամրագրման ծանուցումները կլինեն հայերեն։"}[tag], nil
 		}

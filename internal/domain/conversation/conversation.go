@@ -49,9 +49,12 @@ const (
 
 // Conversation is one exchange with one customer on one channel.
 type Conversation struct {
-	ID         string
-	CustomerID string
-	Provider   messaging.Provider
+	// An explicit chat choice before phone verification. On verification it
+	// moves to the shared phone preference and is cleared from this channel.
+	PreferredLanguage string
+	ID                string
+	CustomerID        string
+	Provider          messaging.Provider
 
 	// ExternalThreadID is the provider's own conversation identifier, and the
 	// address replies are delivered to.

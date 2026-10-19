@@ -209,6 +209,7 @@ type changeDraftDoc struct {
 }
 
 type conversationDoc struct {
+	PreferredLanguage      string          `firestore:"preferred_language,omitempty"`
 	ReminderOptIn          bool            `firestore:"reminder_opt_in"`
 	CatalogueCategory      string          `firestore:"catalogue_category,omitempty"`
 	CatalogueServiceID     string          `firestore:"catalogue_service_id,omitempty"`
@@ -237,6 +238,7 @@ type conversationDoc struct {
 
 func toConversationDoc(conv conversation.Conversation) conversationDoc {
 	doc := conversationDoc{
+		PreferredLanguage: conv.PreferredLanguage,
 		ReminderOptIn:     conv.ReminderOptIn,
 		CatalogueCategory: conv.CatalogueCategory, CatalogueServiceID: conv.CatalogueServiceID, CatalogueStaffID: conv.CatalogueStaffID, CataloguePage: conv.CataloguePage,
 		CataloguePhase: conv.CataloguePhase, CatalogueDate: conv.CatalogueDate,
@@ -288,6 +290,7 @@ func toConversationDoc(conv conversation.Conversation) conversationDoc {
 
 func fromConversationDoc(doc conversationDoc) conversation.Conversation {
 	conv := conversation.Conversation{
+		PreferredLanguage: doc.PreferredLanguage,
 		ReminderOptIn:     doc.ReminderOptIn,
 		CatalogueCategory: doc.CatalogueCategory, CatalogueServiceID: doc.CatalogueServiceID, CatalogueStaffID: doc.CatalogueStaffID, CataloguePage: doc.CataloguePage,
 		CataloguePhase: doc.CataloguePhase, CatalogueDate: doc.CatalogueDate,
