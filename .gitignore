@@ -18,6 +18,7 @@ go.work.sum
 # Local environment
 .env
 .env.local
+/cf_token.txt
 
 # Editors
 .vscode/

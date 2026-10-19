@@ -1,0 +1,34 @@
+name = "emotion-web-booking"
+main = "src/worker.ts"
+compatibility_date = "2026-10-19"
+workers_dev = false
+
+[assets]
+directory = "../../../emotion-concept/website/.output/public"
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[vars]
+# Set to the exact deployed HTTPS origin before enabling this application.
+PUBLIC_ORIGIN = "https://booking.motionconcept.rest"
+ALTEGIO_COMPANY_ID = "1389810"
+ALTEGIO_CURRENCY = "AMD"
+TURNSTILE_SITE_KEY = "0x4AAAAAAFbSUE32DuZE0B9D"
+SMS_DAILY_CAP = "unlimited"
+SMS_MONTHLY_CAP = "unlimited"
+SMS_CONFIRMATIONS_ENABLED = "true"
+SMS_REMINDERS_ENABLED = "true"
+SMS_ALLOWED_COUNTRY_CODES = "374"
+BOOKING_ENABLED = "true"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "emotion-web-booking"
+database_id = "5ac8177d-603c-46a5-9601-8c89465feb20"
+migrations_dir = "migrations"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[observability]
+enabled = false
