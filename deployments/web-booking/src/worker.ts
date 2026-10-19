@@ -6,6 +6,7 @@ import { allowedDestination, credentials, destinationCodes, sendSms, smsReceipt 
 import { Store } from './store.ts';
 import { runNotifications } from './notifications.ts';
 import {ecosystemContext,otpMessage} from './ecosystem.ts';
+import {publicReviews,reviewVisits,submitReview} from './reviews.ts';
 
 const prefix='/api/booking';
 const responseHeaders={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY'};
@@ -162,6 +163,7 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    return json({csrfToken:await hmac(env.SESSION_SECRET,'csrf:'+raw),phoneVerified:!!session.phone,...(session.phone?{phone:session.phone,preferredLocale:preference?.locale}:{}),...(unresolved?.session_id===session.id?{unresolvedDraftId:unresolved.id}:{})},200,{'Set-Cookie':setCookie(raw)});
   }
   const client=new Altegio(env,runtime);
+  if(path==='/reviews'&&request.method==='GET')return json(await publicReviews(env,url.searchParams.get('staff_id')));
   if(request.method==='GET'&&['/services','/staff','/dates','/slots'].includes(path)){
    if(path==='/services')return json({services:await client.services(),constraints:'Extra-time add-ons and treatments with two therapists are arranged directly with our team.'});
    const serviceId=identifier(url.searchParams.get('service_id'));
@@ -173,10 +175,18 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    return json({slots:(await client.slots(serviceId,staffId,date)).map(({datetime,label})=>({datetime,label}))});
   }
   const {session}=await authenticated(request,env,store,runtime,mutation);
+  if(request.method==='GET'&&path==='/review-visits'){
+   await store.rate('reviews-read:'+session.id,6,60,now);return json(await reviewVisits(env,runtime,session));
+  }
   if(request.method==='GET'&&path==='/verification/status')return json(await verificationStatus(store,session,env,runtime));
   if(request.method==='GET'&&path.startsWith('/appointments/'))return json(await status(store,session,validDraftId(path.slice('/appointments/'.length)),now,env,runtime,request));
   if(request.method!=='POST')throw new Failure('not_found',404);
   const data=await body(request);
+  if(path==='/reviews'){
+   await store.rate('reviews-write:'+session.id,5,3600,now);
+   if(session.phone)await store.rate('reviews-phone:'+await hmac(env.SESSION_SECRET,session.phone),10,86400,now);
+   return json(await submitReview(env,runtime,session,data,requestLanguage(request)));
+  }
   if(path==='/preferences'){
    onlyKeys(data,[]);if(!session.phone)throw new Failure('verification_required',403);
    const preference=await ecosystemContext(env,runtime,{action:'context',phone:session.phone,locale:requestLanguage(request),explicit:request.headers.get('X-Booking-Language-Source')==='explicit'});

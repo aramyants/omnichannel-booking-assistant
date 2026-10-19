@@ -27,6 +27,39 @@ class SQLiteD1 implements Database {
  async batch(statements:D1Statement[]){this.db.exec('BEGIN');try{const result=[];for(const s of statements)result.push(await s.run());this.db.exec('COMMIT');return result;}catch(e){this.db.exec('ROLLBACK');throw e;}}
 }
 
+test('verified reviews require phone ownership and a current completed visit, retain all ratings and remain unique',async()=>{
+ const f=fixture();
+ await f.session();
+ assert.equal((await f.request('/review-visits')).response.status,403);
+ assert.equal((await f.request('/reviews',{recordId:'42',rating:5,publish:true,displayName:'Guest'})).response.status,403);
+ await f.verified();f.env.ECOSYSTEM_GATEWAY_ORIGIN='https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app';
+ const provider=f.runtime.fetch;let checks=0;
+ f.runtime.fetch=async(input,init)=>{
+  if(String(input).includes('/internal/booking-context')){const body=JSON.parse(String(init!.body));
+   const visit={id:'42',staffId:'99',staffName:'Specialist',serviceName:'Treatment',datetime:'2026-10-20T10:00:00+04:00'};
+   if(body.action==='review-visits')return Response.json({locale:'en',visits:[visit]});
+   if(body.action==='review-check'){checks++;return body.recordId==='42'?Response.json({locale:'en',visit}):new Response('',{status:404})}
+   return Response.json({locale:'en'});
+  }return provider(input,init);
+ };
+ const visits=await f.request('/review-visits');assert.equal(visits.value.visits.length,1);assert.equal(visits.value.visits[0].reviewed,false);
+ const draft={recordId:'42',rating:1,comment:'The session could be better.',publish:true,displayName:'Guest'};
+ for(const invalid of [{rating:6},{rating:2.5},{comment:'<script>'},{comment:'client@example.com'},{comment:'+374 94 768067'},{displayName:''}]){await f.db.prepare("DELETE FROM rate_buckets WHERE id LIKE 'reviews-%'").run();assert.equal((await f.request('/reviews',{...draft,...invalid})).response.status,400);}
+ await f.db.prepare("DELETE FROM rate_buckets WHERE id LIKE 'reviews-%'").run();
+ assert.equal((await f.request('/reviews',{...draft,recordId:'43'})).response.status,503);
+ assert.equal((await f.request('/reviews',draft)).response.status,200);
+ // These intentional test submissions use fresh session rate buckets only.
+ await f.db.prepare("DELETE FROM rate_buckets WHERE id LIKE 'reviews-%'").run();
+ assert.equal((await f.request('/reviews',{...draft,rating:5})).response.status,200);
+ const pub=await f.request('/reviews');assert.equal(pub.value.count,1);assert.equal(pub.value.average,1);assert.equal(pub.value.reviews[0].rating,1);assert(!JSON.stringify(pub.value).includes('+374'));assert(!JSON.stringify(pub.value).includes('phone_hash'));assert(!JSON.stringify(pub.value).includes('record_id'));
+ assert.equal((await f.request('/review-visits')).value.visits[0].reviewed,true);assert.equal(checks,2);
+});
+
+test('private feedback is excluded from public ratings and reviews',async()=>{
+ const f=fixture();await f.db.prepare('INSERT INTO verified_reviews VALUES(?,?,?,?,?,?,?,?,?,?)').bind('44','private-hash','99','Specialist',5,'Private feedback','',0,'en',1).run();
+ const pub=await f.request('/reviews');assert.equal(pub.value.count,0);assert.equal(pub.value.reviews.length,0);assert.equal(pub.value.specialists.length,0);
+});
+
 test('optional contact fields validate and reach only the booking payload without native email sends',async()=>{
  const f=fixture();await f.verified();
  const base={serviceId:'13827004',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Test Guest',consent:true};

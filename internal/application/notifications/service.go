@@ -158,13 +158,12 @@ func (s *Service) schedule(ctx context.Context, id, attempt string) error {
 	return s.Scheduler.ScheduleNotification(ctx, Key("native", id+":"+attempt), id, s.now().Add(2*time.Second))
 }
 func (s *Service) Reconcile(ctx context.Context) error {
-	calendarErr := s.reconcileCalendar(ctx)
 	unroutedErr := s.reconcileUnrouted(ctx)
 	entries, err := s.Repo.PendingNotifications(ctx)
 	if err != nil {
 		return err
 	}
-	recoveryErr := errors.Join(calendarErr, unroutedErr)
+	recoveryErr := unroutedErr
 	for _, row := range entries {
 		if row.Kind != "event" || row.LeaseUntil.After(s.now()) {
 			continue
