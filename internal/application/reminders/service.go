@@ -112,7 +112,8 @@ type Scheduler interface {
 
 // Deps are the collaborators a Service needs.
 type Deps struct {
-	Conversations interface {
+	ResolveLanguage func(context.Context, messaging.Provider, string, string) (string, error)
+	Conversations   interface {
 		FindByID(context.Context, string) (conversation.Conversation, error)
 	}
 	Reader interface {
@@ -132,7 +133,8 @@ type Deps struct {
 
 // Service plans and sends reminders.
 type Service struct {
-	conversations interface {
+	resolveLanguage func(context.Context, messaging.Provider, string, string) (string, error)
+	conversations   interface {
 		FindByID(context.Context, string) (conversation.Conversation, error)
 	}
 	reader interface {
@@ -181,18 +183,19 @@ func NewService(deps Deps) (*Service, error) {
 	}
 
 	return &Service{
-		conversations: deps.Conversations,
-		reader:        deps.Reader,
-		repository:    deps.Repository,
-		bookings:      deps.Bookings,
-		messages:      deps.Messages,
-		senders:       senders,
-		scheduler:     deps.Scheduler,
-		leadTime:      deps.LeadTime,
-		location:      loc,
-		logger:        deps.Logger,
-		renderer:      deps.Renderer,
-		now:           now,
+		resolveLanguage: deps.ResolveLanguage,
+		conversations:   deps.Conversations,
+		reader:          deps.Reader,
+		repository:      deps.Repository,
+		bookings:        deps.Bookings,
+		messages:        deps.Messages,
+		senders:         senders,
+		scheduler:       deps.Scheduler,
+		leadTime:        deps.LeadTime,
+		location:        loc,
+		logger:          deps.Logger,
+		renderer:        deps.Renderer,
+		now:             now,
 	}, nil
 }
 
@@ -289,6 +292,13 @@ func (s *Service) Deliver(ctx context.Context, reminderID string) error {
 			}
 		}
 	}()
+	if s.resolveLanguage != nil {
+		lang, err := s.resolveLanguage(ctx, claimed.Provider, claimed.ExternalThreadID, claimed.Language)
+		if err != nil {
+			return err
+		}
+		claimed.Language = lang
+	}
 	if !s.SupportsReminder(claimed.Provider, claimed.Language) {
 		release = false
 		return s.finish(ctx, claimed, claimID, reminder.StatusSkipped, now)

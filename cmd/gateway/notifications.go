@@ -22,6 +22,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/appointmentmessage"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/assistant"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/cabinet"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/application/calendar"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/notifications"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
@@ -62,6 +63,7 @@ func openNotifications(ctx context.Context, cfg config.Config, store appStore, r
 		}
 	}
 	service := &notifications.Service{Repo: repo, Scheduler: scheduler, Reader: reader, Owned: store, Sender: nativeNotificationSender{tg: tg, wa: wa, account: account, sms: sms, store: store, logger: logger, location: cfg.Altegio.Location, renderer: newAppointmentMessages(cfg), bookingURL: cfg.BusinessProfile.BookingURL, websiteURL: cfg.BusinessProfile.WebsiteURL}, ActivatedAt: cfg.Notifications.ActivatedAt, WhatsAppTemplates: cfg.Notifications.WhatsAppTemplates, TelegramAccount: account != nil, BookingPermissionSince: cfg.Notifications.BookingPermissionSince, NativeLanguage: cfg.Notifications.NativeLanguage, SMSReady: sms != nil, SMSPermissionSince: cfg.Notifications.SMSPermissionSince}
+	service.ManualPermissionSince = cfg.Notifications.ManualPermissionSince
 	if sms != nil {
 		service.SMSStatus = func(ctx context.Context, notice notifications.Notice) (string, error) {
 			phone, err := customer.NormalizePhone(notice.Snapshot.Phone)
@@ -266,6 +268,17 @@ type nativeNotificationSender struct {
 func (s nativeNotificationSender) SendNotification(ctx context.Context, target notifications.Target, notice notifications.Notice, lang string) (bool, error) {
 	lang = string(appointmentmessage.ParseLanguage(lang))
 	b := notice.Snapshot.Booking
+	calendarURL := ""
+	if repo, ok := s.store.(notifications.Repository); ok && notice.Purpose != notifications.BookingCancelled {
+		row, err := repo.GetNotification(ctx, notifications.Key("record", b.ExternalID))
+		if err != nil {
+			return true, err
+		}
+		if row.CalendarID != "" && row.CalendarPhone == notice.Snapshot.Phone {
+			b.ID = row.CalendarID
+			calendarURL = calendar.Link(s.bookingURL, b, lang)
+		}
+	}
 	local := b.StartsAt.In(s.location)
 	title := map[string]map[notifications.Purpose]string{
 		"en": {notifications.BookingCreated: "Your booking is confirmed", notifications.BookingChanged: "Your booking has been updated", notifications.BookingCancelled: "Your booking has been cancelled"},
@@ -283,7 +296,7 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 			validUntil = b.StartsAt
 		}
 		_, err := s.sms.Send(ctx, smsgate.Message{ID: nativeSMSMessageID(notice.ID, target.Address), Phone: target.Address,
-			Text:       s.renderer.SMS(title, appointmentmessage.Appointment{StartsAt: b.StartsAt, Service: strings.Join(b.ServiceNames, ", "), Specialist: b.StaffName}, appointmentmessage.Language(lang)),
+			Text:       s.renderer.SMS(title, appointmentmessage.Appointment{StartsAt: b.StartsAt, Service: strings.Join(b.ServiceNames, ", "), Specialist: b.StaffName, CalendarURL: calendarURL}, appointmentmessage.Language(lang)),
 			ValidUntil: validUntil, Priority: 0})
 		return errors.Is(err, smsgate.ErrRejected), err
 	}
@@ -302,7 +315,7 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 		err := s.wa.SendBookingTemplateWithReference(ctx, target.Address, target.TemplateID, lang, []string{title, when, details}, "native-booking:"+notice.ID)
 		return errors.Is(err, meta.ErrRejected), err
 	}
-	appointment := appointmentmessage.Appointment{CustomerName: b.CustomerName, StartsAt: b.StartsAt, Service: strings.Join(b.ServiceNames, ", "), Specialist: b.StaffName}
+	appointment := appointmentmessage.Appointment{CustomerName: b.CustomerName, StartsAt: b.StartsAt, Service: strings.Join(b.ServiceNames, ", "), Specialist: b.StaffName, CalendarURL: calendarURL}
 	render := s.renderer.Confirmation
 	switch notice.Purpose {
 	case notifications.BookingChanged:

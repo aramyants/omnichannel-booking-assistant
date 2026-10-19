@@ -36,21 +36,25 @@ const (
 // nil when that channel is not configured, and their routes are then not
 // served at all rather than served and failing.
 type gateway struct {
-	logger        *slog.Logger
-	version       string
-	telegram      http.Handler
-	whatsapp      http.Handler
-	messenger     http.Handler
-	instagram     http.Handler
-	reminder      http.Handler
-	calendar      http.Handler
-	altegio       http.Handler
-	notifications http.Handler
+	logger         *slog.Logger
+	version        string
+	telegram       http.Handler
+	whatsapp       http.Handler
+	messenger      http.Handler
+	instagram      http.Handler
+	reminder       http.Handler
+	calendar       http.Handler
+	altegio        http.Handler
+	notifications  http.Handler
+	bookingContext http.Handler
 }
 
 func (g *gateway) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET "+healthPath, handleHealth(g.version))
+	if g.bookingContext != nil {
+		mux.Handle("POST /internal/booking-context", g.bookingContext)
+	}
 	if g.calendar != nil {
 		mux.Handle("GET /calendar/{reference}", g.calendar)
 	}

@@ -82,6 +82,7 @@ type Notifications struct {
 	NativeLanguage         string
 	SMS                    SMSGate
 	SMSPermissionSince     time.Time
+	ManualPermissionSince  time.Time
 }
 
 // SMSGate credentials are supplied as one Secret Manager binding.
@@ -519,6 +520,13 @@ func Load() (Config, error) {
 	cfg.Notifications.WebhookSecret = getenv("ALTEGIO_WEBHOOK_SECRET", "")
 	cfg.Notifications.WhatsAppTemplates = map[string]string{}
 	cfg.Notifications.NativeLanguage = getenv("NATIVE_NOTIFICATION_LANGUAGE", "en")
+	if raw := getenv("MANUAL_BOOKING_NOTICES_SINCE", ""); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			errs = append(errs, errors.New("MANUAL_BOOKING_NOTICES_SINCE must be RFC3339"))
+		}
+		cfg.Notifications.ManualPermissionSince = parsed
+	}
 	if cfg.Notifications.NativeLanguage != "en" && cfg.Notifications.NativeLanguage != "ru" && cfg.Notifications.NativeLanguage != "hy" {
 		errs = append(errs, errors.New("NATIVE_NOTIFICATION_LANGUAGE must be en, ru or hy"))
 	}

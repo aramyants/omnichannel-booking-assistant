@@ -28,3 +28,14 @@ func TestSMSWithoutTreatmentKeepsSpecialistWithoutDanglingSeparator(t *testing.T
 		}
 	}
 }
+
+func TestCalendarSMSPreservesWholeCapabilityWithinThreeSegments(t *testing.T) {
+	r := New(Business{Phone: "+37494768067"}, time.UTC)
+	link := "https://book.motionconcept.rest/calendar/123456789?key=" + strings.Repeat("a", 43) + "&lang=hy"
+	for _, lang := range []Language{English, Russian, Armenian} {
+		text := r.SMS(strings.Repeat("Ժ", 90), Appointment{StartsAt: time.Now(), CalendarURL: link}, lang)
+		if !strings.Contains(text, link) || len(utf16.Encode([]rune(text))) > 201 {
+			t.Fatal("calendar link truncated or SMS too long")
+		}
+	}
+}

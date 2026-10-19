@@ -36,9 +36,18 @@ type Handler struct {
 	store    Repository
 	settings Settings
 	now      func() time.Time
+	native   func(context.Context, string, string) (booking.Booking, error)
 }
 
 func (h *Handler) WithReader(reader Reader) *Handler { h.reader = reader; return h }
+func (h *Handler) WithNative(reader func(context.Context, string, string) (booking.Booking, error)) *Handler {
+	h.native = reader
+	return h
+}
+func ValidCapability(b booking.Booking, key string) bool {
+	expected := capability(b)
+	return expected != "" && hmac.Equal([]byte(key), []byte(expected))
+}
 
 func New(store Repository, settings Settings) *Handler {
 	if settings.Location == nil {
@@ -88,6 +97,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b, err := h.store.FindBooking(r.Context(), reference)
+	native := false
+	if errors.Is(err, booking.ErrNotFound) && h.native != nil {
+		b, err = h.native(r.Context(), reference, key)
+		native = true
+	}
 	if err != nil {
 		if errors.Is(err, booking.ErrNotFound) {
 			http.NotFound(w, r)
@@ -103,7 +117,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	lang := language(r.URL.Query().Get("lang"))
 	p := words(lang)
-	if h.reader != nil {
+	if h.reader != nil && !native {
 		b, err = h.reader.ReadBooking(r.Context(), b)
 		if errors.Is(err, booking.ErrNotFound) {
 			http.Error(w, p.expired, http.StatusGone)
@@ -191,5 +205,5 @@ type pageData struct{ Lang, Name, Title, Heading, When, Zone, Address, Google, O
 
 var page = template.Must(template.New("calendar").Parse(`<!doctype html>
 <html lang="{{.Lang}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>{{.Name}} · Calendar</title>
-<style> *{box-sizing:border-box}body{margin:0;background:#f3f0e8;color:#243e33;font:17px/1.6 Georgia,'Times New Roman',serif}main{max-width:620px;margin:5vh auto;padding:32px 26px}header{font:13px/1.4 Verdana,sans-serif;letter-spacing:.15em;text-transform:uppercase;border-bottom:1px solid #adb8a8;padding-bottom:24px}h1{font-size:clamp(36px,8vw,58px);font-weight:400;line-height:1.08;letter-spacing:-.03em;margin:36px 0 28px}h2{font-size:22px;font-weight:400;margin:0 0 8px}.when{font-size:24px;margin:0}.meta{font:13px/1.6 Verdana,sans-serif;color:#526759;margin:5px 0 20px}nav{display:grid;gap:10px;margin:28px 0}a{display:block;padding:15px 18px;color:inherit;border:1px solid #738673;text-decoration:none;border-radius:3px;font:15px/1.5 Verdana,sans-serif;min-height:52px}a:first-child{background:#243e33;color:#fff}a:hover{outline:2px solid #738673;outline-offset:2px}a:focus-visible{outline:3px solid #ad652e;outline-offset:3px}.note{border-top:1px solid #adb8a8;padding-top:20px;font-size:15px}.help{font:13px/1.7 Verdana,sans-serif;color:#526759}@media(max-width:400px){main{padding:22px 18px;margin:0}h1{margin-top:28px}}</style></head>
+<style>*{box-sizing:border-box}body{margin:0;background:#faf7f5;color:#201719;font:16px/1.6 system-ui,-apple-system,sans-serif}main{max-width:620px;margin:5vh auto;padding:32px 26px}header{font-size:13px;font-weight:700;letter-spacing:.08em;border-bottom:1px solid #dbcdd0;padding-bottom:24px;color:#96181b}h1{font-size:clamp(32px,8vw,52px);font-weight:650;line-height:1.12;letter-spacing:-.035em;margin:32px 0 24px}h2{font-size:20px;font-weight:600;margin:0 0 8px}.when{font-size:24px;margin:0}.meta{font-size:13px;color:#706267;margin:5px 0 20px}nav{display:grid;gap:10px;margin:28px 0}a{display:block;padding:15px 18px;color:inherit;border:1px solid #cbbabd;text-decoration:none;border-radius:12px;font-size:15px;min-height:52px}a:first-child{background:#96181b;color:#fff;border-color:#96181b}a:hover{outline:2px solid #96181b;outline-offset:2px}a:focus-visible{outline:3px solid #d5263c;outline-offset:3px}.note{border-top:1px solid #dbcdd0;padding-top:20px;font-size:14px}.help{font-size:13px;color:#706267}@media(prefers-color-scheme:dark){body{background:#141214;color:#faf7f5}header{color:#ffa6c5;border-color:#45373d}.meta,.help{color:#c7b9c0}a{border-color:#6e515e}a:first-child{background:#b92537;border-color:#b92537}.note{border-color:#45373d}}@media(max-width:400px){main{padding:22px 18px;margin:0}h1{margin-top:28px}}</style></head>
 <body><main><header>{{.Name}}</header><h1>{{.Heading}}</h1><section aria-label="Appointment"><h2>{{.Title}}</h2><p class="when">{{.When}}</p><p class="meta">{{.Zone}}{{if .Address}}<br>{{.Address}}{{end}}</p></section><nav aria-label="Calendar"><a href="{{.Google}}" rel="noreferrer">Google Calendar ↗</a><a href="{{.Download}}">{{.DownloadLabel}} ↓</a><a href="{{.Outlook}}" rel="noreferrer">Outlook.com ↗</a><a href="{{.Office}}" rel="noreferrer">Microsoft 365 ↗</a></nav><p class="help">{{.Help}}</p><p class="note">{{.Note}}</p></main></body></html>`))

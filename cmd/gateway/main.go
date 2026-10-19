@@ -243,6 +243,12 @@ func run() error {
 	defer closeNotifications()
 	gw.altegio = altegioHook
 	gw.notifications = notificationTasks
+	if nativeNotifications != nil {
+		gw.bookingContext = bookingContextHandler(nativeNotifications, cfg.Altegio.UserToken, cfg.BusinessProfile.BookingURL)
+		if handler, ok := gw.calendar.(*calendar.Handler); ok {
+			handler.WithNative(nativeCalendarReader(nativeNotifications))
+		}
+	}
 
 	clientIdentity, err := openCabinet(cfg, store)
 	if err != nil {
@@ -262,6 +268,12 @@ func run() error {
 		}
 	}
 	assistantService, err := assistant.NewService(assistant.Deps{
+		PreferredLanguage: func(ctx context.Context, phone, hint string, explicit bool) (string, error) {
+			if nativeNotifications == nil {
+				return "ru", nil
+			}
+			return nativeNotifications.ResolveLanguage(ctx, phone, hint, explicit)
+		},
 		DeliveryAvailable: func(ctx context.Context, provider messaging.Provider) (bool, error) {
 			if guard := directHealth[provider]; guard != nil {
 				return guard.Allows(ctx, "", "")
@@ -522,6 +534,30 @@ func openReminders(
 		senders[messaging.ProviderWhatsApp] = meta.TemplateReminders{Client: client, Templates: cfg.WhatsApp.ReminderTemplates, Location: cfg.Altegio.Location}
 	}
 	deps := reminders.Deps{
+		ResolveLanguage: func(ctx context.Context, provider messaging.Provider, address, fallback string) (string, error) {
+			repo, ok := store.(notifications.Repository)
+			if !ok {
+				return fallback, nil
+			}
+			phone := ""
+			if provider == messaging.ProviderTelegram {
+				row, err := repo.GetNotification(ctx, notifications.Key("telegram_chat", address))
+				if err != nil {
+					return "", err
+				}
+				if row.Contact.ExpiresAt.After(time.Now()) {
+					phone = row.Contact.Phone
+				}
+			}
+			if provider == messaging.ProviderWhatsApp {
+				phone = "+" + strings.TrimPrefix(address, "+")
+			}
+			if phone == "" {
+				return fallback, nil
+			}
+			service := notifications.Service{Repo: repo}
+			return service.ResolveLanguage(ctx, phone, fallback, false)
+		},
 		Conversations: store,
 		Repository:    store,
 		Bookings:      store,

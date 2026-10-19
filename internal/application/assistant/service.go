@@ -116,6 +116,7 @@ type ConversationTurns interface {
 // there are enough of them that call sites would otherwise be a row of
 // same-typed arguments that are easy to transpose.
 type Deps struct {
+	PreferredLanguage func(context.Context, string, string, bool) (string, error)
 	// DeliveryAvailable prevents model/tool work when a provider has confirmed
 	// that replies cannot be delivered. Incoming messages still reach staff.
 	DeliveryAvailable func(context.Context, messaging.Provider) (bool, error)
@@ -162,6 +163,7 @@ type Deps struct {
 
 // Service handles one inbound message at a time.
 type Service struct {
+	preferredLanguage func(context.Context, string, string, bool) (string, error)
 	deliveryAvailable func(context.Context, messaging.Provider) (bool, error)
 	identity          *cabinet.Identity
 	senders           map[messaging.Provider]Sender
@@ -213,6 +215,7 @@ func NewService(deps Deps) (*Service, error) {
 	}
 
 	return &Service{
+		preferredLanguage: deps.PreferredLanguage,
 		deliveryAvailable: deps.DeliveryAvailable,
 		identity:          deps.Identity,
 		senders:           senders,
@@ -567,6 +570,7 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 		// phrases this system writes itself rather than asking the model for.
 		language: conversationLanguage(history, msg.Sender.Language),
 	}
+	s.applyPreferredLanguage(ctx, sess)
 	conv.PendingChoiceMessageID, conv.PendingChoiceEventID = "", ""
 	if msg.ChoiceMessageID != "" {
 		conv.PendingChoiceMessageID, conv.PendingChoiceEventID = msg.ChoiceMessageID, msg.ExternalMessageID
@@ -926,6 +930,21 @@ func (s *Service) reply(
 	selectedPresentedChoice bool,
 ) (string, error) {
 	conv, cust := sess.conv, sess.customer
+	if strings.TrimSpace(msg.Content.Text) == "/language" {
+		sess.present("English · /language en", "Русский · /language ru", "Հայերեն · /language hy")
+		return "English / Русский / Հայերեն", nil
+	}
+	for _, tag := range []string{"en", "ru", "hy"} {
+		if strings.TrimSpace(msg.Content.Text) == "/language "+tag || strings.HasSuffix(strings.TrimSpace(msg.Content.Text), " · /language "+tag) {
+			sess.language = languageOfTag(tag)
+			if sess.customer.VerifiedPhone != "" && s.preferredLanguage != nil {
+				if _, err := s.preferredLanguage(ctx, sess.customer.VerifiedPhone, tag, true); err != nil {
+					return "", err
+				}
+			}
+			return map[string]string{"en": "English selected. Your verified booking notifications will use English.", "ru": "Выбран русский язык. Уведомления по подтверждённому номеру будут на русском.", "hy": "Ընտրված է հայերենը։ Հաստատված համարի ամրագրման ծանուցումները կլինեն հայերեն։"}[tag], nil
+		}
+	}
 	if text, ok := s.publicLinkReply(sess, msg.Content.Text); ok {
 		return text, nil
 	}

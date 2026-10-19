@@ -69,6 +69,8 @@ type Entry struct {
 	NextLookupAt        time.Time               `firestore:"next_lookup_at,omitempty"`
 	ProviderState       string                  `firestore:"provider_state,omitempty"`
 	SMSFailureAlertedAt time.Time               `firestore:"sms_failure_alerted_at,omitempty"`
+	CalendarID          string                  `firestore:"calendar_id,omitempty"`
+	CalendarPhone       string                  `firestore:"calendar_phone,omitempty"`
 }
 type Repository interface {
 	TransactNotifications(context.Context, []string, func(map[string]*Entry) error) error
@@ -105,6 +107,7 @@ type Service struct {
 	NativeLanguage         string
 	SMSReady               bool
 	SMSPermissionSince     time.Time
+	ManualPermissionSince  time.Time
 	SMSStatus              func(context.Context, Notice) (string, error)
 	// A true rejection flag proves the staff alert was not accepted. Ambiguous
 	// failures preserve the durable alert reservation and must not be repeated.
@@ -250,7 +253,16 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 					permission = Contact{Phone: phone, RequestedAt: snap.Booking.CreatedAt}
 				}
 			}
-			*record = Entry{Kind: "record", Fingerprint: fp, ChangedAt: snap.ChangedAt, UpdatedAt: now, Contact: permission}
+			if first && row.Event.Status == "create" && snap.APIID == "" && !snap.Online && !s.ManualPermissionSince.IsZero() && !snap.Booking.CreatedAt.Before(s.ManualPermissionSince) {
+				if phone, err := customer.NormalizePhone(snap.Phone); err == nil {
+					permission = Contact{Phone: phone, RequestedAt: snap.Booking.CreatedAt}
+				}
+			}
+			calendarID := record.CalendarID
+			if calendarID == "" || record.CalendarPhone != snap.Phone {
+				calendarID = uuid.NewString()
+			}
+			*record = Entry{Kind: "record", Fingerprint: fp, ChangedAt: snap.ChangedAt, UpdatedAt: now, Contact: permission, CalendarID: calendarID, CalendarPhone: snap.Phone}
 			event.Notice = Notice{ID: event.Event.ID, Snapshot: snap, Purpose: purpose, Fingerprint: fp}
 			event.State = "prepared"
 			event.UpdatedAt = now
@@ -301,6 +313,14 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	sharedLanguage, err := s.Repo.GetNotification(ctx, Key("language_phone", phone))
+	if err != nil {
+		return err
+	}
+	webPermission, err := s.Repo.GetNotification(ctx, Key("web_phone", phone))
+	if err != nil {
+		return err
+	}
 	telegramLanguage := string(appointmentmessage.ParseLanguage(tg.Contact.Language))
 	if tg.Contact.Language == "" {
 		language := s.NativeLanguage
@@ -310,6 +330,11 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 		telegramLanguage = string(appointmentmessage.ParseLanguage(language))
 	}
 	whatsappLanguage := string(appointmentmessage.ParseLanguage(wa.Contact.Language))
+	// One saved customer choice applies to every route, including SMS fallback.
+	if sharedLanguage.Contact.Language != "" {
+		telegramLanguage = sharedLanguage.Contact.Language
+		whatsappLanguage = sharedLanguage.Contact.Language
+	}
 	// A request printed at native booking submission applies only to new online
 	// records after rollout, never imported/API or administrator records.
 	permission, err := s.Repo.GetNotification(ctx, Key("record", row.Event.RecordID))
@@ -317,6 +342,9 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 		return err
 	}
 	requested := !permission.Contact.RequestedAt.IsZero() && permission.Contact.Phone == phone && latest.Online && latest.APIID == "" && !s.BookingPermissionSince.IsZero() && !permission.Contact.RequestedAt.Before(s.BookingPermissionSince)
+	manualRequested := !s.ManualPermissionSince.IsZero() && !permission.Contact.RequestedAt.Before(s.ManualPermissionSince) && permission.Contact.Phone == phone && !latest.Online && latest.APIID == ""
+	webRequested := strings.HasPrefix(latest.APIID, "emotion-web-v2-") && webPermission.Contact.Phone == phone && webPermission.Contact.ExpiresAt.After(now)
+	requested = requested || manualRequested || webRequested
 	staffRequested := staffPermission.Contact.Phone == phone && staffPermission.Contact.ExpiresAt.After(now) && !staffPermission.Contact.Blocked
 	if staffRequested {
 		requested = true
@@ -324,7 +352,7 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 	// The form's original Telegram/WhatsApp request cannot enroll existing
 	// bookings into SMS. Only new SMS-disclosed bookings or staff-recorded
 	// client requests qualify; a global withdrawal always wins.
-	smsRequested := !staffPermission.Contact.Blocked && (staffRequested ||
+	smsRequested := !staffPermission.Contact.Blocked && (staffRequested || manualRequested || webRequested ||
 		(requested && !s.SMSPermissionSince.IsZero() && !permission.Contact.RequestedAt.Before(s.SMSPermissionSince)))
 	recipient := Recipient{Phone: phone, TelegramOptedOut: tg.Contact.Blocked, BookingUpdatesRequested: requested}
 	if tg.Contact.ExpiresAt.After(now) {

@@ -9,6 +9,9 @@ import (
 // three Unicode SMS segments (201 UTF-16 units). Social links and long visit
 // instructions belong in the messenger confirmation, rather than paid SMS.
 func (r Renderer) SMS(title string, a Appointment, lang Language) string {
+	if a.CalendarURL != "" && len(a.CalendarURL) <= 120 {
+		return strings.Join([]string{"E-Motion Concept", smsField(title, 24), a.StartsAt.In(r.location).Format("02.01.2006 15:04"), a.CalendarURL, smsField(r.business.Phone, 20)}, "\n")
+	}
 	lines := []string{"E-Motion Concept", smsField(title, 42), a.StartsAt.In(r.location).Format("02.01.2006 15:04")}
 	details := smsField(a.Service, 45)
 	if a.Specialist != "" {

@@ -172,6 +172,7 @@ func (s *Service) cabinetReply(ctx context.Context, sess *session, msg messaging
 			}
 		}
 		sess.customer.VerifiedPhone = phone
+		s.applyPreferredLanguage(ctx, sess)
 		sess.conv.CustomerID = sess.customer.ID
 		sess.conv.BookingChange = nil
 		if reply, ok := s.resumeVerifiedBooking(sess, phone); ok {
