@@ -192,7 +192,7 @@ func (s *Service) cabinetReply(ctx context.Context, sess *session, msg messaging
 	}
 	if state == "phone" {
 		if _, err := customer.NormalizePhone(msg.Content.Text); err == nil {
-			err := s.identity.Send(ctx, msg.Provider, msg.ExternalUserID, msg.Content.Text)
+			err := s.identity.Send(ctx, msg.Provider, msg.ExternalUserID, msg.Content.Text, string(sess.language))
 			if err != nil {
 				kind := "unavailable"
 				if errors.Is(err, cabinet.ErrLimited) {

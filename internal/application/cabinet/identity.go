@@ -173,7 +173,7 @@ func (s *Identity) digest(provider messaging.Provider, user, phone, code string)
 	return mac.Sum(nil)
 }
 
-func (s *Identity) Send(ctx context.Context, provider messaging.Provider, user, rawPhone string) error {
+func (s *Identity) Send(ctx context.Context, provider messaging.Provider, user, rawPhone string, language ...string) error {
 	phone, err := customer.NormalizePhone(rawPhone)
 	if err != nil {
 		return ErrInvalid
@@ -227,7 +227,16 @@ func (s *Identity) Send(ctx context.Context, provider messaging.Provider, user, 
 		return err
 	}
 	// One request, never retried on an uncertain SMSGate result.
-	return s.Sender.SendCode(ctx, phone, "E-Motion Concept: "+code+" is your booking access code. Expires in 5 minutes. Do not share it.", hex.EncodeToString(randomID), expiry)
+	text := "E-Motion Concept: " + code + " is your booking access code. Expires in 5 minutes. Do not share it."
+	if len(language) > 0 {
+		switch language[0] {
+		case "ru":
+			text = "E-Motion Concept: " + code + " — код доступа к вашим записям. Действует 5 минут. Никому не сообщайте."
+		case "hy":
+			text = "E-Motion Concept: " + code + " — ձեր ամրագրումների մուտքի կոդը։ Գործում է 5 րոպե։ Մի փոխանցեք այն։"
+		}
+	}
+	return s.Sender.SendCode(ctx, phone, text, hex.EncodeToString(randomID), expiry)
 }
 
 func (s *Identity) Confirm(ctx context.Context, provider messaging.Provider, user, code string) (string, error) {

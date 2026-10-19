@@ -6,6 +6,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/cabinet"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
 	"strings"
 	"testing"
@@ -29,6 +30,38 @@ type cabinetTestSMS struct{ code string }
 func (s *cabinetTestSMS) SendCode(_ context.Context, _ string, text, _ string, _ time.Time) error {
 	s.code = strings.Split(text, " ")[2]
 	return nil
+}
+
+func TestTelegramManagementEntryRequiresPhoneProofAndKeepsWebCapabilitiesPrivate(t *testing.T) {
+	calendar := &profileScheduling{stubScheduling: defaultScheduling(), native: []booking.Booking{{ExternalID: "123", StartsAt: testNow.Add(time.Hour), Status: booking.StatusConfirmed, ServiceNames: []string{"Test treatment"}}}}
+	svc, store := newAIService(t, nil, calendar, &fakeSender{})
+	identity := &cabinet.Identity{Repo: store, Now: func() time.Time { return testNow }}
+	svc.identity, svc.tools.identity = identity, identity
+	conv := &conversation.Conversation{Provider: messaging.ProviderTelegram, ExternalThreadID: "test-user"}
+	sess := &session{conv: conv, language: languageArmenian}
+	msg := incomingText("manage", "/start visits_en")
+	msg.ExternalUserID, msg.ExternalThreadID = "test-user", "test-user"
+	reply, handled, err := svc.cabinetReply(t.Context(), sess, msg)
+	if err != nil || !handled || !sess.requestContact || sess.language != languageEnglish || strings.Contains(reply, "Test treatment") || len(calendar.phones) != 0 {
+		t.Fatal("unverified management entry disclosed history or lost its language")
+	}
+	called := false
+	svc.tools.managementProof = func(_ context.Context, ref, phone string) (string, string, error) {
+		called = true
+		if ref != "123" || phone != "+37491123456" {
+			t.Fatal("proof lookup was not ownership scoped")
+		}
+		return "private-random-id", "private-proof", nil
+	}
+	sess.customer = customer.Customer{ID: "verified-profile", VerifiedPhone: "+37491123456"}
+	reply, handled, err = svc.cabinetReply(t.Context(), sess, msg)
+	if err != nil || !handled || !called || !strings.Contains(reply, "#123") || strings.Contains(reply, "private-proof") {
+		t.Fatal("verified management entry failed or exposed its capability")
+	}
+	owned, err := svc.tools.ownedBooking(t.Context(), sess.customer, "123")
+	if err != nil || owned.ManagementToken != "private-proof" {
+		t.Fatal("web booking could not enter the existing confirmed-change workflow")
+	}
 }
 
 func TestFormBookingHistoryAcrossVerifiedChannels(t *testing.T) {
