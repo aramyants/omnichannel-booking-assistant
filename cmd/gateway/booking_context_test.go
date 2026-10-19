@@ -58,6 +58,50 @@ func (reader contextRecordReader) ReadNativeBooking(context.Context, string) (no
 	return reader.snapshot, nil
 }
 
+type contextProofReader struct{ contextRecordReader }
+
+func (reader contextProofReader) ReadBooking(_ context.Context, b booking.Booking) (booking.Booking, error) {
+	if b.ManagementToken != "valid-private-proof" {
+		return b, booking.ErrRejected
+	}
+	return b, nil
+}
+
+type contextScheduler struct{}
+
+func (contextScheduler) ScheduleNotification(context.Context, string, string, time.Time) error {
+	return nil
+}
+
+func TestConfirmedWebBookingValidatesAndStoresOnlyItsOwnManagementProof(t *testing.T) {
+	for _, proof := range []string{"valid-private-proof", "invalid-proof"} {
+		repo := memory.New()
+		snap := notifications.Snapshot{Phone: "+37491123456", APIID: "emotion-web-v2-test", Booking: booking.Booking{ExternalID: "123", Duration: time.Hour, StartsAt: time.Now().Add(time.Hour), Status: booking.StatusConfirmed}}
+		s := &notifications.Service{Repo: repo, Scheduler: contextScheduler{}, Reader: contextProofReader{contextRecordReader{snap}}}
+		raw := []byte(`{"action":"confirmed","phone":"+37491123456","recordId":"123","managementProof":"` + proof + `"}`)
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		req := httptest.NewRequest(http.MethodPost, "/internal/booking-context", bytes.NewReader(raw))
+		req.Header.Set("X-Emotion-Time", ts)
+		req.Header.Set("X-Emotion-Signature", contextSignature("test-token", ts, raw))
+		rec := httptest.NewRecorder()
+		bookingContextHandler(s, "test-token", "https://book.motionconcept.rest/").ServeHTTP(rec, req)
+		row, err := repo.GetNotification(t.Context(), notifications.Key("record", "123"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if proof == "valid-private-proof" {
+			if rec.Code != 200 || row.ManagementToken != proof || row.ManagementPhone != snap.Phone {
+				t.Fatal("valid proof was not retained")
+			}
+		} else if rec.Code != 503 || row.ManagementToken != "" {
+			t.Fatal("unverified provider proof accepted")
+		}
+		if strings.Contains(rec.Body.String(), proof) || strings.Contains(rec.Body.String(), snap.Phone) {
+			t.Fatal("private proof or phone exposed in bridge result")
+		}
+	}
+}
+
 func TestWebManagementProofNeverCrossesVerifiedPhones(t *testing.T) {
 	repo := memory.New()
 	key := notifications.Key("record", "123")
