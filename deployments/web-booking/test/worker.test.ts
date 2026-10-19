@@ -66,6 +66,23 @@ test('failed shared preferences cannot create an appointment with conflicting no
  f.runtime.fetch=async(input,init)=>String(input).includes('/internal/booking-context')?new Response('Unavailable',{status:503}):provider(input,init);
  assert.equal((await f.draft()).response.status,503);assert.equal(f.counts.createCalls,0);
 });
+
+test('a failed confirmation context handoff recovers without repeating appointment creation or SMS',async()=>{
+ const f=fixture();f.env.ECOSYSTEM_GATEWAY_ORIGIN='https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app';
+ const provider=f.runtime.fetch;let confirms=0;
+ f.runtime.fetch=async(input,init)=>{
+  if(String(input).includes('/internal/booking-context')){
+   const data=JSON.parse(String(init!.body));
+   if(data.action==='confirmed'&&++confirms===1)return new Response('Unavailable',{status:503});
+   return Response.json({locale:'en',...(data.action==='confirmed'?{calendarUrl:f.env.PUBLIC_ORIGIN+'/calendar/6789?key='+'a'.repeat(43)+'&lang=en'}:{})});
+  }
+  return provider(input,init);
+ };
+ await f.verified();const prepared=await f.draft(),id=prepared.value.draft.id;
+ const first=await f.request('/appointments',{draftId:id});assert.equal(first.value.status,'confirmed');assert.equal(first.value.appointment.calendarUrl,undefined);
+ const recovered=await f.request('/appointments/'+id);assert.equal(recovered.value.status,'confirmed');assert(recovered.value.appointment.calendarUrl);
+ assert.equal(f.counts.createCalls,1);assert.equal(f.counts.sentSms,1);assert.equal(confirms,2);
+});
 function fixture(){
  const db=new SQLiteD1();
  const env:Env={DB:db,PUBLIC_ORIGIN:'https://booking.example.com',SESSION_SECRET:'test-only-secret-that-is-over-thirty-two-characters',ALTEGIO_PARTNER_TOKEN:'test-partner',ALTEGIO_USER_TOKEN:'test-private-user',ALTEGIO_COMPANY_ID:'1389810',TURNSTILE_SECRET:'test-turnstile',TURNSTILE_SITE_KEY:'test-sitekey',SMSGATE_CREDENTIALS_JSON:JSON.stringify({username:'test',password:'fake',device_id:'test-device',sim_number:1}),SMS_DAILY_CAP:'10',SMS_MONTHLY_CAP:'100',SMS_ALLOWED_COUNTRY_CODES:'374',BOOKING_ENABLED:'true'};

@@ -76,7 +76,7 @@ func (contextScheduler) ScheduleNotification(context.Context, string, string, ti
 func TestConfirmedWebBookingValidatesAndStoresOnlyItsOwnManagementProof(t *testing.T) {
 	for _, proof := range []string{"valid-private-proof", "invalid-proof"} {
 		repo := memory.New()
-		snap := notifications.Snapshot{Phone: "+37491123456", APIID: "emotion-web-v2-test", Booking: booking.Booking{ExternalID: "123", Duration: time.Hour, StartsAt: time.Now().Add(time.Hour), Status: booking.StatusConfirmed}}
+		snap := notifications.Snapshot{Phone: "+37491123456", Online: true, Booking: booking.Booking{ExternalID: "123", Duration: time.Hour, StartsAt: time.Now().Add(time.Hour), Status: booking.StatusConfirmed}}
 		s := &notifications.Service{Repo: repo, Scheduler: contextScheduler{}, Reader: contextProofReader{contextRecordReader{snap}}}
 		raw := []byte(`{"action":"confirmed","phone":"+37491123456","recordId":"123","managementProof":"` + proof + `"}`)
 		ts := strconv.FormatInt(time.Now().Unix(), 10)

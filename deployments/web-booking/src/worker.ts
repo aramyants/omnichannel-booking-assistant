@@ -49,12 +49,12 @@ async function authenticated(request:Request,env:Env,store:Store,runtime:Runtime
  if(mutation&&!constantEqual(request.headers.get('X-CSRF-Token')||'',csrf))throw new Failure('csrf_rejected',403,'Please refresh the booking page.');
  return {session,raw,csrf};
 }
-async function status(store:Store,session:Session,id:string,now:number):Promise<unknown> {
+async function status(store:Store,session:Session,id:string,now:number,env?:Env,runtime?:Runtime,request?:Request):Promise<unknown> {
  let draft=await store.draft(session.id,id);
  if(draft.phone!==session.phone)throw new Failure('verification_required',403,'Verify your booking phone again.');
  // A crashed reservation must never be automatically retried, even after expiry.
  if(['checking','sending'].includes(draft.status)&&draft.updated_at<now-90){await store.state(id,draft.status,'uncertain',now);draft=await store.draft(session.id,id);}
- if(draft.status==='confirmed')return {status:'confirmed',appointment:JSON.parse(draft.appointment!)};
+ if(draft.status==='confirmed'){const appointment=JSON.parse(draft.appointment!) as Appointment;if(!appointment.calendarUrl&&env?.ECOSYSTEM_GATEWAY_ORIGIN&&runtime&&request){try{await optionalConfirmation(store,env,runtime,session,request,draft,appointment);}catch{/* The confirmed appointment remains valid; only its idempotent context handoff may repeat. */}}return {status:'confirmed',appointment};}
  if(draft.status==='uncertain')return {status:'uncertain',message:'We could not confirm the booking result. Please contact the studio before booking again.'};
  if(draft.status==='rejected'||draft.status==='superseded')throw new Failure(draft.error_code||'selection_rejected',409,'Please review availability and choose again.');
  if(draft.expires_at<=now)throw new Failure('draft_expired',409,'Please choose your time again.');
@@ -84,12 +84,12 @@ async function book(store:Store,env:Env,runtime:Runtime,session:Session,request:
  if(env.BOOKING_ENABLED!=='true')throw new Failure('booking_paused',503,'Online booking is temporarily unavailable. Please contact the studio.');
  const now=nowSeconds(runtime),draft=await store.draft(session.id,id);
  if(!session.phone||draft.phone!==session.phone)throw new Failure('verification_required',403,'Verify your booking phone first.');
- if(draft.status!=='ready')return status(store,session,id,now);
+ if(draft.status!=='ready')return status(store,session,id,now,env,runtime,request);
  if(draft.expires_at<=now)throw new Failure('draft_expired',409,'Please select your time again.');
  if(!await store.claim(id,session.id,now)){
   const active=await store.unresolvedPhone(draft.phone);
   if(active&&active.id!==id)throw new Failure('booking_needs_review',409,'We are checking an earlier booking. Please contact the studio.');
-  return status(store,session,id,now);
+  return status(store,session,id,now,env,runtime,request);
  }
  const client=new Altegio(env,runtime),summary=JSON.parse(draft.summary) as Summary;
  try {
@@ -102,7 +102,7 @@ async function book(store:Store,env:Env,runtime:Runtime,session:Session,request:
   await store.state(id,'checking','rejected',nowSeconds(runtime),failure.code);throw failure;
  }
  // This CAS is the durable send intent. Never reset or retry a 'sending' record.
- if(!await store.state(id,'checking','sending',nowSeconds(runtime)))return status(store,session,id,nowSeconds(runtime));
+ if(!await store.state(id,'checking','sending',nowSeconds(runtime)))return status(store,session,id,nowSeconds(runtime),env,runtime,request);
  let created:{id:string;managementHash:string};
  try {created=await client.create(summary,draft.phone);}catch(error){
   const failure=error instanceof Failure?error:new Failure('outcome_unknown',503);
@@ -174,7 +174,7 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
   }
   const {session}=await authenticated(request,env,store,runtime,mutation);
   if(request.method==='GET'&&path==='/verification/status')return json(await verificationStatus(store,session,env,runtime));
-  if(request.method==='GET'&&path.startsWith('/appointments/'))return json(await status(store,session,validDraftId(path.slice('/appointments/'.length)),now));
+  if(request.method==='GET'&&path.startsWith('/appointments/'))return json(await status(store,session,validDraftId(path.slice('/appointments/'.length)),now,env,runtime,request));
   if(request.method!=='POST')throw new Failure('not_found',404);
   const data=await body(request);
   if(path==='/preferences'){

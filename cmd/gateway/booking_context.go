@@ -102,6 +102,19 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 				return
 			}
 			owned := strings.HasPrefix(snap.APIID, "emotion-web-v2-") || (body.Action == "record-context" && strings.HasPrefix(snap.APIID, "omnichannel-web-"))
+			// Live public booking may omit text api_id values. Validate the exact
+			// online record's provider hash and retain its verified phone binding.
+			if body.Action == "confirmed" && body.ManagementProof != "" && snap.Online {
+				owned = true
+			}
+			if body.Action == "record-context" && !owned {
+				row, recordErr := service.Repo.GetNotification(r.Context(), notifications.Key("record", body.RecordID))
+				if recordErr != nil {
+					http.Error(w, "Unavailable", 503)
+					return
+				}
+				owned = row.ManagementToken != "" && row.ManagementPhone == phone && row.CalendarPhone == phone
+			}
 			eligible := snap.Phone == phone && owned && snap.Booking.Status == booking.StatusConfirmed && snap.Booking.StartsAt.After(time.Now())
 			if body.Action == "record-context" {
 				w.Header().Set("Content-Type", "application/json")
