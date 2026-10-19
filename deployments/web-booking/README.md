@@ -224,11 +224,13 @@ and unique draft/purpose outbox keys prevent duplicate SMS after concurrent runs
 crashes or uncertain sends. Only safe record/status GETs may repeat. The private
 hash is never shown to a browser, put in a client link or logged.
 
-Existing Telegram/WhatsApp/SMS assistant flows remain separate. New web bookings
-are visible through the existing verified-phone Altegio lookup, but they have
-no Go-owned management proof. Chat changes therefore go to staff. This release
-does not enable Altegio's native browser OTP, native review requests or automatic
-review campaigns. No such messages are replayed. Web reminders are this new
+New web bookings retain their provider management proof on the server, bound to
+the current verified phone. The existing bot's two-step change/cancel flow can
+use that proof. Manual records without a proof stay staff-assisted. The signed
+context bridge shares locale, permissions, private calendar identity and durable
+notification deduplication. This release does not enable Altegio's native browser
+OTP or automatic review campaigns. No historical review requests are replayed.
+Web reminders are this new
 Worker's explicitly enabled route and do not use the existing Go reminder queue.
 
 ## Verification and operation
@@ -254,6 +256,34 @@ booked months ahead. Uncertain send records are
 retained for reconciliation; review these manually and set a retention policy
 once resolved. Keep Worker/DB on Free, leave paid services disabled, and keep
 Cloudflare free-quota failure behavior visible to users.
+
+## Verified specialist reviews
+
+`/reviews/` reuses the secure booking session and SMS phone proof. The Go bridge
+lists only visits owned by that exact phone, within 90 days, explicitly marked
+attended and already finished. Submission re-reads the private record. The
+browser cannot choose a specialist or supply attendance, client ID or phone.
+`verified_reviews` stores one immutable review per appointment with a unique
+primary key, HMAC phone identifier, actual specialist, 1–5 rating and optional
+plain-text comment. Private feedback stays out of public totals. Publication is
+an explicit unchecked-by-default choice; all published ratings, including low
+ratings, count equally. Public APIs contain no phone, appointment ID or private
+capability. Contact information, links, HTML and oversized inputs are rejected.
+
+The existing calendar receipt links to the review page; that link proves no
+identity and cannot bypass SMS ownership or completion checks. Existing Altegio
+ratings are not relabeled as our verified reviews. No review is fabricated during
+live QA and no new paid email provider is enabled. Studio administrators can
+inspect private feedback through the existing Cloudflare D1 dashboard. For example:
+
+```sql
+SELECT staff_name, rating, comment, display_name, published,
+       datetime(created_at, 'unixepoch') AS received_utc
+FROM verified_reviews ORDER BY created_at DESC LIMIT 100;
+```
+
+Apply `0004_verified_reviews.sql` before deploying the new endpoints. `/reviews`
+is private/no-store at the API boundary, and the PWA does not cache API data.
 
 References: [D1 prepared/batch transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/),
 [Turnstile server verification](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/).

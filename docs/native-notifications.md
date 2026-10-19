@@ -15,6 +15,12 @@ contract. Booking SMS fallback uses the commissioned work Android phone.
 
 ## Customer flow and sender identity
 
+New administrator bookings after `MANUAL_BOOKING_NOTICES_SINCE=2026-10-19T16:25:28Z`
+also enter the transactional channel pipeline. Native `api_id` values `null`,
+`""`, `"0"` and numeric zero all mean no external API source. Nonzero external
+API sources remain distinct. The fixed cutover does not enroll historical records.
+Phone changes do not override withdrawals or reuse another client's calendar key.
+
 The native form explains that submitting a booking requests E-Motion appointment
 updates through Telegram or WhatsApp, with SMS as a fallback. No bot command or separate contact-sharing
 step is required for this flow. The on-screen booking result remains available.
@@ -129,9 +135,10 @@ withdrawn channel.
 
 `/notification_status` shows the policy and account readiness flag.
 `/notification_order telegram` or `/notification_order whatsapp` changes the first
-eligible messenger. Native Telegram notices default to Armenian unless a saved
-bot or staff preference exists. WhatsApp uses its own saved template language,
-defaulting to English. There is no approved Armenian template in this release.
+eligible messenger. The verified shared phone language applies across web booking,
+the bot and notification routes; an explicit verified change updates that choice.
+Without a shared choice, native notices default to Russian. No approved Armenian
+WhatsApp template is claimed; an unavailable template uses the next eligible route.
 
 ## Account commissioning and release
 
@@ -178,6 +185,12 @@ The capability is never logged; a narrow Cloud Logging exclusion removes automat
 request URL logs for this route. Sanitized application audit logs remain enabled.
 Keep `NATIVE_NOTIFICATIONS_ACTIVATED_AT` fixed. Cloud Scheduler invokes the
 authenticated `/tasks/notifications` recovery action every five minutes.
+This recovers the durable outbox and provider receipts; it does not compare or
+poll the Altegio calendar. A recent `no_linked_messenger` event with no provider
+attempt may be re-prepared. Its current appointment, recipient, fingerprint,
+permissions and withdrawals are checked again. Accepted and ambiguous sends
+cannot be reopened by this recovery. A canceled visit cannot receive its old
+creation confirmation.
 
 ## Delivery guarantees and verification
 
