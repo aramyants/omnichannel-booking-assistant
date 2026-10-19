@@ -14,7 +14,7 @@ export async function ecosystemContext(env:Env,runtime:Runtime,data:{action:'con
  try{
   const response=await runtime.fetch(env.ECOSYSTEM_GATEWAY_ORIGIN+'/internal/booking-context',{method:'POST',headers:{'Content-Type':'application/json','X-Emotion-Time':timestamp,'X-Emotion-Signature':signature},body,redirect:'manual',signal:AbortSignal.timeout(12000)});
   if(!response.ok)throw new Error();
-  const raw=await response.text();if(raw.length>8192)throw new Error();const result=JSON.parse(raw);
+  const raw=await response.text();if(raw.length>(data.action==='review-visits'?131072:8192))throw new Error();const result=JSON.parse(raw);
   if(!['en','ru','hy'].includes(result.locale))throw new Error();
   if(result.calendarUrl&&(!result.calendarUrl.startsWith(env.PUBLIC_ORIGIN+'/calendar/')||result.calendarUrl.length>300))throw new Error();
   return result;
