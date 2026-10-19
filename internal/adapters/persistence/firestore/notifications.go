@@ -11,6 +11,22 @@ import (
 
 const notificationCollection = "native_booking_notifications"
 
+func (s *Store) UnroutedNotifications(ctx context.Context) ([]notifications.Entry, error) {
+	docs, err := s.client.Collection(notificationCollection).Where("outcome", "==", "no_linked_messenger").Limit(100).Documents(ctx).GetAll()
+	if err != nil {
+		return nil, err
+	}
+	var rows []notifications.Entry
+	for _, doc := range docs {
+		var row notifications.Entry
+		if err = doc.DataTo(&row); err != nil {
+			return nil, err
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
 // TouchNotificationConversation changes activity timestamps only. It preserves
 // the assistant draft, staff handoff and conversation revision concurrently.
 func (s *Store) TouchNotificationConversation(ctx context.Context, key string, at time.Time) error {

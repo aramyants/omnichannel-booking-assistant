@@ -69,7 +69,7 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 			http.Error(w, "Bad request", 400)
 			return
 		}
-		if body.Action != "context" && body.Action != "prepare" && body.Action != "confirmed" && body.Action != "record-context" {
+		if body.Action != "context" && body.Action != "prepare" && body.Action != "confirmed" && body.Action != "record-context" && body.Action != "review-visits" && body.Action != "review-check" {
 			http.Error(w, "Bad request", 400)
 			return
 		}
@@ -91,6 +91,47 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 			})
 		}
 		output := map[string]any{"locale": lang}
+		if body.Action == "review-visits" || body.Action == "review-check" {
+			if body.Action == "review-check" {
+				if value, parseErr := strconv.ParseUint(body.RecordID, 10, 64); parseErr != nil || value == 0 {
+					http.Error(w, "Bad request", 400)
+					return
+				}
+				snap, readErr := service.Reader.ReadNativeBooking(r.Context(), body.RecordID)
+				if readErr != nil {
+					http.Error(w, "Unavailable", 503)
+					return
+				}
+				if snap.Phone != phone || !reviewEligible(snap.Booking, time.Now()) {
+					http.Error(w, "Not found", 404)
+					return
+				}
+				output["visit"] = reviewVisit(snap.Booking)
+			} else {
+				reader, ok := service.Reader.(interface {
+					ListPhoneBookings(context.Context, string, time.Time) ([]booking.Booking, error)
+				})
+				if !ok {
+					http.Error(w, "Unavailable", 503)
+					return
+				}
+				bookings, listErr := reader.ListPhoneBookings(r.Context(), phone, time.Now().Add(-90*24*time.Hour))
+				if listErr != nil {
+					http.Error(w, "Unavailable", 503)
+					return
+				}
+				visits := []map[string]any{}
+				for _, b := range bookings {
+					if reviewEligible(b, time.Now()) {
+						visits = append(visits, reviewVisit(b))
+					}
+				}
+				output["visits"] = visits
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(output)
+			return
+		}
 		if body.Action == "confirmed" || body.Action == "record-context" {
 			if _, parseErr := strconv.ParseUint(body.RecordID, 10, 64); parseErr != nil {
 				http.Error(w, "Bad request", 400)
@@ -166,6 +207,13 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(output)
 	})
+}
+
+func reviewEligible(b booking.Booking, now time.Time) bool {
+	return b.Status != booking.StatusCancelled && b.Attended && b.StaffID != "" && b.Duration > 0 && !b.StartsAt.IsZero() && !b.StartsAt.Before(now.Add(-90*24*time.Hour)) && !b.StartsAt.Add(b.Duration).After(now)
+}
+func reviewVisit(b booking.Booking) map[string]any {
+	return map[string]any{"id": b.ExternalID, "staffId": b.StaffID, "staffName": b.StaffName, "serviceName": strings.Join(b.ServiceNames, ", "), "datetime": b.StartsAt.Format(time.RFC3339)}
 }
 
 // The caller supplies a phone proven by the channel, never a model argument.

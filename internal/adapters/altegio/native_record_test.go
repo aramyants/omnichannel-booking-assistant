@@ -1,6 +1,7 @@
 package altegio
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
@@ -9,6 +10,25 @@ import (
 	"testing"
 	"time"
 )
+
+func TestNativeSourceZeroFormsAreNotThirdPartyAPI(t *testing.T) {
+	for _, raw := range []string{`null`, `""`, `"0"`, `0`, `"external-app"`, `2555`} {
+		var dto nativeRecord
+		if err := json.Unmarshal([]byte(`{"api_id":`+raw+`}`), &dto); err != nil {
+			t.Fatal(err)
+		}
+		want := ""
+		if raw == `"external-app"` {
+			want = "external-app"
+		}
+		if raw == `2555` {
+			want = "2555"
+		}
+		if string(dto.APIID) != want {
+			t.Fatal(raw, dto.APIID)
+		}
+	}
+}
 
 func TestNativeRecordReadIsPrivateAndBoundToLocation(t *testing.T) {
 	for _, tc := range []struct {

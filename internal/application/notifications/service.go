@@ -31,6 +31,7 @@ type Snapshot struct {
 	ChangedAt time.Time       `firestore:"changed_at"`
 	APIID     string          `firestore:"api_id"`
 	Online    bool            `firestore:"online"`
+	Attended  bool            `firestore:"attended,omitempty"`
 }
 type Contact struct {
 	Chat        string    `firestore:"chat"`
@@ -157,11 +158,13 @@ func (s *Service) schedule(ctx context.Context, id, attempt string) error {
 	return s.Scheduler.ScheduleNotification(ctx, Key("native", id+":"+attempt), id, s.now().Add(2*time.Second))
 }
 func (s *Service) Reconcile(ctx context.Context) error {
+	calendarErr := s.reconcileCalendar(ctx)
+	unroutedErr := s.reconcileUnrouted(ctx)
 	entries, err := s.Repo.PendingNotifications(ctx)
 	if err != nil {
 		return err
 	}
-	var recoveryErr error
+	recoveryErr := errors.Join(calendarErr, unroutedErr)
 	for _, row := range entries {
 		if row.Kind != "event" || row.LeaseUntil.After(s.now()) {
 			continue
@@ -345,6 +348,26 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 	permission, err := s.Repo.GetNotification(ctx, Key("record", row.Event.RecordID))
 	if err != nil {
 		return err
+	}
+	// Repair a native source that previously arrived as the string "0". Only
+	// the same current recipient can acquire the original creation permission.
+	if permission.Contact.RequestedAt.IsZero() && permission.CalendarPhone == phone && !latest.Online && latest.APIID == "" && !latest.Booking.CreatedAt.IsZero() {
+		since := s.BookingPermissionSince
+		if !latest.Online {
+			since = s.ManualPermissionSince
+		}
+		if !since.IsZero() && !latest.Booking.CreatedAt.Before(since) {
+			recordKey := Key("record", row.Event.RecordID)
+			if err = s.Repo.TransactNotifications(ctx, []string{recordKey}, func(rows map[string]*Entry) error {
+				if rows[recordKey].CalendarPhone == phone && rows[recordKey].Contact.RequestedAt.IsZero() {
+					rows[recordKey].Contact = Contact{Phone: phone, RequestedAt: latest.Booking.CreatedAt}
+				}
+				permission = *rows[recordKey]
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
 	}
 	requested := !permission.Contact.RequestedAt.IsZero() && permission.Contact.Phone == phone && latest.Online && latest.APIID == "" && !s.BookingPermissionSince.IsZero() && !permission.Contact.RequestedAt.Before(s.BookingPermissionSince)
 	manualRequested := !s.ManualPermissionSince.IsZero() && !permission.Contact.RequestedAt.Before(s.ManualPermissionSince) && permission.Contact.Phone == phone && !latest.Online && latest.APIID == ""
