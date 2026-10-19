@@ -116,6 +116,7 @@ type ConversationTurns interface {
 // there are enough of them that call sites would otherwise be a row of
 // same-typed arguments that are easy to transpose.
 type Deps struct {
+	ManagementProof   func(context.Context, string, string) (string, string, error)
 	PreferredLanguage func(context.Context, string, string, bool) (string, error)
 	// DeliveryAvailable prevents model/tool work when a provider has confirmed
 	// that replies cannot be delivered. Incoming messages still reach staff.
@@ -232,15 +233,16 @@ func NewService(deps Deps) (*Service, error) {
 		business:          business,
 		staff:             deps.Staff,
 		tools: &toolset{
-			identity:   deps.Identity,
-			scheduling: deps.Scheduling,
-			bookings:   deps.Bookings,
-			customers:  deps.Customers,
-			reminders:  deps.Reminders,
-			messages:   deps.AppointmentMessages,
-			now:        now,
-			location:   business.Location,
-			logger:     deps.Logger,
+			managementProof: deps.ManagementProof,
+			identity:        deps.Identity,
+			scheduling:      deps.Scheduling,
+			bookings:        deps.Bookings,
+			customers:       deps.Customers,
+			reminders:       deps.Reminders,
+			messages:        deps.AppointmentMessages,
+			now:             now,
+			location:        business.Location,
+			logger:          deps.Logger,
 		},
 	}, nil
 }

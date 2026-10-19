@@ -116,6 +116,15 @@ func (s *Service) cabinetReply(ctx context.Context, sess *session, msg messaging
 		return "", false, nil
 	}
 	action := menuAction(msg.Content.Text)
+	if action == "start" {
+		parts := strings.Fields(msg.Content.Text)
+		if len(parts) == 2 && (parts[1] == "visits_en" || parts[1] == "visits_ru" || parts[1] == "visits_hy") {
+			action = "appointments"
+			if sess.customer.VerifiedPhone == "" {
+				sess.language = language(strings.TrimPrefix(parts[1], "visits_"))
+			}
+		}
+	}
 	if action == "verify_cancel" {
 		if err := s.identity.Cancel(ctx, msg.Provider, msg.ExternalUserID); err != nil {
 			return "", true, err
@@ -221,6 +230,15 @@ func (t *toolset) customerBookings(ctx context.Context, cust customer.Customer) 
 				b.ID, b.CustomerID, b.ManagementToken = old.ID, old.CustomerID, old.ManagementToken
 			} else {
 				b.ID, b.CustomerID = "native_"+b.ExternalID, cust.ID
+				if t.managementProof != nil {
+					id, proof, err := t.managementProof(ctx, b.ExternalID, cust.VerifiedPhone)
+					if err != nil {
+						return nil, err
+					}
+					if id != "" && proof != "" {
+						b.ID, b.ManagementToken = id, proof
+					}
+				}
 			}
 		}
 		slices.SortFunc(live, func(a, b booking.Booking) int { return a.StartsAt.Compare(b.StartsAt) })

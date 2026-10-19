@@ -296,7 +296,7 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 			validUntil = b.StartsAt
 		}
 		_, err := s.sms.Send(ctx, smsgate.Message{ID: nativeSMSMessageID(notice.ID, target.Address), Phone: target.Address,
-			Text:       s.renderer.SMS(title, appointmentmessage.Appointment{StartsAt: b.StartsAt, Service: strings.Join(b.ServiceNames, ", "), Specialist: b.StaffName, CalendarURL: calendarURL}, appointmentmessage.Language(lang)),
+			Text:       s.renderer.SMS(title, appointmentmessage.Appointment{StartsAt: b.StartsAt, Service: strings.Join(b.ServiceNames, ", "), Specialist: b.StaffName, Reference: b.ExternalID, CalendarURL: calendarURL}, appointmentmessage.Language(lang)),
 			ValidUntil: validUntil, Priority: 0})
 		return errors.Is(err, smsgate.ErrRejected), err
 	}
@@ -315,7 +315,7 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 		err := s.wa.SendBookingTemplateWithReference(ctx, target.Address, target.TemplateID, lang, []string{title, when, details}, "native-booking:"+notice.ID)
 		return errors.Is(err, meta.ErrRejected), err
 	}
-	appointment := appointmentmessage.Appointment{CustomerName: b.CustomerName, StartsAt: b.StartsAt, Service: strings.Join(b.ServiceNames, ", "), Specialist: b.StaffName, CalendarURL: calendarURL}
+	appointment := appointmentmessage.Appointment{CustomerName: b.CustomerName, StartsAt: b.StartsAt, Service: strings.Join(b.ServiceNames, ", "), Specialist: b.StaffName, Reference: b.ExternalID, CalendarURL: calendarURL}
 	render := s.renderer.Confirmation
 	switch notice.Purpose {
 	case notifications.BookingChanged:
@@ -326,8 +326,8 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 	text := render(appointmentmessage.Language(lang), appointment)
 	msg := messaging.Outgoing{Provider: messaging.ProviderTelegram, ExternalThreadID: target.Address, Text: text}
 	labels := map[string][]string{"hy": {"Առցանց ամրագրում", "Կայք և հասցե"}, "ru": {"Онлайн-запись", "Сайт и адрес"}, "en": {"Book online", "Website & directions"}}[lang]
-	links := []messaging.Link{{Label: labels[0], URL: s.bookingURL}, {Label: labels[1], URL: s.websiteURL}}
-	links = append(links, s.renderer.Links(appointmentmessage.Language(lang), appointment)...)
+	links := s.renderer.Links(appointmentmessage.Language(lang), appointment)
+	links = append(links, messaging.Link{Label: labels[0], URL: s.bookingURL}, messaging.Link{Label: labels[1], URL: s.websiteURL})
 	msg = msg.WithLinks(links)
 	if target.StudioAccount {
 		if s.account == nil {

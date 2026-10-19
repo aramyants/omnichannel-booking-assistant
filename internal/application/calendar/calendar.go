@@ -152,6 +152,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	download.RawQuery = q.Encode()
 	data := pageData{Lang: lang, Name: h.settings.Name, Title: title, Heading: p.heading, When: b.StartsAt.In(h.settings.Location).Format("02.01.2006 · 15:04"), Zone: h.settings.Location.String(), Address: address, Google: "https://calendar.google.com/calendar/render?" + google.Encode(), Outlook: "https://outlook.live.com/calendar/0/deeplink/compose?" + outlook.Encode(), Office: "https://outlook.office.com/calendar/0/deeplink/compose?" + outlook.Encode(), Download: download.String(), DownloadLabel: p.download, Note: p.note, Help: p.help}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data.Bot, data.Manage = BotLink(lang), ManageLabel(lang)
 	_ = page.Execute(w, data)
 }
 
@@ -161,6 +162,21 @@ func language(s string) string {
 		return s
 	}
 	return "en"
+}
+
+// Public navigation only. It carries no capability, phone or management proof.
+func BotLink(lang string) string {
+	return "https://t.me/emotion_concept_bot?start=visits_" + language(lang)
+}
+func ManageLabel(lang string) string {
+	switch language(lang) {
+	case "ru":
+		return "Управлять записью в Telegram"
+	case "hy":
+		return "Կառավարել այցը Telegram-ում"
+	default:
+		return "Manage your visit in Telegram"
+	}
 }
 
 type copyWords struct{ heading, download, note, help, expired string }
@@ -201,9 +217,9 @@ func ICS(b booking.Booking, title, address, description string, now time.Time) s
 	return out.String()
 }
 
-type pageData struct{ Lang, Name, Title, Heading, When, Zone, Address, Google, Outlook, Office, Download, DownloadLabel, Note, Help string }
+type pageData struct{ Lang, Name, Title, Heading, When, Zone, Address, Google, Outlook, Office, Download, DownloadLabel, Note, Help, Bot, Manage string }
 
 var page = template.Must(template.New("calendar").Parse(`<!doctype html>
 <html lang="{{.Lang}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>{{.Name}} · Calendar</title>
 <style>*{box-sizing:border-box}body{margin:0;background:#faf7f5;color:#201719;font:16px/1.6 system-ui,-apple-system,sans-serif}main{max-width:620px;margin:5vh auto;padding:32px 26px}header{font-size:13px;font-weight:700;letter-spacing:.08em;border-bottom:1px solid #dbcdd0;padding-bottom:24px;color:#96181b}h1{font-size:clamp(32px,8vw,52px);font-weight:650;line-height:1.12;letter-spacing:-.035em;margin:32px 0 24px}h2{font-size:20px;font-weight:600;margin:0 0 8px}.when{font-size:24px;margin:0}.meta{font-size:13px;color:#706267;margin:5px 0 20px}nav{display:grid;gap:10px;margin:28px 0}a{display:block;padding:15px 18px;color:inherit;border:1px solid #cbbabd;text-decoration:none;border-radius:12px;font-size:15px;min-height:52px}a:first-child{background:#96181b;color:#fff;border-color:#96181b}a:hover{outline:2px solid #96181b;outline-offset:2px}a:focus-visible{outline:3px solid #d5263c;outline-offset:3px}.note{border-top:1px solid #dbcdd0;padding-top:20px;font-size:14px}.help{font-size:13px;color:#706267}@media(prefers-color-scheme:dark){body{background:#141214;color:#faf7f5}header{color:#ffa6c5;border-color:#45373d}.meta,.help{color:#c7b9c0}a{border-color:#6e515e}a:first-child{background:#b92537;border-color:#b92537}.note{border-color:#45373d}}@media(max-width:400px){main{padding:22px 18px;margin:0}h1{margin-top:28px}}</style></head>
-<body><main><header>{{.Name}}</header><h1>{{.Heading}}</h1><section aria-label="Appointment"><h2>{{.Title}}</h2><p class="when">{{.When}}</p><p class="meta">{{.Zone}}{{if .Address}}<br>{{.Address}}{{end}}</p></section><nav aria-label="Calendar"><a href="{{.Google}}" rel="noreferrer">Google Calendar ↗</a><a href="{{.Download}}">{{.DownloadLabel}} ↓</a><a href="{{.Outlook}}" rel="noreferrer">Outlook.com ↗</a><a href="{{.Office}}" rel="noreferrer">Microsoft 365 ↗</a></nav><p class="help">{{.Help}}</p><p class="note">{{.Note}}</p></main></body></html>`))
+<body><main><header>{{.Name}}</header><h1>{{.Heading}}</h1><section aria-label="Appointment"><h2>{{.Title}}</h2><p class="when">{{.When}}</p><p class="meta">{{.Zone}}{{if .Address}}<br>{{.Address}}{{end}}</p></section><nav aria-label="Calendar"><a href="{{.Google}}" rel="noreferrer">Google Calendar ↗</a><a href="{{.Download}}">{{.DownloadLabel}} ↓</a><a href="{{.Outlook}}" rel="noreferrer">Outlook.com ↗</a><a href="{{.Office}}" rel="noreferrer">Microsoft 365 ↗</a></nav><a href="{{.Bot}}" rel="noreferrer">{{.Manage}}</a><p class="help">{{.Help}}</p><p class="note">{{.Note}}</p></main></body></html>`))

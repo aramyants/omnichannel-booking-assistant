@@ -51,7 +51,7 @@ test('shared bridge authenticates exact bodies and hands web confirmation to one
    const headers=init!.headers as Record<string,string>,body=String(init!.body),time=headers['X-Emotion-Time'];
    const key=createHmac('sha256',f.env.ALTEGIO_USER_TOKEN!).update('emotion-ecosystem-auth-v1').digest();
    assert.equal(headers['X-Emotion-Signature'],createHmac('sha256',key).update(time+'\nPOST\n/internal/booking-context\n'+body).digest('hex'));
-   const data=JSON.parse(body);actions.push(data.action);assert.equal(data.phone,'+37491123456');
+   const data=JSON.parse(body);actions.push(data.action);assert.equal(data.phone,'+37491123456');if(data.action==='confirmed')assert.equal(data.managementProof,'private-do-not-leak');
    return Response.json({locale:'en',...(data.action==='confirmed'?{calendarUrl:f.env.PUBLIC_ORIGIN+'/calendar/6789?key='+'a'.repeat(43)+'&lang=en'}:{})});
   }
   return provider(input,init);

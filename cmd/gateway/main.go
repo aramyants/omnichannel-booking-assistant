@@ -268,6 +268,7 @@ func run() error {
 		}
 	}
 	assistantService, err := assistant.NewService(assistant.Deps{
+		ManagementProof: webManagementProof(nativeNotifications),
 		PreferredLanguage: func(ctx context.Context, phone, hint string, explicit bool) (string, error) {
 			if nativeNotifications == nil {
 				return "ru", nil

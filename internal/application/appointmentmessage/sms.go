@@ -10,6 +10,12 @@ import (
 // instructions belong in the messenger confirmation, rather than paid SMS.
 func (r Renderer) SMS(title string, a Appointment, lang Language) string {
 	if a.CalendarURL != "" && len(a.CalendarURL) <= 120 {
+		if a.Reference != "" {
+			withBot := strings.Join([]string{"E-Motion", smsField(title, 18), a.StartsAt.In(r.location).Format("02.01.2006 15:04"), a.CalendarURL, calendarBotLink(lang)}, "\n")
+			if len(utf16.Encode([]rune(withBot))) <= 201 {
+				return withBot
+			}
+		}
 		return strings.Join([]string{"E-Motion Concept", smsField(title, 24), a.StartsAt.In(r.location).Format("02.01.2006 15:04"), a.CalendarURL, smsField(r.business.Phone, 20)}, "\n")
 	}
 	lines := []string{"E-Motion Concept", smsField(title, 42), a.StartsAt.In(r.location).Format("02.01.2006 15:04")}

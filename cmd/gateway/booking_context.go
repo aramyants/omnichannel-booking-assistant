@@ -50,12 +50,13 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 			return
 		}
 		var body struct {
-			Action   string `json:"action"`
-			Phone    string `json:"phone"`
-			Locale   string `json:"locale"`
-			Explicit bool   `json:"explicit"`
-			Consent  bool   `json:"consent"`
-			RecordID string `json:"recordId"`
+			Action          string `json:"action"`
+			Phone           string `json:"phone"`
+			Locale          string `json:"locale"`
+			Explicit        bool   `json:"explicit"`
+			Consent         bool   `json:"consent"`
+			RecordID        string `json:"recordId"`
+			ManagementProof string `json:"managementProof"`
 		}
 		decoder := json.NewDecoder(strings.NewReader(string(raw)))
 		decoder.DisallowUnknownFields()
@@ -116,6 +117,31 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 				http.Error(w, "Unavailable", 503)
 				return
 			}
+			if body.ManagementProof != "" {
+				reader, ok := service.Reader.(interface {
+					ReadBooking(context.Context, booking.Booking) (booking.Booking, error)
+				})
+				if !ok || len(body.ManagementProof) > 256 {
+					http.Error(w, "Unavailable", 503)
+					return
+				}
+				b.ManagementToken = body.ManagementProof
+				if _, proofErr := reader.ReadBooking(r.Context(), b); proofErr != nil {
+					http.Error(w, "Unavailable", 503)
+					return
+				}
+				key := notifications.Key("record", body.RecordID)
+				if proofErr := service.Repo.TransactNotifications(r.Context(), []string{key}, func(rows map[string]*notifications.Entry) error {
+					if rows[key].CalendarPhone != phone {
+						return booking.ErrNotFound
+					}
+					rows[key].ManagementToken, rows[key].ManagementPhone = body.ManagementProof, phone
+					return nil
+				}); proofErr != nil {
+					http.Error(w, "Unavailable", 503)
+					return
+				}
+			}
 			output["calendarUrl"] = calendar.Link(base, b, lang)
 			eventID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("emotion-web-confirmation:"+body.RecordID)).String()
 			err = service.Ingest(r.Context(), notifications.Event{ID: eventID, RecordID: body.RecordID, Status: "create"})
@@ -127,6 +153,23 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(output)
 	})
+}
+
+// The caller supplies a phone proven by the channel, never a model argument.
+func webManagementProof(s *notifications.Service) func(context.Context, string, string) (string, string, error) {
+	return func(ctx context.Context, reference, phone string) (string, string, error) {
+		if s == nil {
+			return "", "", nil
+		}
+		row, err := s.Repo.GetNotification(ctx, notifications.Key("record", reference))
+		if err != nil {
+			return "", "", err
+		}
+		if phone == "" || row.ManagementPhone != phone || row.CalendarPhone != phone {
+			return "", "", nil
+		}
+		return row.CalendarID, row.ManagementToken, nil
+	}
 }
 func ensureNativeCalendar(ctx context.Context, s *notifications.Service, id string, snap notifications.Snapshot) (booking.Booking, error) {
 	key := notifications.Key("record", id)

@@ -92,7 +92,9 @@ type Renderer struct {
 
 // Business returns the same trusted public profile used in confirmations, so
 // the assistant can answer ordinary visit questions before a booking exists.
-func (r Renderer) Business() Business { return r.business }
+func (r Renderer) Business() Business          { return r.business }
+func calendarBotLink(lang Language) string     { return calendar.BotLink(string(lang)) }
+func calendarManageLabel(lang Language) string { return calendar.ManageLabel(string(lang)) }
 
 func (r Renderer) WithCalendar(baseURL string) Renderer { r.baseURL = baseURL; return r }
 func (r Renderer) CalendarURL(b booking.Booking, lang Language) string {
@@ -144,6 +146,9 @@ func (r Renderer) Links(lang Language, appointment Appointment) []messaging.Link
 	links := make([]messaging.Link, 0, 5)
 	if appointment.CalendarURL != "" {
 		links = append(links, messaging.Link{Label: calendar, URL: appointment.CalendarURL})
+	}
+	if appointment.Reference != "" {
+		links = append(links, messaging.Link{Label: calendarManageLabel(lang), URL: calendarBotLink(lang)})
 	}
 	words := translations[lang]
 	if words.googleMap == "" {
@@ -291,6 +296,9 @@ func (r Renderer) render(lang Language, appointment Appointment, status string) 
 	}
 
 	sections := []string{heading, strings.Join(details, "\n")}
+	if appointment.Reference != "" {
+		sections = append(sections, calendarManageLabel(lang)+"\n"+calendarBotLink(lang))
+	}
 	if appointment.CalendarURL != "" && status != "cancelled" {
 		label := "📅 Add to calendar"
 		if lang == Russian {

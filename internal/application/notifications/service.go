@@ -71,6 +71,8 @@ type Entry struct {
 	SMSFailureAlertedAt time.Time               `firestore:"sms_failure_alerted_at,omitempty"`
 	CalendarID          string                  `firestore:"calendar_id,omitempty"`
 	CalendarPhone       string                  `firestore:"calendar_phone,omitempty"`
+	ManagementToken     string                  `firestore:"management_token,omitempty"`
+	ManagementPhone     string                  `firestore:"management_phone,omitempty"`
 }
 type Repository interface {
 	TransactNotifications(context.Context, []string, func(map[string]*Entry) error) error
@@ -259,10 +261,13 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 				}
 			}
 			calendarID := record.CalendarID
+			managementToken, managementPhone := record.ManagementToken, record.ManagementPhone
 			if calendarID == "" || record.CalendarPhone != snap.Phone {
 				calendarID = uuid.NewString()
+				managementToken, managementPhone = "", ""
 			}
 			*record = Entry{Kind: "record", Fingerprint: fp, ChangedAt: snap.ChangedAt, UpdatedAt: now, Contact: permission, CalendarID: calendarID, CalendarPhone: snap.Phone}
+			record.ManagementToken, record.ManagementPhone = managementToken, managementPhone
 			event.Notice = Notice{ID: event.Event.ID, Snapshot: snap, Purpose: purpose, Fingerprint: fp}
 			event.State = "prepared"
 			event.UpdatedAt = now

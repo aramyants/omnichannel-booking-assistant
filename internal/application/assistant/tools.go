@@ -319,15 +319,16 @@ const noArguments = `{"type":"object","properties":{},"required":[],"additionalP
 
 // toolset runs the capabilities the model is allowed to ask for.
 type toolset struct {
-	identity   *cabinet.Identity
-	scheduling Scheduling
-	bookings   BookingRepository
-	customers  CustomerRepository
-	reminders  ReminderPlanner
-	messages   appointmentmessage.Renderer
-	now        func() time.Time
-	location   *time.Location
-	logger     *slog.Logger
+	managementProof func(context.Context, string, string) (string, string, error)
+	identity        *cabinet.Identity
+	scheduling      Scheduling
+	bookings        BookingRepository
+	customers       CustomerRepository
+	reminders       ReminderPlanner
+	messages        appointmentmessage.Renderer
+	now             func() time.Time
+	location        *time.Location
+	logger          *slog.Logger
 }
 
 // definitions describes the tools to the model.

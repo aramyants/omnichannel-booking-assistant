@@ -58,6 +58,32 @@ func (reader contextRecordReader) ReadNativeBooking(context.Context, string) (no
 	return reader.snapshot, nil
 }
 
+func TestWebManagementProofNeverCrossesVerifiedPhones(t *testing.T) {
+	repo := memory.New()
+	key := notifications.Key("record", "123")
+	if err := repo.TransactNotifications(t.Context(), []string{key}, func(rows map[string]*notifications.Entry) error {
+		rows[key].CalendarID, rows[key].CalendarPhone = "private-id", "+37491123456"
+		rows[key].ManagementToken, rows[key].ManagementPhone = "private-proof", "+37491123456"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	read := webManagementProof(&notifications.Service{Repo: repo})
+	for _, phone := range []string{"", "+37499123456", "+37491123456"} {
+		id, proof, err := read(t.Context(), "123", phone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if phone == "+37491123456" {
+			if id != "private-id" || proof != "private-proof" {
+				t.Fatal("verified proof lost")
+			}
+		} else if id != "" || proof != "" {
+			t.Fatal("proof crossed phone ownership")
+		}
+	}
+}
+
 func TestSignedReminderContextChecksCurrentRecipientAndStatus(t *testing.T) {
 	for _, mode := range []string{"current", "reassigned", "cancelled", "unrelated_api"} {
 		t.Run(mode, func(t *testing.T) {

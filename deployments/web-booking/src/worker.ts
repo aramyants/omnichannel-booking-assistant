@@ -71,7 +71,7 @@ async function smsReservation(store:Store,env:Env,runtime:Runtime,session:Sessio
 }
 async function optionalConfirmation(store:Store,env:Env,runtime:Runtime,session:Session,request:Request,draft:Draft,appointment:Appointment):Promise<void> {
  if(env.ECOSYSTEM_GATEWAY_ORIGIN){
-  const result=await ecosystemContext(env,runtime,{action:'confirmed',phone:draft.phone,recordId:appointment.id});
+  const result=await ecosystemContext(env,runtime,{action:'confirmed',phone:draft.phone,recordId:appointment.id,managementProof:draft.management_hash||undefined});
   if(result.calendarUrl){appointment.calendarUrl=result.calendarUrl;await store.appointmentDetails(draft.id,appointment);}
   return;
  }
@@ -114,6 +114,7 @@ async function book(store:Store,env:Env,runtime:Runtime,session:Session,request:
  const appointment:Appointment={id:created.id,serviceName:summary.serviceName,staffName:summary.staffName,datetime:summary.datetime,durationMinutes:summary.durationMinutes,price:summary.price,priceMin:summary.priceMin,priceMax:summary.priceMax};
  try {await store.confirmed(id,appointment,created.managementHash,nowSeconds(runtime),env.SMS_REMINDERS_ENABLED==='true'?Date.parse(summary.datetime)/1000-7200:undefined);}catch{return {status:'uncertain',message:'Please contact the studio to check your booking before trying again.'};}
  // Booking success survives a notification/configuration failure. No provider retry.
+ draft.management_hash=created.managementHash;
  try{await optionalConfirmation(store,env,runtime,session,request,draft,appointment);}catch{/* durable provider attempts remain available for operator review */}
  return {status:'confirmed',appointment};
 }

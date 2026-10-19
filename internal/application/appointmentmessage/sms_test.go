@@ -39,3 +39,14 @@ func TestCalendarSMSPreservesWholeCapabilityWithinThreeSegments(t *testing.T) {
 		}
 	}
 }
+
+func TestConfirmationSMSOffersBotWithoutExposingManagementProof(t *testing.T) {
+	r := New(Business{Phone: "+37494768067"}, time.UTC)
+	link := "https://book.motionconcept.rest/calendar/123456789?key=" + strings.Repeat("a", 43) + "&lang=en"
+	for _, lang := range []Language{English, Russian, Armenian} {
+		text := r.SMS(strings.Repeat("x", 50), Appointment{StartsAt: time.Now(), CalendarURL: link, Reference: "123456789"}, lang)
+		if !strings.Contains(text, calendarBotLink(lang)) || !strings.Contains(text, link) || len(utf16.Encode([]rune(text))) > 201 {
+			t.Fatal("SMS actions lost or exceeded segment budget")
+		}
+	}
+}
