@@ -10,6 +10,18 @@ function samePhone(raw:string,expected:string):boolean{
 }
 export async function runNotifications(env:Env,runtime:Runtime):Promise<void>{
  const store=new Store(env.DB),now=Math.floor(runtime.now()/1000);
+ if(env.ECOSYSTEM_GATEWAY_ORIGIN){
+  // This repeats only the authenticated context handoff, never booking creation
+  // or an SMS send. Go owns the deterministic event and durable delivery ledger.
+  for(const draft of await store.contextRecoveryCandidates(now)){
+   if(!await store.reserveContextRecovery(draft,now))continue;
+   try{
+    const appointment=JSON.parse(draft.appointment!) as Appointment;
+    const context=await ecosystemContext(env,runtime,{action:'confirmed',phone:draft.phone,recordId:appointment.id,managementProof:draft.management_hash!});
+    if(context.calendarUrl){appointment.calendarUrl=context.calendarUrl;await store.appointmentDetails(draft.id,appointment);}
+   }catch{/* Fairly rotate incomplete handoffs within a bounded 24-hour window. */}
+  }
+ }
  // Provider GETs are safe to repeat; provider POSTs are never retried.
  for(const candidate of await store.receiptCandidates(now)){
   if(!await store.reserveReceiptRead(candidate.id,now,candidate.purpose==='otp'?10:300))continue;

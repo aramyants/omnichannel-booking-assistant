@@ -98,6 +98,13 @@ export class Store {
   await this.db.batch(statements);
  }
  async appointmentDetails(id:string,appointment:unknown):Promise<void>{await this.db.prepare("UPDATE drafts SET appointment=? WHERE id=? AND status='confirmed'").bind(JSON.stringify(appointment),id).run();}
+ async contextRecoveryCandidates(now:number):Promise<Draft[]>{
+  const result=await this.db.prepare(`SELECT * FROM drafts WHERE status='confirmed' AND management_hash IS NOT NULL AND management_hash<>'' AND created_at>? AND updated_at<? AND json_extract(summary,'$.consent')=1 AND json_extract(summary,'$.locale') IN ('ru','en','hy') AND json_extract(appointment,'$.calendarUrl') IS NULL AND json_extract(appointment,'$.datetime')>? ORDER BY updated_at ASC LIMIT 2`)
+   .bind(now-86400,now-60,new Date(now*1000+4*3600000).toISOString().slice(0,19)+'+04:00').all<Draft>();return result.results;
+ }
+ async reserveContextRecovery(draft:Draft,now:number):Promise<boolean>{
+  const result=await this.db.prepare("UPDATE drafts SET updated_at=? WHERE id=? AND status='confirmed' AND updated_at=? AND json_extract(appointment,'$.calendarUrl') IS NULL").bind(now,draft.id,draft.updated_at).run();return result.meta.changes===1;
+ }
  async cleanup(now:number):Promise<void> {
   await this.db.batch([
    this.db.prepare('DELETE FROM sessions WHERE expires_at<?').bind(now),
