@@ -147,7 +147,7 @@ function fixture(){
   if(url.includes('sms-gate.app')&&!init?.body){receiptReads++;return Response.json({id:url.split('/').at(-1),state:receiptState});}
   if(url.includes('sms-gate.app')){const data=JSON.parse(init!.body as string);sentSms++;smsTexts.push(data.textMessage.text);otp=data.textMessage.text.match(/\b\d{6}\b/)?.[0]||'';if(smsMode==='timeout')throw new Error('simulated sms timeout');return Response.json({id:data.id,state:'Pending'},{status:202});}
   if(url.includes('/book_services/'))return Response.json({success:true,data:{category:[{id:1,title:'Motion Relax'},{id:2,title:'Add More Time'}],services:[{id:13827004,title:'80 min',active:1,category_id:1,price_min:price,price_max:price,seance_length:url.includes('staff_id')?4800:null,comment:'<p>Relax</p>'},{id:13827268,title:'20 min',active:1,category_id:2,price_min:5000,price_max:5000}]}});
-  if(url.includes('/book_staff/'))return Response.json({success:true,data:[{id:99,name:'Test Specialist',specialization:'Massage',bookable:true,fired:0,avatar:'https://assets.alteg.io/masters/sm/test.png',avatar_big:'https://assets.alteg.io/masters/origin/test.png'},{id:100,name:'Unavailable',bookable:false}]});
+  if(url.includes('/book_staff/'))return Response.json({success:true,data:[{id:99,name:'Test Specialist',specialization:'Massage',information:'<p>Care &amp; comfort.</p><img src=x onerror=alert(1)>',bookable:true,fired:0,avatar:'https://assets.alteg.io/masters/sm/test.png',avatar_big:'https://assets.alteg.io/masters/origin/test.png'},{id:100,name:'Unavailable',bookable:false}]});
   if(url.includes('/book_dates/'))return Response.json({success:true,data:{booking_dates:['2026-10-21']}});
   if(url.includes('/book_times/'))return Response.json({success:true,data:[{datetime:'2026-10-21T12:00:00+04:00',seance_length:slotSeconds}]});
   if(url.includes('/book_check/')){checkCalls++;return Response.json({success:true,data:{}});}
@@ -291,6 +291,7 @@ test('public catalog sanitizes data and removes coordinated add-ons and unavaila
  const f=fixture(),result=await f.request('/services');assert.equal(result.value.services.length,1);assert.equal(result.value.services[0].name,'Motion Relax · 80 min');assert.equal(result.value.services[0].description,'Relax');
  const staff=await f.request('/staff?service_id=13827004');assert.equal(staff.value.staff.length,1);assert.equal(staff.value.staff[0].id,'99');
  assert.equal(staff.value.staff[0].avatarUrl,'https://assets.alteg.io/masters/origin/test.png');
+ assert.equal(staff.value.staff[0].biography,'Care & comfort.');
  assert.equal(staffPhoto('javascript:alert(1)'),undefined);assert.equal(staffPhoto('https://evil.example/photo.png'),undefined);assert.equal(staffPhoto('https://assets.alteg.io@evil.example/masters/x.png'),undefined);
  assert.throws(()=>dateValue('2026-99-99'));assert.throws(()=>dateValue('2026-02-31'));
  assert.equal(result.value.services[0].durationMinutes,80);

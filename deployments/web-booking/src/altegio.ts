@@ -3,7 +3,7 @@ import type { Env, Runtime, Summary } from './types.ts';
 import { normalizePhone } from './security.ts';
 
 export interface Service { id: string; name: string; description: string; durationMinutes: number; priceMin: number; priceMax: number; category: string }
-export interface Staff { id: string; name: string; specialization: string; avatarUrl?:string }
+export interface Staff { id: string; name: string; specialization: string; avatarUrl?:string; biography?:string }
 export interface Slot { datetime: string; label: string; durationMinutes: number }
 type Wire = Record<string, unknown>;
 const titles: Record<string, [string, string]> = {
@@ -106,7 +106,7 @@ export class Altegio {
  async staff(serviceId: string): Promise<Staff[]> {
   return array(await this.call('/book_staff/'+this.env.ALTEGIO_COMPANY_ID+'?service_ids%5B%5D='+identifier(serviceId)))
    .filter(x=>!Number(x.fired) && x.bookable!==false && x.bookable!==0)
-   .map(x=>({id:identifier(x.id),name:safeText(x.name,150),specialization:safeText(x.specialization,250),...(staffPhoto(x.avatar_big)||staffPhoto(x.avatar)?{avatarUrl:staffPhoto(x.avatar_big)||staffPhoto(x.avatar)}:{})}));
+   .map(x=>({id:identifier(x.id),name:safeText(x.name,150),specialization:safeText(x.specialization,250),biography:safeText(x.information,8000),...(staffPhoto(x.avatar_big)||staffPhoto(x.avatar)?{avatarUrl:staffPhoto(x.avatar_big)||staffPhoto(x.avatar)}:{})}));
  }
  async validateService(serviceId: string): Promise<Service> {
   const service=(await this.services()).find(x=>x.id===identifier(serviceId));
