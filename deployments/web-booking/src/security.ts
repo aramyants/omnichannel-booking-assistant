@@ -1,5 +1,6 @@
 import { Failure } from './types.ts';
 import type { Env, Runtime } from './types.ts';
+import { parsePhoneNumberWithError } from 'libphonenumber-js/max';
 
 const encoder = new TextEncoder();
 export const cookieName = '__Host-motion_booking';
@@ -28,13 +29,19 @@ export function ip(request: Request): string {
  if (!value || value.length > 64 || !/^[0-9a-f:.]+$/i.test(value)) throw new Failure('request_unavailable', 503, 'Booking is temporarily unavailable.');
  return value;
 }
-export function origin(request: Request, env: Env, mutation: boolean): void {
+export function trustedRequestOrigin(request:Request,env:Env):string {
  let expected: URL;
  try { expected = new URL(env.PUBLIC_ORIGIN); } catch { throw new Failure('configuration', 503); }
- if (expected.protocol !== 'https:' || expected.origin !== env.PUBLIC_ORIGIN || expected.hostname.endsWith('.invalid') ||
-     new URL(request.url).origin !== expected.origin) throw new Failure('configuration', 503);
+ if (expected.protocol !== 'https:' || expected.origin !== env.PUBLIC_ORIGIN || expected.hostname.endsWith('.invalid'))throw new Failure('configuration',503);
+ const incoming=new URL(request.url).origin;
+ const permittedLegacy=expected.origin==='https://book.motionconcept.rest'&&env.LEGACY_BOOKING_ACTIVE==='true'&&incoming==='https://booking.motionconcept.rest';
+ if(incoming!==expected.origin&&!permittedLegacy)throw new Failure('configuration',503);
+ return incoming;
+}
+export function origin(request: Request, env: Env, mutation: boolean): void {
+ const incoming=trustedRequestOrigin(request,env);
  const actual = request.headers.get('Origin');
- if ((mutation && !actual) || (actual && actual !== expected.origin)) throw new Failure('origin_rejected', 403, 'Please open booking from the studio website.');
+ if ((mutation && !actual) || (actual && actual !== incoming)) throw new Failure('origin_rejected', 403, 'Please open booking from the studio website.');
  if (request.headers.get('Sec-Fetch-Site') === 'cross-site') throw new Failure('origin_rejected', 403);
 }
 export function configured(env: Env): void {
@@ -70,8 +77,12 @@ export function normalizePhone(raw: unknown): string {
  if (/^374\d{8}$/.test(phone)) phone = '+' + phone;
  if (/^0\d{8}$/.test(phone)) phone = '+374' + phone.slice(1);
  if (/^\d{8}$/.test(phone)) phone = '+374' + phone;
- if (!/^\+[1-9]\d{7,14}$/.test(phone) || (phone.startsWith('+374') && !/^\+374\d{8}$/.test(phone))) throw new Failure('invalid_phone', 400, 'Enter your phone with country code.');
- return phone;
+ if (!/^\+[1-9]\d{7,14}$/.test(phone)) throw new Failure('invalid_phone', 400, 'Enter your phone with country code.');
+ try{
+  const parsed=parsePhoneNumberWithError(phone,{extract:false});
+  if(parsed.ext||!parsed.isValid())throw new Error();
+  return parsed.number;
+ }catch{throw new Failure('invalid_phone',400,'Enter a valid phone number with its country code.');}
 }
 export function positiveCap(raw: string): number {
  const n = Number(raw); return Number.isSafeInteger(n) && n > 0 && n <= 1000 ? n : 0;
@@ -81,6 +92,7 @@ export function smsCap(raw:string):number|null {
  return positiveCap(raw);
 }
 export async function verifyTurnstile(token: unknown, request: Request, env: Env, runtime: Runtime): Promise<void> {
+ const expectedHostname=new URL(trustedRequestOrigin(request,env)).hostname;
  if (!env.TURNSTILE_SECRET) throw new Failure('verification_unavailable', 503, 'Phone verification is temporarily unavailable.');
  if (typeof token !== 'string' || token.length < 10 || token.length > 2048) throw new Failure('human_verification_required', 400, 'Please complete the security check.');
  let result: { success?: boolean; hostname?: string; action?: string };
@@ -91,5 +103,5 @@ export async function verifyTurnstile(token: unknown, request: Request, env: Env
   });
   if (!response.ok) throw new Error(); result = await response.json();
  } catch { throw new Failure('human_verification_unavailable', 503); }
- if (!result.success || result.hostname !== new URL(env.PUBLIC_ORIGIN).hostname || result.action !== 'booking_otp') throw new Failure('human_verification_required', 400, 'Please complete the security check again.');
+ if (!result.success || result.hostname !== expectedHostname || result.action !== 'booking_otp') throw new Failure('human_verification_required', 400, 'Please complete the security check again.');
 }

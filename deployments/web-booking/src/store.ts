@@ -1,5 +1,5 @@
 import { Failure } from './types.ts';
-import type { Database, Draft, Session, Summary } from './types.ts';
+import type { Database, Draft, Session, Summary, VerificationSend } from './types.ts';
 
 export class Store {
  db: Database;
@@ -32,19 +32,22 @@ export class Store {
    AND (SELECT COUNT(*) FROM sms_outbox WHERE session_id=? AND created_at>?)<5
    AND (SELECT COUNT(*) FROM sms_outbox WHERE ip_hash=? AND created_at>?)<10
    AND (?<>'otp' OR (SELECT COUNT(*) FROM sms_outbox WHERE session_id=? AND purpose='otp' AND created_at>?)<1)`)
-   .bind(d.id,d.sessionId,d.phoneHash,d.ipHash,d.purpose,d.draftId||null,d.now,d.expiry,d.now+300,d.now+86400,d.daily,day,d.daily,d.monthly,monthStart,d.monthly,
+   .bind(d.id,d.sessionId,d.phoneHash,d.ipHash,d.purpose,d.draftId||null,d.now,d.expiry,d.now+(d.purpose==='otp'?5:300),d.now+86400,d.daily,day,d.daily,d.monthly,monthStart,d.monthly,
     d.purpose,d.phoneHash,d.now-60,d.phoneHash,d.now-3600,d.sessionId,d.now-3600,d.ipHash,d.now-3600,d.purpose,d.sessionId,d.now-60)];
   if(d.otpHash) statements.push(this.db.prepare(`UPDATE sessions SET phone=NULL,otp_hash=?,otp_phone=?,otp_expires=?,otp_attempts=0
    WHERE id=? AND EXISTS(SELECT 1 FROM sms_outbox WHERE id=?)`).bind(d.otpHash,d.phone,d.expiry,d.sessionId,d.id));
   const results=await this.db.batch(statements);
   if(!results[0].meta.changes)throw new Failure('sms_limit',429,'Verification is temporarily limited. Please contact the studio or try later.');
  }
- async smsStatus(id:string,status:string):Promise<void>{await this.db.prepare('UPDATE sms_outbox SET status=? WHERE id=?').bind(status,id).run();}
- async receiptCandidates(now:number):Promise<{id:string}[]>{
-  const result=await this.db.prepare(`SELECT id FROM sms_outbox WHERE receipt_until>? AND next_check_at<=? AND status NOT IN ('Delivered','Failed','Cancelled','rejected') ORDER BY next_check_at LIMIT 3`).bind(now,now).all<{id:string}>();return result.results;
+ async smsStatus(id:string,status:string):Promise<void>{await this.db.prepare("UPDATE sms_outbox SET status=? WHERE id=? AND status NOT IN ('Delivered','Failed','Cancelled','rejected')").bind(status,id).run();}
+ async verificationSend(sessionId:string):Promise<VerificationSend|null>{
+  return this.db.prepare("SELECT id,status,expires_at,created_at,next_check_at,receipt_until FROM sms_outbox WHERE session_id=? AND purpose='otp' ORDER BY created_at DESC LIMIT 1").bind(sessionId).first<VerificationSend>();
  }
- async reserveReceiptRead(id:string,now:number):Promise<boolean>{
-  const result=await this.db.prepare('UPDATE sms_outbox SET next_check_at=? WHERE id=? AND next_check_at<=? AND receipt_until>?').bind(now+300,id,now,now).run();return !!result.meta.changes;
+ async receiptCandidates(now:number):Promise<{id:string;purpose:string}[]>{
+  const result=await this.db.prepare(`SELECT id,purpose FROM sms_outbox WHERE receipt_until>? AND next_check_at<=? AND status NOT IN ('Delivered','Failed','Cancelled','rejected') ORDER BY next_check_at LIMIT 3`).bind(now,now).all<{id:string;purpose:string}>();return result.results;
+ }
+ async reserveReceiptRead(id:string,now:number,delaySeconds=300):Promise<boolean>{
+  const result=await this.db.prepare('UPDATE sms_outbox SET next_check_at=? WHERE id=? AND next_check_at<=? AND receipt_until>?').bind(now+delaySeconds,id,now,now).run();return !!result.meta.changes;
  }
  async scheduleReminder(id:string,due:number,now:number):Promise<void>{
   if(due<now+300)return;

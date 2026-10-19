@@ -5,9 +5,11 @@ import { readFileSync, readdirSync } from 'node:fs';
 import worker, { handle } from '../src/worker.ts';
 import { Store } from '../src/store.ts';
 import { normalizePhone, hash, smsCap } from '../src/security.ts';
-import { dateValue, treatmentMinutes } from '../src/altegio.ts';
+import { dateValue, staffPhoto, treatmentMinutes } from '../src/altegio.ts';
 import type { Database, D1Statement, Env, Runtime } from '../src/types.ts';
 import { runNotifications } from '../src/notifications.ts';
+import { allowedDestination, destinationCodes } from '../src/sms.ts';
+import { origin, verifyTurnstile } from '../src/security.ts';
 
 class SQLiteD1 implements Database {
  db=new DatabaseSync(':memory:');
@@ -27,17 +29,17 @@ function fixture(){
  const db=new SQLiteD1();
  const env:Env={DB:db,PUBLIC_ORIGIN:'https://booking.example.com',SESSION_SECRET:'test-only-secret-that-is-over-thirty-two-characters',ALTEGIO_PARTNER_TOKEN:'test-partner',ALTEGIO_USER_TOKEN:'test-private-user',ALTEGIO_COMPANY_ID:'1389810',TURNSTILE_SECRET:'test-turnstile',TURNSTILE_SITE_KEY:'test-sitekey',SMSGATE_CREDENTIALS_JSON:JSON.stringify({username:'test',password:'fake',device_id:'test-device',sim_number:1}),SMS_DAILY_CAP:'10',SMS_MONTHLY_CAP:'100',SMS_ALLOWED_COUNTRY_CODES:'374',BOOKING_ENABLED:'true'};
  let time=Date.parse('2026-10-20T08:00:00+04:00'),csrf='',cookie='',otp='',createCalls=0,checkCalls=0,turnstileHostname='booking.example.com',createMode='ok',createHook:undefined|(()=>Promise<void>);
- let sentSms=0,price=18000,slotSeconds=4800,receiptState='Delivered',smsMode='ok',liveDeleted=false,liveStart='2026-10-21T12:00:00+04:00',liveReadFails=false,currentPhone='+37491123456';
+ let sentSms=0,receiptReads=0,price=18000,slotSeconds=4800,receiptState='Delivered',smsMode='ok',liveDeleted=false,liveStart='2026-10-21T12:00:00+04:00',liveReadFails=false,currentPhone='+37491123456';
  const runtime:Runtime={now:()=>time,fetch:async(input:RequestInfo|URL,init?:RequestInit)=>{
   // workerd rejects redirect:'error' before sending; Node's native fetch does not.
   assert.equal(init?.redirect,'manual','all provider fetches must use Workers-supported manual redirects');
   const url=String(input);
   if(url.startsWith('https://api.alteg.io/')&&!url.includes('/record/'))assert.equal((init!.headers as Record<string,string>).Authorization,'Bearer test-partner','private credentials must not reach public catalog or booking endpoints');
   if(url.includes('siteverify'))return Response.json({success:true,hostname:turnstileHostname,action:'booking_otp'});
-  if(url.includes('sms-gate.app')&&!init?.body)return Response.json({id:url.split('/').at(-1),state:receiptState});
+  if(url.includes('sms-gate.app')&&!init?.body){receiptReads++;return Response.json({id:url.split('/').at(-1),state:receiptState});}
   if(url.includes('sms-gate.app')){const data=JSON.parse(init!.body as string);sentSms++;otp=data.textMessage.text.match(/\b\d{6}\b/)?.[0]||'';if(smsMode==='timeout')throw new Error('simulated sms timeout');return Response.json({id:data.id,state:'Pending'},{status:202});}
   if(url.includes('/book_services/'))return Response.json({success:true,data:{category:[{id:1,title:'Motion Relax'},{id:2,title:'Add More Time'}],services:[{id:13827004,title:'80 min',active:1,category_id:1,price_min:price,price_max:price,seance_length:url.includes('staff_id')?4800:null,comment:'<p>Relax</p>'},{id:13827268,title:'20 min',active:1,category_id:2,price_min:5000,price_max:5000}]}});
-  if(url.includes('/book_staff/'))return Response.json({success:true,data:[{id:99,name:'Test Specialist',specialization:'Massage',bookable:true,fired:0},{id:100,name:'Unavailable',bookable:false}]});
+  if(url.includes('/book_staff/'))return Response.json({success:true,data:[{id:99,name:'Test Specialist',specialization:'Massage',bookable:true,fired:0,avatar:'https://assets.alteg.io/masters/sm/test.png',avatar_big:'https://assets.alteg.io/masters/origin/test.png'},{id:100,name:'Unavailable',bookable:false}]});
   if(url.includes('/book_dates/'))return Response.json({success:true,data:{booking_dates:['2026-10-21']}});
   if(url.includes('/book_times/'))return Response.json({success:true,data:[{datetime:'2026-10-21T12:00:00+04:00',seance_length:slotSeconds}]});
   if(url.includes('/book_check/')){checkCalls++;return Response.json({success:true,data:{}});}
@@ -53,7 +55,7 @@ function fixture(){
  async function session(){const result=await request('/session',{});assert.equal(result.response.status,200);csrf=result.value.csrfToken;cookie=result.response.headers.get('set-cookie')!.split(';')[0];return result;}
  async function verified(){await session();assert.equal((await request('/verification/request',{phone:'+37491123456',turnstileToken:'test-token-accepted'})).response.status,200);assert.match(otp,/^\d{6}$/);assert.equal((await request('/verification/confirm',{code:otp})).response.status,200);}
  async function draft(){return request('/drafts',{serviceId:'13827004',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Test Guest',consent:true});}
- return {db,env,runtime,request,session,verified,draft,get counts(){return {createCalls,checkCalls,sentSms};},get otp(){return otp;},get cookie(){return cookie;},get csrf(){return csrf;},advance(seconds:number){time+=seconds*1000;},set hostname(v:string){turnstileHostname=v;},set createMode(v:string){createMode=v;},set price(v:number){price=v;},set slotSeconds(v:number){slotSeconds=v;},set receiptState(v:string){receiptState=v;},set smsMode(v:string){smsMode=v;},set liveDeleted(v:boolean){liveDeleted=v;},set liveStart(v:string){liveStart=v;},set liveReadFails(v:boolean){liveReadFails=v;},set currentPhone(v:string){currentPhone=v;},set createHook(v:(()=>Promise<void>)|undefined){createHook=v;}};
+ return {db,env,runtime,request,session,verified,draft,get counts(){return {createCalls,checkCalls,sentSms,receiptReads};},get otp(){return otp;},get cookie(){return cookie;},get csrf(){return csrf;},advance(seconds:number){time+=seconds*1000;},set hostname(v:string){turnstileHostname=v;},set createMode(v:string){createMode=v;},set price(v:number){price=v;},set slotSeconds(v:number){slotSeconds=v;},set receiptState(v:string){receiptState=v;},set smsMode(v:string){smsMode=v;},set liveDeleted(v:boolean){liveDeleted=v;},set liveStart(v:string){liveStart=v;},set liveReadFails(v:boolean){liveReadFails=v;},set currentPhone(v:string){currentPhone=v;},set createHook(v:(()=>Promise<void>)|undefined){createHook=v;}};
 }
 test('sessions use secure cookies, exact origin and CSRF; no session ID in response',async()=>{
  const f=fixture(),s=await f.session();
@@ -62,6 +64,63 @@ test('sessions use secure cookies, exact origin and CSRF; no session ID in respo
  const cross=await f.request('/verification/request',{phone:'+37491123456',turnstileToken:'test-token-accepted'},{Origin:'https://evil.example'});assert.equal(cross.response.status,403);
  const csrf=await f.request('/verification/request',{phone:'+37491123456',turnstileToken:'test-token-accepted'},{'X-CSRF-Token':'bad'});assert.equal(csrf.response.status,403);assert.equal(f.counts.sentSms,0);
  const stored=f.db.db.prepare('SELECT id FROM sessions').get() as {id:string};assert.notEqual(stored.id,f.cookie.split('=')[1]);assert.equal(stored.id,await hash(f.cookie.split('=')[1]));
+});
+test('the old booking host redirects GETs to the canonical host while dropping query data',async()=>{
+ const f=fixture();f.env.PUBLIC_ORIGIN='https://book.motionconcept.rest';
+ for(const [path,expected] of [['/?phone=private','https://book.motionconcept.rest/'],['/ru/booking/?code=private','https://book.motionconcept.rest/'],['/api/booking/config?token=private','https://book.motionconcept.rest/api/booking/config']]){
+  const response=await handle(new Request('https://booking.motionconcept.rest'+path),f.env,f.runtime);assert.equal(response.status,308);assert.equal(response.headers.get('location'),expected);assert.ok(!response.headers.get('location')!.includes('private'));
+ }
+});
+test('canonical root serves booking HTML internally without changing the clean browser URL',async()=>{
+ const f=fixture();f.env.PUBLIC_ORIGIN='https://book.motionconcept.rest';
+ const assetRequests:string[]=[];
+ f.env.ASSETS={async fetch(request:Request){assetRequests.push(request.url);assert.equal(request.headers.get('Accept-Language'),'ru');return new Response('<html>booking form</html>',{headers:{'Content-Type':'text/html','X-Test-Asset':'preserved'}});}};
+ const root=await handle(new Request('https://book.motionconcept.rest/?private=data',{headers:{'Accept-Language':'ru'}}),f.env,f.runtime);assert.equal(root.status,200);assert.equal(root.headers.get('location'),null);assert.equal(root.headers.get('x-test-asset'),'preserved');assert.equal(await root.text(),'<html>booking form</html>');assert.deepEqual(assetRequests,['https://book.motionconcept.rest/']);
+ f.env.ASSETS=undefined;
+ for(const host of ['www.motionconcept.rest','booking.example.com']){
+  const response=await handle(new Request('https://'+host+'/'),f.env,f.runtime);assert.equal(response.status,404);assert.equal(response.headers.get('location'),null);
+ }
+ const post=await handle(new Request('https://booking.motionconcept.rest/api/booking/session',{method:'POST',headers:{Origin:'https://booking.motionconcept.rest','Content-Type':'application/json','CF-Connecting-IP':'192.0.2.1'},body:'{}'}),f.env,f.runtime);assert.notEqual(post.status,308);assert.equal(post.headers.get('location'),null);
+});
+test('canonical duplicate booking paths redirect to the clean root and marketing assets remain untouched',async()=>{
+ const f=fixture();f.env.PUBLIC_ORIGIN='https://book.motionconcept.rest';
+ for(const path of ['/booking','/booking/','/ru/booking','/hy/booking/','/en/booking/']){
+  const response=await handle(new Request('https://book.motionconcept.rest'+path+'?private=data'),f.env,f.runtime);assert.equal(response.status,308);assert.equal(response.headers.get('location'),'https://book.motionconcept.rest/');
+ }
+ const requests:string[]=[];f.env.ASSETS={async fetch(request:Request){requests.push(request.url);return new Response('asset');}};
+ assert.equal((await handle(new Request('https://book.motionconcept.rest/assets/logo.png'),f.env,f.runtime)).status,200);
+ assert.equal((await handle(new Request('https://www.motionconcept.rest/'),f.env,f.runtime)).status,200);
+ assert.deepEqual(requests,['https://book.motionconcept.rest/assets/logo.png','https://www.motionconcept.rest/']);
+});
+test('the exact trusted legacy alias works only while its explicit flag is enabled',async()=>{
+ const f=fixture();f.env.PUBLIC_ORIGIN='https://book.motionconcept.rest';f.env.LEGACY_BOOKING_ACTIVE='true';
+ const oldRequest=(method='GET',originHeader='https://booking.motionconcept.rest')=>new Request('https://booking.motionconcept.rest/api/booking/config',{method,headers:{Origin:originHeader,'CF-Connecting-IP':'192.0.2.1'}});
+ assert.equal((await handle(oldRequest(),f.env,f.runtime)).status,200);
+ assert.doesNotThrow(()=>origin(oldRequest('POST'),f.env,true));
+ delete f.env.LEGACY_BOOKING_ACTIVE;assert.throws(()=>origin(oldRequest('POST'),f.env,true));assert.equal((await handle(oldRequest(),f.env,f.runtime)).status,308);
+ f.env.LEGACY_BOOKING_ACTIVE='true';f.env.PUBLIC_ORIGIN='https://booking.example.com';assert.throws(()=>origin(oldRequest('POST'),f.env,true));
+});
+
+test('the studio short domains redirect to canonical booking without forwarding private queries or mutations',async()=>{
+ const f=fixture();f.env.PUBLIC_ORIGIN='https://book.motionconcept.rest';
+ for(const host of ['e-motion.rest','www.e-motion.rest']){
+  for(const method of ['GET','HEAD']){const result=await handle(new Request('https://'+host+'/?phone=private',{method}),f.env,f.runtime);assert.equal(result.status,308);assert.equal(result.headers.get('location'),'https://book.motionconcept.rest/');}
+  const legal=await handle(new Request('https://'+host+'/hy/privacy/?code=private'),f.env,f.runtime);assert.equal(legal.headers.get('location'),'https://book.motionconcept.rest/hy/privacy/');
+  const post=await handle(new Request('https://'+host+'/api/booking/appointments',{method:'POST',body:'{}'}),f.env,f.runtime);assert.equal(post.status,405);assert.equal(post.headers.get('location'),null);
+ }
+ assert.equal(f.counts.createCalls,0);assert.equal(f.counts.sentSms,0);
+});
+test('canonical and legacy origins cannot make cross-host credentialed mutations',()=>{
+ const f=fixture();f.env.PUBLIC_ORIGIN='https://book.motionconcept.rest';f.env.LEGACY_BOOKING_ACTIVE='true';
+ for(const [incoming,sender] of [['https://booking.motionconcept.rest','https://book.motionconcept.rest'],['https://book.motionconcept.rest','https://booking.motionconcept.rest'],['https://book.motionconcept.rest','https://evil.example'],['https://booking.motionconcept.rest','https://evil.example']])assert.throws(()=>origin(new Request(incoming+'/api/booking/session',{method:'POST',headers:{Origin:sender}}),f.env,true));
+ assert.throws(()=>origin(new Request('https://booking.motionconcept.rest:8443/api/booking/session',{method:'POST',headers:{Origin:'https://booking.motionconcept.rest:8443'}}),f.env,true));
+});
+test('Turnstile accepts only the active incoming hostname, including the temporary alias',async()=>{
+ const f=fixture();f.env.PUBLIC_ORIGIN='https://book.motionconcept.rest';f.env.LEGACY_BOOKING_ACTIVE='true';
+ const request=new Request('https://booking.motionconcept.rest/api/booking/verification/request',{method:'POST',headers:{Origin:'https://booking.motionconcept.rest','CF-Connecting-IP':'192.0.2.1'}});
+ f.hostname='booking.motionconcept.rest';await assert.doesNotReject(verifyTurnstile('test-token-accepted',request,f.env,f.runtime));
+ f.hostname='book.motionconcept.rest';await assert.rejects(verifyTurnstile('test-token-accepted',request,f.env,f.runtime));
+ f.hostname='booking.motionconcept.rest';f.env.LEGACY_BOOKING_ACTIVE='false';await assert.rejects(verifyTurnstile('test-token-accepted',request,f.env,f.runtime));assert.equal(f.counts.sentSms,0);
 });
 test('missing configuration and absent human proof fail closed without SMS',async()=>{
  const f=fixture();await f.session();f.env.SMS_DAILY_CAP='0';
@@ -73,6 +132,23 @@ test('international routes are disabled by default and request phone is normaliz
  assert.equal(normalizePhone('091 123456'),'+37491123456');
  const f=fixture();await f.session();const result=await f.request('/verification/request',{phone:'+14155552671',turnstileToken:'test-token-accepted'});
  assert.equal(result.value.error.code,'destination_unavailable');assert.equal(f.counts.sentSms,0);
+});
+test('worldwide mode accepts metadata-valid AM, RU, US, UK and FR numbers in canonical E164',async()=>{
+ const f=fixture();f.env.SMS_ALLOWED_COUNTRY_CODES='*';
+ for(const [input,expected] of [['091 123456','+37491123456'],['+7 (913) 733-39-31','+79137333931'],['+1 (415) 555-2671','+14155552671'],['0044 7911 123456','+447911123456'],['+33 6 12 34 56 78','+33612345678']]){
+  const normalized=normalizePhone(input);assert.equal(normalized,expected);assert.doesNotThrow(()=>allowedDestination(normalized,f.env));
+ }
+ assert.deepEqual((await f.request('/config')).value.countryCodes,['*']);
+});
+test('strict global validation rejects unknown calling codes, invalid ranges, extraction and extensions',()=>{
+ for(const invalid of ['+999123456789','+37400000000','+12223333333','+440000000000','Call me +14155552671','+14155552671 ext 123','+14155552671#123','+14155552671 x12','+14155552671/+33612345678'])assert.throws(()=>normalizePhone(invalid));
+});
+test('destination allowlists match complete shared calling codes and invalid config fails closed',async()=>{
+ const f=fixture();f.env.SMS_ALLOWED_COUNTRY_CODES='1,44';
+ assert.doesNotThrow(()=>allowedDestination(normalizePhone('+14155552671'),f.env));assert.doesNotThrow(()=>allowedDestination(normalizePhone('+14165552671'),f.env));assert.doesNotThrow(()=>allowedDestination(normalizePhone('+447911123456'),f.env));
+ assert.throws(()=>allowedDestination(normalizePhone('+33612345678'),f.env));
+ for(const invalid of ['', '*,374','999','3','374,','abc']){f.env.SMS_ALLOWED_COUNTRY_CODES=invalid;assert.throws(()=>destinationCodes(f.env));assert.equal((await f.request('/config')).response.status,503);}
+ delete f.env.SMS_ALLOWED_COUNTRY_CODES;assert.deepEqual(destinationCodes(f.env),['374']);
 });
 test('OTP expiry and five wrong attempts survive subsequent requests',async()=>{
  const f=fixture();await f.session();await f.request('/verification/request',{phone:'+37491123456',turnstileToken:'test-token-accepted'});
@@ -106,8 +182,26 @@ test('explicit unlimited skips business volume caps while all abuse limits remai
 test('public catalog sanitizes data and removes coordinated add-ons and unavailable staff',async()=>{
  const f=fixture(),result=await f.request('/services');assert.equal(result.value.services.length,1);assert.equal(result.value.services[0].name,'Motion Relax · 80 min');assert.equal(result.value.services[0].description,'Relax');
  const staff=await f.request('/staff?service_id=13827004');assert.equal(staff.value.staff.length,1);assert.equal(staff.value.staff[0].id,'99');
+ assert.equal(staff.value.staff[0].avatarUrl,'https://assets.alteg.io/masters/origin/test.png');
+ assert.equal(staffPhoto('javascript:alert(1)'),undefined);assert.equal(staffPhoto('https://evil.example/photo.png'),undefined);assert.equal(staffPhoto('https://assets.alteg.io@evil.example/masters/x.png'),undefined);
  assert.throws(()=>dateValue('2026-99-99'));assert.throws(()=>dateValue('2026-02-31'));
  assert.equal(result.value.services[0].durationMinutes,80);
+});
+test('OTP delivery status is private, paced and distinguishes queue acceptance from receipt',async()=>{
+ const f=fixture();await f.session();await f.request('/verification/request',{phone:'+37491123456',turnstileToken:'test-token-accepted'});
+ const queued=await f.request('/verification/status');assert.equal(queued.value.status,'queued');assert.equal(f.counts.receiptReads,0);assert.ok(!JSON.stringify(queued.value).includes(f.otp));assert.ok(!JSON.stringify(queued.value).includes('+374'));
+ f.advance(6);f.receiptState='Sent';assert.equal((await f.request('/verification/status')).value.status,'sent');assert.equal(f.counts.receiptReads,1);
+ assert.equal((await f.request('/verification/status')).value.status,'sent');assert.equal(f.counts.receiptReads,1);
+ f.advance(11);f.receiptState='Failed';assert.equal((await f.request('/verification/status')).value.status,'failed');assert.equal(f.counts.sentSms,1);
+ const foreign=await f.request('/verification/status',undefined,{Cookie:''});assert.equal(foreign.response.status,401);
+});
+test('expired OTP and unconfirmed send status never claim delivery',async()=>{
+ const f=fixture();await f.session();f.smsMode='timeout';await f.request('/verification/request',{phone:'+37491123456',turnstileToken:'test-token-accepted'});
+ assert.equal((await f.request('/verification/status')).value.status,'unconfirmed');f.advance(301);f.receiptState='Pending';assert.equal((await f.request('/verification/status')).value.status,'expired');assert.equal(f.counts.sentSms,1);assert.equal(f.counts.receiptReads,0);
+ const verified=fixture();await verified.verified();verified.advance(11);const status=await verified.request('/verification/status');assert.equal(status.value.phoneVerified,true);assert.equal(status.value.expiresIn,0);assert.equal(verified.counts.receiptReads,0);
+});
+test('language context is non-PII and restricted to supported languages',async()=>{
+ const f=fixture();assert.equal((await f.request('/config',undefined,{'X-Booking-Language':'hy'})).response.headers.get('content-language'),'hy');assert.equal((await f.request('/config',undefined,{'Accept-Language':'ru-RU,ru;q=0.9'})).response.headers.get('content-language'),'ru');assert.equal((await f.request('/config',undefined,{'X-Booking-Language':'<script>'})).response.headers.get('content-language'),'ru');assert.equal((await f.request('/config',undefined,{'Accept-Language':'en;q=0.3,hy-AM;q=0.9,ru;q=0.7'})).response.headers.get('content-language'),'hy');assert.equal((await f.request('/config',undefined,{'Accept-Language':'en;q=0,ru;q=0.7'})).response.headers.get('content-language'),'ru');
 });
 test('null catalog durations use minute labels and keep reservation padding private',async()=>{
  assert.equal(treatmentMinutes(null,'Face Motion 30 min'),30);assert.equal(treatmentMinutes(null,'Unknown 30'),0);assert.equal(treatmentMinutes(null,'20+40'),0);assert.equal(treatmentMinutes(3600,'80 min'),60);

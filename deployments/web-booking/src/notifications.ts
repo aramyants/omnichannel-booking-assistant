@@ -11,7 +11,7 @@ export async function runNotifications(env:Env,runtime:Runtime):Promise<void>{
  const store=new Store(env.DB),now=Math.floor(runtime.now()/1000);
  // Provider GETs are safe to repeat; provider POSTs are never retried.
  for(const candidate of await store.receiptCandidates(now)){
-  if(!await store.reserveReceiptRead(candidate.id,now))continue;
+  if(!await store.reserveReceiptRead(candidate.id,now,candidate.purpose==='otp'?10:300))continue;
   try{
    const receipt=await smsReceipt(env,runtime,candidate.id);
    if(receipt!=='unconfirmed')await store.smsStatus(candidate.id,receipt);

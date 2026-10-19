@@ -1,13 +1,16 @@
 # Owned browser booking — Cloudflare Free
 
-Current preview: `https://booking.motionconcept.rest/en/booking/`. The checked-in
-configuration uses the existing Free D1 database, exact preview origin, unlimited
+Current booking address: `https://book.motionconcept.rest/`. The checked-in
+configuration uses the existing Free D1 database, exact production origin, unlimited
 daily/monthly business SMS volume, and enabled appointment confirmation/reminder
 flags. Missing credentials still fail closed. Build the sibling website with
-`npm run build:static` before `npm run deploy`. All three migrations are registered
-in the deployed D1 migration history. Keep the current preview origin until the
-human phone-verification and controlled booking test passes; update the origin
-and production routing together during the main-site cutover.
+`npm run build:booking` before `npm run deploy`. Its assets are isolated in
+`.releases/booking/public`; `npm run build:marketing` prepares a separate landing
+release. All three migrations are registered in the deployed D1 migration history.
+Public DNS and HTTPS for `book` are active. `LEGACY_BOOKING_ACTIVE=false` redirects
+old booking entries to the clean root. `e-motion.rest` and `www.e-motion.rest` also
+redirect there. The main landing domain links directly to this origin and uses
+the separate `emotion-studio-site` static Worker.
 
 Standalone Worker + D1 + static assets. The existing Go service, chat assistants,
 secrets, reminders and Cloud Run configuration are unchanged. Browser booking
@@ -19,15 +22,16 @@ stop the application; they are not an assurance of unlimited operation.
 
 Use Node 22.18+ (Node 25 used for the tests). Install the locked dependencies,
 run `npm test` and `npm run typecheck`. Root deployment must point the assets
-directory at the rebuilt static site or copy that build into `public/`, retaining
-`public/_headers`. Worker-first routing is required for `/api/*`; API paths
+directory at the rebuilt **booking profile** in `.releases/booking/public`, retaining
+`public/_headers`. Worker-first routing is required for every path so canonical
+redirects run before static assets; API paths
 must never return the SPA fallback. Apply the D1 migration before enabling the
 Worker. Keep the same `SESSION_SECRET` across deployments to preserve sessions.
 
-`wrangler.toml` now records the Free preview deployment at
-`https://booking.motionconcept.rest`, its D1 binding, public widget key and the
-owner's explicit unlimited SMS-volume settings. The main-site cutover must
-update `PUBLIC_ORIGIN` and the Turnstile hostname together. Configure secret
+`wrangler.toml` records the Free production deployment at
+`https://book.motionconcept.rest`, its D1 binding, public widget key and the
+owner's explicit unlimited SMS-volume settings and authorized worldwide SMS
+destinations. Keep `PUBLIC_ORIGIN` and the Turnstile hostname aligned. Configure secret
 bindings using the provider's
 secret facility; never commit credentials or a `.dev.vars` file:
 
@@ -36,6 +40,7 @@ secret facility; never commit credentials or a `.dev.vars` file:
 | `DB` | D1 database binding with `migrations/0001_booking.sql` applied |
 | `ASSETS` | Built static assets binding |
 | `PUBLIC_ORIGIN` | Exact HTTPS origin, without slash; API and site share it |
+| `LEGACY_BOOKING_ACTIVE` | Default `false`; temporary exact old-host support only while canonical origin is `https://book.motionconcept.rest` |
 | `SESSION_SECRET` | Cryptographically random secret, at least 32 characters |
 | `ALTEGIO_PARTNER_TOKEN` | Existing authorized studio integration token |
 | `ALTEGIO_USER_TOKEN` | Required only for enabled reminders: server-only current recipient check on the exact owned record; public APIs never receive it |
@@ -44,7 +49,7 @@ secret facility; never commit credentials or a `.dev.vars` file:
 | `TURNSTILE_SECRET` | Secret verification key for this widget |
 | `TURNSTILE_SITE_KEY` | Public widget key; returned by `/config` |
 | `SMSGATE_CREDENTIALS_JSON` | Existing pinned JSON: `username`, `password`, `device_id`, integer `sim_number`, optional official `api_base_url` |
-| `SMS_ALLOWED_COUNTRY_CODES` | `374` by default; Armenian numbers only |
+| `SMS_ALLOWED_COUNTRY_CODES` | `374` by default; explicit `*` permits all metadata-valid international numbers; a comma-separated full calling-code allowlist is also supported |
 | `SMS_DAILY_CAP` | Positive single-part send cap, `0` to disable, or explicit `unlimited` |
 | `SMS_MONTHLY_CAP` | Positive single-part send cap, `0` to disable, or explicit `unlimited` |
 | `SMS_CONFIRMATIONS_ENABLED` | `false` by default; opt-in SMS confirmation route |
@@ -62,6 +67,19 @@ unlimited mode. Phone/session/IP cooldowns, OTP attempts and Turnstile remain ac
 Booking paused also blocks new OTP sends. No code bypass, test OTP, fabricated
 proof or fallback around missing configuration exists.
 
+Worldwide mode uses pinned `libphonenumber-js/max` metadata for complete country
+calling-code and national-number validation. Input is parsed strictly without
+extracting a phone from prose, extensions are rejected, and every accepted phone
+is normalized to canonical E.164 before OTP budgets, hashing, provider sending or
+booking. Armenian national entry remains supported; foreign numbers require an
+explicit country code. Shared calling codes such as `+1` are matched as complete
+codes, not arbitrary string prefixes. An explicit `*` is the only all-destination
+mode; malformed or unsupported allowlist configuration fails closed. Number
+validity does not prove that a handset exists or receives SMS; OTP and provider
+delivery receipts still establish those separate facts. International sending
+uses the existing owner-confirmed SIM plan, independent of Cloudflare's free
+hosting quotas; the application does not buy or activate a new carrier service.
+
 ## Browser API
 
 Every response has `Cache-Control: no-store`. Responses expose only explicit
@@ -75,11 +93,12 @@ they also require `X-CSRF-Token` from the current session response.
 | `GET /config` | Public widget key, `smsEnabled`, `bookingEnabled`, country codes, currency, timezone |
 | `POST /session` | `{}` → `{csrfToken,phoneVerified,phone?,unresolvedDraftId?}` and a secure session cookie |
 | `GET /services` | `{services:[{id,name,description,durationMinutes,priceMin,priceMax,category}],constraints}` |
-| `GET /staff?service_id=…` | `{staff:[{id,name,specialization}]}` |
+| `GET /staff?service_id=…` | `{staff:[{id,name,specialization,avatarUrl?}]}`; actual HTTPS Altegio photos |
 | `GET /dates?service_id=…&staff_id=…` | `{dates:["YYYY-MM-DD"]}` |
 | `GET /slots?service_id=…&staff_id=…&date=…` | `{slots:[{datetime,label}]}` |
 | `POST /verification/request` | `{phone,turnstileToken}` → `{status:"pending",expiresIn:300}` |
 | `POST /verification/confirm` | `{code}` → `{phoneVerified:true,phone}` |
+| `GET /verification/status` | Current session's OTP `{status,expiresIn,retryAfter,phoneVerified?}`; no code, send ID or phone |
 | `POST /drafts` | `{serviceId,staffId,datetime,name,consent:true}` → `{draft,phoneVerified:true}` |
 | `POST /appointments` | `{draftId}` → confirmed, pending or uncertain status |
 | `GET /appointments/:draftId` | Read this session's submitted draft status |
@@ -100,6 +119,22 @@ enter logs, customer-visible errors or stored plaintext. Requesting a new code
 removes the session's old proof until the new code is confirmed. No first booking
 is possible without proof of the exact phone held by that session.
 
+The code-entry screen may poll `/verification/status` roughly every ten seconds.
+It checks only the current authenticated session's latest OTP message and never
+accepts a customer-supplied provider ID. `queued` is acceptance, `sent` is the
+carrier/SMSC handoff, and `delivered` requires the provider receipt. Failure and
+expiry are explicit. No code, phone, device, message body or provider error is
+returned. Provider reads are paced; code expiry and successful verification stop
+the browser status endpoint's further provider reads. Final delivery/failure
+states cannot be overwritten by a delayed non-final response. This does not
+automatically send another code. The background receipt monitor can retain the
+final operational delivery outcome separately.
+
+`X-Booking-Language` or `X-Booking-Locale` accepts `hy`, `ru` or `en`. Otherwise
+the supported language with the highest `Accept-Language` quality wins, falling
+back to Russian. `Content-Language` records that non-sensitive UI context; phone
+verification and access rules do not depend on language.
+
 The Turnstile widget must set action **`booking_otp`**. Server validation requires
 success, exact hostname and that action. Cloudflare's trusted `CF-Connecting-IP`
 is HMAC hashed for budgets. The Worker does not trust `X-Forwarded-For`. New
@@ -108,6 +143,20 @@ has burst protections of 90/minute/IP and 300/minute globally; neither is a
 daily business-volume allowance. OTP send budgets are one/minute/phone
 and session, five/hour/phone and session, ten/hour/IP, plus hard global caps.
 SMS IDs are durably reserved before a provider request; sends never auto-retry.
+
+While the new canonical booking hostname is propagating, explicit
+`LEGACY_BOOKING_ACTIVE=true` permits only `https://booking.motionconcept.rest`
+as a temporary second incoming host, and only with canonical `PUBLIC_ORIGIN`
+set to `https://book.motionconcept.rest`. Each mutation's Origin must match its
+own incoming host; old-to-new and new-to-old credentialed requests remain blocked.
+Turnstile must prove that same incoming hostname. Cookies remain host-only and
+no credentialed CORS is introduced. With the flag off or absent, old-host GETs
+redirect to the canonical host without query data. The canonical root returns
+the booking variant's root HTML at `/`, preserving matching server-rendered and
+client routing while the browser keeps `https://book.motionconcept.rest/`.
+The normal marketing build does not use this booking-only flag. Duplicate booking paths
+redirect to that root; marketing hosts and non-booking assets keep their paths.
+Disable the transition flag after public DNS is verified.
 
 ## Calendar integrity and notifications
 

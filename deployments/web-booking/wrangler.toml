@@ -2,15 +2,25 @@ name = "emotion-web-booking"
 main = "src/worker.ts"
 compatibility_date = "2026-10-19"
 workers_dev = false
+routes = [
+  { pattern = "book.motionconcept.rest/*", zone_name = "motionconcept.rest" },
+  { pattern = "booking.motionconcept.rest", custom_domain = true, zone_name = "motionconcept.rest" },
+  { pattern = "e-motion.rest/*", zone_name = "e-motion.rest" },
+  { pattern = "www.e-motion.rest/*", zone_name = "e-motion.rest" }
+]
 
 [assets]
-directory = "../../../emotion-concept/website/.output/public"
+directory = "../../../emotion-concept/website/.releases/booking/public"
 binding = "ASSETS"
-run_worker_first = ["/api/*"]
+run_worker_first = true
+html_handling = "auto-trailing-slash"
+not_found_handling = "404-page"
 
 [vars]
 # Set to the exact deployed HTTPS origin before enabling this application.
-PUBLIC_ORIGIN = "https://booking.motionconcept.rest"
+PUBLIC_ORIGIN = "https://book.motionconcept.rest"
+# Public DNS and HTTPS for book are active; old entry points redirect.
+LEGACY_BOOKING_ACTIVE = "false"
 ALTEGIO_COMPANY_ID = "1389810"
 ALTEGIO_CURRENCY = "AMD"
 TURNSTILE_SITE_KEY = "0x4AAAAAAFbSUE32DuZE0B9D"
@@ -18,7 +28,7 @@ SMS_DAILY_CAP = "unlimited"
 SMS_MONTHLY_CAP = "unlimited"
 SMS_CONFIRMATIONS_ENABLED = "true"
 SMS_REMINDERS_ENABLED = "true"
-SMS_ALLOWED_COUNTRY_CODES = "374"
+SMS_ALLOWED_COUNTRY_CODES = "*"
 BOOKING_ENABLED = "true"
 
 [[d1_databases]]

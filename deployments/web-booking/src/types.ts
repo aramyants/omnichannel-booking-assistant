@@ -9,6 +9,7 @@ export interface Database { prepare(sql: string): D1Statement; batch(statements:
 export interface Env {
  DB: Database; ASSETS?: { fetch(request: Request): Promise<Response> };
  PUBLIC_ORIGIN: string; SESSION_SECRET: string;
+ LEGACY_BOOKING_ACTIVE?: string;
  ALTEGIO_PARTNER_TOKEN: string; ALTEGIO_USER_TOKEN?: string;
  ALTEGIO_COMPANY_ID: string; ALTEGIO_CURRENCY?: string;
  TURNSTILE_SECRET: string; TURNSTILE_SITE_KEY?: string; SMSGATE_CREDENTIALS_JSON: string;
@@ -36,6 +37,7 @@ export interface Draft {
  status: string; created_at: number; expires_at: number; updated_at: number;
  appointment: string | null; management_hash: string | null; error_code: string | null;
 }
+export interface VerificationSend {id:string;status:string;expires_at:number;created_at:number;next_check_at:number;receipt_until:number}
 export interface Runtime { fetch: typeof fetch; now: () => number }
 export class Failure extends Error {
  code: string; status: number;

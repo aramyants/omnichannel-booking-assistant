@@ -3,7 +3,7 @@ import type { Env, Runtime, Summary } from './types.ts';
 import { normalizePhone } from './security.ts';
 
 export interface Service { id: string; name: string; description: string; durationMinutes: number; priceMin: number; priceMax: number; category: string }
-export interface Staff { id: string; name: string; specialization: string }
+export interface Staff { id: string; name: string; specialization: string; avatarUrl?:string }
 export interface Slot { datetime: string; label: string; durationMinutes: number }
 type Wire = Record<string, unknown>;
 const titles: Record<string, [string, string]> = {
@@ -22,6 +22,10 @@ export function identifier(raw: unknown): string {
 export function safeText(raw: unknown, max = 2000): string {
  if (typeof raw !== 'string') return '';
  return raw.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0,max);
+}
+export function staffPhoto(raw:unknown):string|undefined {
+ if(typeof raw!=='string'||raw.length>2048)return;
+ try{const url=new URL(raw);if(url.protocol==='https:'&&url.hostname==='assets.alteg.io'&&!url.username&&!url.password&&url.pathname.startsWith('/masters/'))return url.href;}catch{}
 }
 export function requiresCoordination(category: string, id: string): boolean {
  return ['add more time','motion four hands'].includes(category.trim().toLowerCase()) || ['13827172','13827180','13827268','13827269'].includes(id);
@@ -102,7 +106,7 @@ export class Altegio {
  async staff(serviceId: string): Promise<Staff[]> {
   return array(await this.call('/book_staff/'+this.env.ALTEGIO_COMPANY_ID+'?service_ids%5B%5D='+identifier(serviceId)))
    .filter(x=>!Number(x.fired) && x.bookable!==false && x.bookable!==0)
-   .map(x=>({id:identifier(x.id),name:safeText(x.name,150),specialization:safeText(x.specialization,250)}));
+   .map(x=>({id:identifier(x.id),name:safeText(x.name,150),specialization:safeText(x.specialization,250),...(staffPhoto(x.avatar_big)||staffPhoto(x.avatar)?{avatarUrl:staffPhoto(x.avatar_big)||staffPhoto(x.avatar)}:{})}));
  }
  async validateService(serviceId: string): Promise<Service> {
   const service=(await this.services()).find(x=>x.id===identifier(serviceId));

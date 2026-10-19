@@ -8,5 +8,11 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
   },
-  "devDependencies": { "typescript": "^5.9.3", "wrangler": "^4.0.0" }
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "wrangler": "^4.0.0"
+  },
+  "dependencies": {
+    "libphonenumber-js": "1.13.15"
+  }
 }

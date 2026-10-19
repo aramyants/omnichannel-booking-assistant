@@ -1,5 +1,7 @@
 import { Failure } from './types.ts';
 import type { Env, Runtime } from './types.ts';
+import { getCountries, getCountryCallingCode, parsePhoneNumberWithError } from 'libphonenumber-js/max';
+const knownCallingCodes=new Set<string>(getCountries().map(country=>getCountryCallingCode(country)));
 interface Credentials { username:string; password:string; device_id:string; sim_number:number; api_base_url?:string }
 export function credentials(env:Env):Credentials {
  try {
@@ -10,10 +12,18 @@ export function credentials(env:Env):Credentials {
   return value;
  } catch { throw new Failure('verification_unavailable',503,'Phone verification is temporarily unavailable.'); }
 }
+export function destinationCodes(env:Env):string[]{
+ const raw=env.SMS_ALLOWED_COUNTRY_CODES===undefined?'374':env.SMS_ALLOWED_COUNTRY_CODES.trim();
+ if(raw==='*')return ['*'];
+ const codes=raw.split(',').map(x=>x.trim());
+ if(!codes.length||codes.length>250||codes.some(x=>!/^[1-9]\d{0,2}$/.test(x)||!knownCallingCodes.has(x)))throw new Failure('verification_unavailable',503,'Phone verification is temporarily unavailable.');
+ return [...new Set(codes)];
+}
 export function allowedDestination(phone:string,env:Env):void {
- const codes=(env.SMS_ALLOWED_COUNTRY_CODES || '374').split(',').map(x=>x.trim());
- if (!codes.length || codes.some(x=>!/^[1-9]\d{0,2}$/.test(x)) || !codes.some(x=>phone.startsWith('+'+x)))
-  throw new Failure('destination_unavailable',400,'Online phone verification is currently available for Armenian numbers. Please contact the studio for assistance.');
+ const codes=destinationCodes(env);
+ let callingCode:string;
+ try{const parsed=parsePhoneNumberWithError(phone,{extract:false});if(parsed.ext||!parsed.isValid())throw new Error();callingCode=parsed.countryCallingCode;}catch{throw new Failure('invalid_phone',400,'Enter a valid phone number with its country code.');}
+ if(codes[0]!=='*'&&!codes.includes(callingCode))throw new Failure('destination_unavailable',400,'Online verification is unavailable for this phone number. Please contact the studio.');
 }
 export async function sendSms(env:Env,runtime:Runtime,id:string,phone:string,text:string,expiry:number,priority=100):Promise<string> {
  const config=credentials(env);

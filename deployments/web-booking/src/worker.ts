@@ -2,7 +2,7 @@ import { Failure } from './types.ts';
 import type { Appointment, Draft, Env, Runtime, Session, Summary } from './types.ts';
 import { Altegio, dateValue, identifier, localDate, localDatetime, safeText } from './altegio.ts';
 import { body, configured, constantEqual, cookie, hash, hmac, ip, normalizePhone, onlyKeys, origin, randomToken, setCookie, smsCap, verifyTurnstile } from './security.ts';
-import { allowedDestination, credentials, sendSms } from './sms.ts';
+import { allowedDestination, credentials, destinationCodes, sendSms, smsReceipt } from './sms.ts';
 import { Store } from './store.ts';
 import { runNotifications } from './notifications.ts';
 
@@ -11,6 +11,29 @@ const responseHeaders={'Content-Type':'application/json; charset=utf-8','Cache-C
 function json(value:unknown,status=200,headers:Record<string,string>={}):Response {return new Response(JSON.stringify(value),{status,headers:{...responseHeaders,...headers}});}
 function validDraftId(raw:unknown):string {if(typeof raw!=='string'||!/^[a-f0-9]{32}$/.test(raw))throw new Failure('invalid_selection');return raw;}
 function nowSeconds(runtime:Runtime):number{return Math.floor(runtime.now()/1000);}
+export function requestLanguage(request:Request):'hy'|'ru'|'en'{
+ const explicit=request.headers.get('X-Booking-Language')||request.headers.get('X-Booking-Locale');
+ const valid=(raw:string):'hy'|'ru'|'en'|undefined=>{const language=raw.trim().toLowerCase().split('-')[0];return language==='hy'||language==='ru'||language==='en'?language:undefined;};
+ if(explicit&&valid(explicit))return valid(explicit)!;
+ const weighted=(request.headers.get('Accept-Language')||'').slice(0,1024).split(',').slice(0,20).map((entry,index)=>{
+  const [tag,...parameters]=entry.trim().split(';'),q=parameters.find(p=>p.trim().startsWith('q='));
+  const weight=q?Number(q.trim().slice(2)):1;return {language:valid(tag),weight:Number.isFinite(weight)&&weight>=0&&weight<=1?weight:0,index};
+ }).filter(x=>x.language&&x.weight>0).sort((a,b)=>b.weight-a.weight||a.index-b.index);
+ return weighted[0]?.language||'ru';
+}
+async function verificationStatus(store:Store,session:Session,env:Env,runtime:Runtime):Promise<unknown>{
+ const now=nowSeconds(runtime),row=await store.verificationSend(session.id);
+ if(!row)return {status:'unconfirmed',expiresIn:0,retryAfter:0};
+ if(!session.phone&&row.expires_at>now&&!['Delivered','Failed','Cancelled','rejected'].includes(row.status)&&row.receipt_until>now&&await store.reserveReceiptRead(row.id,now,10)){
+  const provider=await smsReceipt(env,runtime,row.id);
+  if(provider!=='unconfirmed'){
+   await store.smsStatus(row.id,provider);
+   const current=await store.verificationSend(session.id);if(current?.id===row.id)row.status=current.status;
+  }
+ }
+ const status=['Failed','Cancelled','rejected'].includes(row.status)?'failed':row.expires_at<=now?'expired':row.status==='Delivered'?'delivered':row.status==='Sent'?'sent':['Pending','Processed'].includes(row.status)?'queued':'unconfirmed';
+ return {status,expiresIn:session.phone?0:Math.max(0,row.expires_at-now),retryAfter:Math.max(0,row.created_at+60-now),phoneVerified:!!session.phone};
+}
 function code():string {
  // Rejection sampling avoids modulo bias in the six-digit secret.
  let n:number; do {n=crypto.getRandomValues(new Uint32Array(1))[0];} while(n>=4294000000);
@@ -88,9 +111,25 @@ async function book(store:Store,env:Env,runtime:Runtime,session:Session,request:
  try{await optionalConfirmation(store,env,runtime,session,request,draft,appointment);}catch{/* durable provider attempts remain available for operator review */}
  return {status:'confirmed',appointment};
 }
-export async function handle(request:Request,env:Env,runtime:Runtime={fetch:globalThis.fetch.bind(globalThis),now:Date.now}):Promise<Response> {
+async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Response> {
  try {
   const url=new URL(request.url);
+  if(['e-motion.rest','www.e-motion.rest'].includes(url.hostname)&&env.PUBLIC_ORIGIN==='https://book.motionconcept.rest'){
+   if(!['GET','HEAD'].includes(request.method))return new Response('Method not allowed',{status:405,headers:{Allow:'GET, HEAD','Cache-Control':'no-store'}});
+   const path=/^\/(?:en\/|hy\/)?(?:privacy|terms|data-deletion)\/?$/.test(url.pathname)?url.pathname:'/';
+   return new Response(null,{status:308,headers:{Location:env.PUBLIC_ORIGIN+path,'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
+  }
+  if(request.method==='GET'&&env.PUBLIC_ORIGIN==='https://book.motionconcept.rest'){
+   const bookingEntry=url.pathname==='/'||/^\/(?:booking|(?:hy|ru|en)\/booking)\/?$/.test(url.pathname);
+   if(url.hostname==='booking.motionconcept.rest'&&env.LEGACY_BOOKING_ACTIVE!=='true')return new Response(null,{status:308,headers:{Location:env.PUBLIC_ORIGIN+(bookingEntry?'/':url.pathname),'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
+   if(url.hostname==='book.motionconcept.rest'){
+    if(url.pathname==='/'){
+     const assetURL=new URL(request.url);assetURL.search='';assetURL.hash='';
+     return env.ASSETS?await env.ASSETS.fetch(new Request(assetURL,request)):new Response('Not found',{status:404});
+    }
+    if(bookingEntry)return new Response(null,{status:308,headers:{Location:env.PUBLIC_ORIGIN+'/','Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
+   }
+  }
   if(!url.pathname.startsWith('/api/'))return env.ASSETS?await env.ASSETS.fetch(request):new Response('Not found',{status:404});
   if(!url.pathname.startsWith(prefix+'/'))throw new Failure('not_found',404);
   configured(env);const mutation=request.method!=='GET';origin(request,env,mutation);
@@ -99,7 +138,7 @@ export async function handle(request:Request,env:Env,runtime:Runtime={fetch:glob
   await store.rate('api-global',300,60,now);
   await store.rate('api-ip:'+ipHash,90,60,now);
   const path=url.pathname.slice(prefix.length);
-  if(path==='/config'&&request.method==='GET')return json({turnstileSiteKey:env.TURNSTILE_SITE_KEY||'',bookingEnabled:env.BOOKING_ENABLED==='true',smsEnabled:!!(smsCap(env.SMS_DAILY_CAP)!==0&&smsCap(env.SMS_MONTHLY_CAP)!==0&&env.SMSGATE_CREDENTIALS_JSON&&env.TURNSTILE_SECRET&&env.TURNSTILE_SITE_KEY),countryCodes:(env.SMS_ALLOWED_COUNTRY_CODES||'374').split(','),currency:env.ALTEGIO_CURRENCY||'AMD',timezone:'Asia/Yerevan'});
+  if(path==='/config'&&request.method==='GET')return json({turnstileSiteKey:env.TURNSTILE_SITE_KEY||'',bookingEnabled:env.BOOKING_ENABLED==='true',smsEnabled:!!(smsCap(env.SMS_DAILY_CAP)!==0&&smsCap(env.SMS_MONTHLY_CAP)!==0&&env.SMSGATE_CREDENTIALS_JSON&&env.TURNSTILE_SECRET&&env.TURNSTILE_SITE_KEY),countryCodes:destinationCodes(env),currency:env.ALTEGIO_CURRENCY||'AMD',timezone:'Asia/Yerevan'});
   if(path==='/session'&&request.method==='POST'){
    if(request.body)onlyKeys(await body(request),[]);
    let raw=cookie(request),session=/^[a-f0-9]{64}$/.test(raw)?await store.session(await hash(raw),now):null;
@@ -119,6 +158,7 @@ export async function handle(request:Request,env:Env,runtime:Runtime={fetch:glob
    return json({slots:(await client.slots(serviceId,staffId,date)).map(({datetime,label})=>({datetime,label}))});
   }
   const {session}=await authenticated(request,env,store,runtime,mutation);
+  if(request.method==='GET'&&path==='/verification/status')return json(await verificationStatus(store,session,env,runtime));
   if(request.method==='GET'&&path.startsWith('/appointments/'))return json(await status(store,session,validDraftId(path.slice('/appointments/'.length)),now));
   if(request.method!=='POST')throw new Failure('not_found',404);
   const data=await body(request);
@@ -162,6 +202,11 @@ export async function handle(request:Request,env:Env,runtime:Runtime={fetch:glob
   const failure=error instanceof Failure?error:new Failure('temporarily_unavailable',503,'Booking is temporarily unavailable. Please try later or contact the studio.');
   return json({error:{code:failure.code,message:failure.message}},failure.status, failure.status===429?{'Retry-After':'60'}:{});
  }
+}
+export async function handle(request:Request,env:Env,runtime:Runtime={fetch:globalThis.fetch.bind(globalThis),now:Date.now}):Promise<Response>{
+ const response=await handleRequest(request,env,runtime);
+ if(new URL(request.url).pathname.startsWith(prefix+'/'))response.headers.set('Content-Language',requestLanguage(request));
+ return response;
 }
 export default {
  async fetch(request:Request,env:Env):Promise<Response>{return handle(request,env);},
