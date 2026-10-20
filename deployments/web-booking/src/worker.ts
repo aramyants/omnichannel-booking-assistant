@@ -1,6 +1,6 @@
 import { Failure } from './types.ts';
 import type { Appointment, Draft, Env, Runtime, Session, Summary } from './types.ts';
-import { Altegio, dateValue, identifier, localDate, localDatetime, safeText } from './altegio.ts';
+import { Altegio, dateValue, identifier, staffIdentifier, localDate, localDatetime, safeText } from './altegio.ts';
 import { body, configured, constantEqual, cookie, hash, hmac, ip, normalizePhone, onlyKeys, origin, randomToken, setCookie, smsCap, verifyTurnstile } from './security.ts';
 import { allowedDestination, credentials, destinationCodes, sendSms, smsReceipt } from './sms.ts';
 import { Store } from './store.ts';
@@ -171,8 +171,16 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    if(path==='/services'){const catalog=await client.catalog();return json({services:catalog.filter(s=>s.kind!=='extra'),extras:catalog.filter(s=>s.kind==='extra')});}
    const serviceId=identifier(url.searchParams.get('service_id'));
    const extraId=url.searchParams.has('extra_id')?identifier(url.searchParams.get('extra_id')):undefined;
-   if(path==='/staff'){await client.selection(serviceId,extraId);return json({staff:await client.staff(serviceId,extraId)});}
-   const staffId=identifier(url.searchParams.get('staff_id')),pair=await client.validatePair(serviceId,staffId,extraId);
+   if(path==='/staff'){await client.selection(serviceId,extraId);const [staff,anyStaff]=await Promise.all([client.staff(serviceId,extraId),client.anyStaffEnabled().catch(()=>false)]);return json({staff,anyStaff});}
+   const staffId=staffIdentifier(url.searchParams.get('staff_id'));
+   if(staffId==='0'){
+    const quote=await client.anyQuote(serviceId,extraId);
+    if(path==='/dates')return json({dates:await client.dates(serviceId,staffId,extraId),selection:quote});
+    const date=dateValue(url.searchParams.get('date'));
+    if(date<localDate(runtime.now())||new Date(date+'T00:00:00+04:00').getTime()>runtime.now()+183*86400000)throw new Failure('invalid_date');
+    return json({slots:(await client.slots(serviceId,staffId,date,extraId)).filter(slot=>!extraId||slot.durationMinutes>=quote.durationMinutes).map(({datetime,label})=>({datetime,label}))});
+   }
+   const pair=await client.validatePair(serviceId,staffId,extraId);
    if(path==='/dates')return json({dates:await client.dates(serviceId,staffId,extraId),selection:{serviceName:pair.items.map(item=>item.name).join(' + '),durationMinutes:pair.items.reduce((sum,item)=>sum+item.durationMinutes,0),priceMin:pair.items.reduce((sum,item)=>sum+item.priceMin,0),priceMax:pair.items.reduce((sum,item)=>sum+item.priceMax,0)}});
    const date=dateValue(url.searchParams.get('date'));
    if(date<localDate(runtime.now())||new Date(date+'T00:00:00+04:00').getTime()>runtime.now()+183*86400000)throw new Failure('invalid_date');
@@ -227,12 +235,14 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    const name=safeText(data.name,120);
    if(!name||name.length<2||typeof data.name!=='string'||data.name.length>120||/[<>\u0000-\u001f]/.test(data.name))throw new Failure('invalid_name',400,'Enter your first and last name.');
    await store.rate('draft-session:'+session.id,10,3600,now);
-   const summary=await client.summary(identifier(data.serviceId),identifier(data.staffId),localDatetime(data.datetime,runtime.now()),name,randomToken(16),data.extraId===undefined?undefined:identifier(data.extraId));
+   const staffId=staffIdentifier(data.staffId);
+   const summary=await (staffId==='0'?client.anySummary(identifier(data.serviceId),localDatetime(data.datetime,runtime.now()),name,randomToken(16),data.extraId===undefined?undefined:identifier(data.extraId)):client.summary(identifier(data.serviceId),staffId,localDatetime(data.datetime,runtime.now()),name,randomToken(16),data.extraId===undefined?undefined:identifier(data.extraId)));
    if(data.certificateId!==undefined)summary.certificate=await selectedCertificate(client,session,identifier(data.certificateId),summary.datetime);
    const email=typeof data.email==='string'?data.email.trim():'';
    const comment=typeof data.comment==='string'?data.comment.trim():'';
    if((data.email!==undefined&&typeof data.email!=='string')||email.length>254||(email&&!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email))||/[\u0000-\u001f\u007f]/.test(email))throw new Failure('invalid_email');
    if((data.comment!==undefined&&typeof data.comment!=='string')||comment.length>1000||/[<>\u0000-\u0008\u000b-\u001f\u007f]/.test(comment))throw new Failure('invalid_comment');
+   await client.check(summary);
    const preference=await ecosystemContext(env,runtime,{action:'prepare',phone:session.phone,locale:requestLanguage(request),explicit:request.headers.get('X-Booking-Language-Source')==='explicit',consent:true});
    summary.locale=preference.locale;summary.email=email;summary.comment=comment;
    await store.saveDraft(session,summary,now);const {reservedMinutes:_privateReservation,certificate,...publicSummary}=summary;return json({draft:{...publicSummary,...(certificate?{certificate:{id:certificate.id,title:certificate.title}}:{})},phoneVerified:true});

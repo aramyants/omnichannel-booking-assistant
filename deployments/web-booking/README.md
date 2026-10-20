@@ -340,3 +340,19 @@ copy snapshot of that public offer, not an automatically synchronized rule. The
 UI explicitly says the studio arranges it; it does not reserve or grant free time.
 Do not reactivate it or invent a historical-client eligibility test implicitly.
 Paid +20/+40 services use their current API prices and combined availability.
+
+### Native automatic specialist assignment
+
+`GET /staff` includes `anyStaff`, read through the signed central bridge from
+Altegio's current `any_master` setting. Unreadable settings hide automatic
+assignment; named-specialist booking stays available. Selecting staff `0` uses
+native combined availability and a quote range across eligible staff. Exact
+variation in treatment duration is deferred to the review instead of inventing
+one value. The draft resolves a real eligible specialist and calls `book_check`.
+The final review shows that specialist and exact quote. Confirmation revalidates
+that same assignment and fails rather than silently switching staff or price.
+No native appointment is sent with staff `0`, and no hold is created for a draft.
+
+The form currently supports one primary treatment plus one paid time addition.
+General multiple-treatment selection and importing historical native reviews
+remain separate parity work; do not describe this release as full feature parity.

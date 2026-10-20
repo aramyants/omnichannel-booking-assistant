@@ -143,7 +143,8 @@ function fixture(){
   assert.equal(init?.redirect,'manual','all provider fetches must use Workers-supported manual redirects');
   const url=String(input);
   if(url.startsWith('https://api.alteg.io/'))providerUrls.push(url);
-  if(url.startsWith('https://api.alteg.io/')&&!url.includes('/record/')&&!url.includes('/loyalty/'))assert.equal((init!.headers as Record<string,string>).Authorization,'Bearer test-partner','private credentials must not reach public catalog or booking endpoints');
+  if(url.startsWith('https://api.alteg.io/')&&!url.includes('/record/')&&!url.includes('/loyalty/')&&!url.includes('/settings/online'))assert.equal((init!.headers as Record<string,string>).Authorization,'Bearer test-partner','private credentials must not reach public catalog or booking endpoints');
+  if(url.includes('/settings/online')){assert.equal((init!.headers as Record<string,string>).Authorization,'Bearer test-partner, User test-private-user');return Response.json({success:true,data:{any_master:false}});}
   if(url.includes('/loyalty/'))assert.equal((init!.headers as Record<string,string>).Authorization,'Bearer test-partner, User test-private-user');
   if(url.includes('/loyalty/certificate_types/search'))return Response.json({success:true,data:[{id:5,title:'Gift',balance:50000,is_multi:true,item_type_id:0,is_archived:false,online_sale_is_enabled:false,internal_note:'must not be public'},{id:6,title:'Archived',balance:1,is_archived:true}]});
   if(url.includes('/loyalty/certificates?'))return Response.json({success:true,data:[{id:7,number:'PRIVATE-CERT-1234',balance:50000,expiration_date:'2027-10-21',type:{title:'Gift'},status:{title:'Active'}}]});
@@ -411,7 +412,7 @@ test('unverified draft, arbitrary price, wrong staff and unscheduled time cannot
 test('booking confirms only after provider success and repeated confirmation sends one creation',async()=>{
  const f=fixture();await f.verified();const d=await f.draft();assert.equal(d.response.status,200);assert.equal(d.value.draft.durationMinutes,80);assert.equal(d.value.draft.price,'18000 AMD');
  const first=await f.request('/appointments',{draftId:d.value.draft.id});assert.equal(first.value.status,'confirmed');assert.equal(first.value.appointment.id,'6789');assert.ok(!JSON.stringify(first.value).includes('private-do-not-leak'));
- const again=await f.request('/appointments',{draftId:d.value.draft.id});assert.equal(again.value.status,'confirmed');assert.equal(f.counts.createCalls,1);assert.equal(f.counts.checkCalls,1);
+ const again=await f.request('/appointments',{draftId:d.value.draft.id});assert.equal(again.value.status,'confirmed');assert.equal(f.counts.createCalls,1);assert.equal(f.counts.checkCalls,2);
  assert.equal((await f.request('/appointments/'+d.value.draft.id)).value.status,'confirmed');
 });
 test('optional consented confirmation sends once even within one minute after OTP',async()=>{
@@ -507,4 +508,53 @@ test('cleanup retains long-lead future appointments and pending reminders',async
  await store.cleanup(now);
  assert.ok(f.db.db.prepare('SELECT id FROM drafts WHERE id=?').get(id));assert.ok(f.db.db.prepare('SELECT draft_id FROM reminder_jobs WHERE draft_id=?').get(id));
  await store.cleanup(now+91*86400);assert.equal(f.db.db.prepare('SELECT id FROM drafts WHERE id=?').get(id),undefined);
+});
+
+test('any specialist follows the native setting and resolves one real assignment before confirmation',async()=>{
+ const f=fixture(),provider=f.runtime.fetch;let enabled=true,firstBusy=true,staffChanged=false;
+ f.runtime.fetch=async(input,init)=>{
+  const url=String(input);
+  if(url.includes('/settings/online'))return Response.json({success:true,data:{any_master:enabled}});
+  if(url.includes('/book_staff/'))return Response.json({success:true,data:[{id:98,name:'First',bookable:true},{id:99,name:'Assigned',bookable:true}]});
+  if(url.includes('/book_times/')&&url.includes('/98/')&&firstBusy)return Response.json({success:true,data:[]});
+  const response=await provider(input,init);
+  if(url.includes('/book_services/')&&new URL(url).searchParams.get('staff_id')==='98'){
+   const data=await response.json();data.data.services[0].price_min=22000;data.data.services[0].price_max=22000;return Response.json(data);
+  }
+  if(url.includes('/book_times/')&&url.includes('/99/')&&staffChanged)return Response.json({success:true,data:[]});
+  return response;
+ };
+ const people=await f.request('/staff?service_id=13827004');assert.equal(people.value.anyStaff,true);
+ const dates=await f.request('/dates?service_id=13827004&staff_id=0');assert.equal(dates.response.status,200);assert.equal(dates.value.selection.priceMin,18000);assert.equal(dates.value.selection.priceMax,22000);assert.equal(dates.value.selection.durationMinutes,80);
+ const slots=await f.request('/slots?service_id=13827004&staff_id=0&date=2026-10-21');assert.equal(slots.value.slots.length,1);
+ await f.verified();
+ const payload={serviceId:'13827004',staffId:'0',datetime:'2026-10-21T12:00:00+04:00',name:'Test Guest',consent:true};
+ const draft=await f.request('/drafts',payload);assert.equal(draft.response.status,200);assert.equal(draft.value.draft.staffId,'99');assert.equal(draft.value.draft.staffName,'Assigned');assert.equal(draft.value.draft.priceMin,18000);assert.equal(f.counts.createCalls,0);
+ staffChanged=true;firstBusy=false;
+ const rejected=await f.request('/appointments',{draftId:draft.value.draft.id});assert.equal(rejected.response.status,409);assert.equal(f.counts.createCalls,0,'never silently switch specialist after the client reviewed the assignment');
+ enabled=false;assert.equal((await f.request('/staff?service_id=13827004')).value.anyStaff,false);assert.equal((await f.request('/dates?service_id=13827004&staff_id=0')).response.status,409);assert.equal((await f.request('/drafts',payload)).response.status,409);
+});
+
+test('unreadable native assignment setting fails closed without blocking named specialists',async()=>{
+ const f=fixture(),provider=f.runtime.fetch;
+ f.runtime.fetch=async(input,init)=>String(input).includes('/settings/online')?new Response('',{status:403}):provider(input,init);
+ const people=await f.request('/staff?service_id=13827004');assert.equal(people.response.status,200);assert.equal(people.value.anyStaff,false);assert.equal(people.value.staff.length,1);
+ assert.equal((await f.request('/dates?service_id=13827004&staff_id=99')).response.status,200);assert.equal((await f.request('/dates?service_id=13827004&staff_id=0')).response.status,503);
+});
+
+test('any specialist creates with the reviewed concrete identity and never sends staff zero to booking',async()=>{
+ const f=fixture(),provider=f.runtime.fetch;
+ f.runtime.fetch=async(input,init)=>String(input).includes('/settings/online')?Response.json({success:true,data:{any_master:true}}):provider(input,init);
+ await f.verified();
+ const prepared=await f.request('/drafts',{serviceId:'13827004',staffId:0,datetime:'2026-10-21T12:00:00+04:00',name:'Test Guest',consent:true});
+ assert.equal(prepared.response.status,200);assert.equal(prepared.value.draft.staffId,'99');
+ const result=await f.request('/appointments',{draftId:prepared.value.draft.id});assert.equal(result.value.status,'confirmed');
+ assert.equal((f.createPayload?.appointments as {staff_id:number}[])[0].staff_id,99);assert.equal(f.counts.createCalls,1);
+});
+
+test('native book_check must accept a draft before the client reaches final review',async()=>{
+ const f=fixture(),provider=f.runtime.fetch;
+ f.runtime.fetch=async(input,init)=>String(input).includes('/book_check/')?Response.json({success:false},{status:409}):provider(input,init);
+ await f.verified();const result=await f.draft();assert.equal(result.response.status,409);assert.equal(f.counts.createCalls,0);
+ assert.equal((f.db.db.prepare('SELECT COUNT(*) AS n FROM drafts').get() as {n:number}).n,0);
 });

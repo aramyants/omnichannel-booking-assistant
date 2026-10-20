@@ -3,7 +3,7 @@ import {Failure} from './types.ts';
 export type Locale='ru'|'en'|'hy';
 export function locale(raw:unknown):Locale{return raw==='en'||raw==='hy'?raw:'ru';}
 export interface ReviewVisit {id:string;staffId:string;staffName:string;serviceName:string;datetime:string}
-export async function ecosystemContext(env:Env,runtime:Runtime,data:{action:'context'|'prepare'|'confirmed'|'record-context'|'review-visits'|'review-check'|'certificate-types'|'client-certificates';phone?:string;locale?:Locale;explicit?:boolean;consent?:boolean;recordId?:string;managementProof?:string}):Promise<{locale:Locale;calendarUrl?:string;eligible?:boolean;visits?:ReviewVisit[];visit?:ReviewVisit;certificates?:Record<string,unknown>[]} >{
+export async function ecosystemContext(env:Env,runtime:Runtime,data:{action:'context'|'prepare'|'confirmed'|'record-context'|'review-visits'|'review-check'|'certificate-types'|'client-certificates'|'booking-settings';phone?:string;locale?:Locale;explicit?:boolean;consent?:boolean;recordId?:string;managementProof?:string}):Promise<{locale:Locale;calendarUrl?:string;eligible?:boolean;anyStaff?:boolean;visits?:ReviewVisit[];visit?:ReviewVisit;certificates?:Record<string,unknown>[]} >{
  if(!env.ECOSYSTEM_GATEWAY_ORIGIN)return {locale:locale(data.locale)};
  if(env.ECOSYSTEM_GATEWAY_ORIGIN!=='https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app'||!env.ALTEGIO_USER_TOKEN)throw new Failure('booking_unavailable',503);
  const encoder=new TextEncoder(),body=JSON.stringify(data),timestamp=String(Math.floor(runtime.now()/1000));

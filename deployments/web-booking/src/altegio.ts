@@ -1,6 +1,7 @@
 import { Failure } from './types.ts';
 import type { Env, Runtime, Summary } from './types.ts';
 import { normalizePhone } from './security.ts';
+import { ecosystemContext } from './ecosystem.ts';
 
 export interface Service { id: string; name: string; description: string; durationMinutes: number; priceMin: number; priceMax: number; category: string; kind:'treatment'|'extra'|'coordinated'; imageUrl?:string; discountAvailable?:boolean }
 export interface Staff { id: string; name: string; specialization: string; avatarUrl?:string; biography?:string }
@@ -19,6 +20,7 @@ export function identifier(raw: unknown): string {
  if (!/^[1-9]\d{0,14}$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Failure('invalid_selection');
  return value;
 }
+export function staffIdentifier(raw:unknown):string {return raw==='0'||raw===0?'0':identifier(raw);}
 export function safeText(raw: unknown, max = 2000): string {
  if (typeof raw !== 'string') return '';
  return raw.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0,max);
@@ -65,6 +67,41 @@ export function localDatetime(raw: unknown, now: number): string {
 export class Altegio {
  env: Env; runtime: Runtime;
  constructor(env: Env, runtime: Runtime) { this.env=env; this.runtime=runtime; }
+ async anyStaffEnabled():Promise<boolean> {
+  if(this.env.ECOSYSTEM_GATEWAY_ORIGIN)return (await ecosystemContext(this.env,this.runtime,{action:'booking-settings'})).anyStaff===true;
+  const settings=await this.call('/company/'+this.env.ALTEGIO_COMPANY_ID+'/settings/online','GET',undefined,false,true) as Wire;
+  if(typeof settings?.any_master!=='boolean')throw new Failure('booking_unavailable',503);
+  return settings.any_master;
+ }
+ async anyQuote(serviceId:string,extraId?:string):Promise<{durationMinutes:number;priceMin:number;priceMax:number}> {
+  if(!await this.anyStaffEnabled())throw new Failure('selection_rejected',409);
+  const staff=await this.staff(serviceId,extraId);
+  if(!staff.length)throw new Failure('selection_rejected',409);
+  const quotes=[];
+  // Bound concurrent provider reads, even if the studio later grows its team.
+  for(let offset=0;offset<staff.length;offset+=4){
+   const selections=await Promise.all(staff.slice(offset,offset+4).map(person=>this.selection(serviceId,extraId,person.id)));
+   for(const items of selections){
+    if(items.some(item=>item.durationMinutes<=0))throw new Failure('booking_unavailable',503);
+    quotes.push({duration:items.reduce((sum,item)=>sum+item.durationMinutes,0),min:items.reduce((sum,item)=>sum+item.priceMin,0),max:items.reduce((sum,item)=>sum+item.priceMax,0)});
+   }
+  }
+  const durations=new Set(quotes.map(q=>q.duration));
+  return {durationMinutes:durations.size===1?quotes[0].duration:0,priceMin:Math.min(...quotes.map(q=>q.min)),priceMax:Math.max(...quotes.map(q=>q.max))};
+ }
+ async anySummary(serviceId:string,datetime:string,name:string,id:string,extraId?:string):Promise<Summary> {
+  if(!await this.anyStaffEnabled())throw new Failure('selection_rejected',409);
+  // Resolve to a real eligible specialist before showing the final review.
+  // Creation then revalidates that exact assignment and quote; no silent switch.
+  for(const person of await this.staff(serviceId,extraId)){
+   const available=(await this.slots(serviceId,person.id,datetime.slice(0,10),extraId)).some(slot=>slot.datetime===datetime);
+   if(!available)continue;
+   try{return await this.summary(serviceId,person.id,datetime,name,id,extraId);}catch(error){
+    if(!(error instanceof Failure)||!['slot_unavailable','selection_rejected','service_unavailable'].includes(error.code))throw error;
+   }
+  }
+  throw new Failure('slot_unavailable',409);
+ }
  async call(path: string, method='GET', data?: unknown, creation=false,privateRead=false): Promise<unknown> {
   if(privateRead&&!this.env.ALTEGIO_USER_TOKEN)throw new Failure('booking_unavailable',503);
   let response: Response;
@@ -135,14 +172,14 @@ export class Altegio {
   return {service,staff,items};
  }
  async dates(serviceId: string,staffId: string,extraId?:string): Promise<string[]> {
-  const data=await this.call('/book_dates/'+this.env.ALTEGIO_COMPANY_ID+'?staff_id='+identifier(staffId)+'&'+this.queryServices(serviceId,extraId)) as Wire;
+  const data=await this.call('/book_dates/'+this.env.ALTEGIO_COMPANY_ID+'?staff_id='+staffIdentifier(staffId)+'&'+this.queryServices(serviceId,extraId)) as Wire;
   if (!data || !Array.isArray(data.booking_dates)) throw new Failure('booking_unavailable',503);
   const today=localDate(this.runtime.now());
   return [...new Set(data.booking_dates.filter((x):x is string=>typeof x==='string' && /^\d{4}-\d{2}-\d{2}$/.test(x) && x>=today))].sort().slice(0,183);
  }
  async slots(serviceId: string,staffId: string,date: string,extraId?:string): Promise<Slot[]> {
   dateValue(date);
-  const data=array(await this.call('/book_times/'+this.env.ALTEGIO_COMPANY_ID+'/'+identifier(staffId)+'/'+date+'?'+this.queryServices(serviceId,extraId)));
+  const data=array(await this.call('/book_times/'+this.env.ALTEGIO_COMPANY_ID+'/'+staffIdentifier(staffId)+'/'+date+'?'+this.queryServices(serviceId,extraId)));
   return data.flatMap(x=>{
    const raw=typeof x.datetime==='string' && x.datetime ? x.datetime : date+'T'+String(x.time)+':00+04:00';
    try { const datetime=localDatetime(raw,this.runtime.now()); if (datetime.slice(0,10)!==date) return [];
