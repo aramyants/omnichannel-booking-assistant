@@ -65,6 +65,23 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
+		if body.Action == "booking-settings" {
+			reader, ok := service.Reader.(interface {
+				AnyStaffEnabled(context.Context) (bool, error)
+			})
+			if !ok {
+				http.Error(w, "Unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			enabled, readErr := reader.AnyStaffEnabled(r.Context())
+			if readErr != nil {
+				http.Error(w, "Unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"locale": "ru", "anyStaff": enabled})
+			return
+		}
 		if body.Action == "certificate-types" {
 			reader, ok := service.Reader.(interface {
 				ListCertificateTypes(context.Context) ([]benefit.CertificateType, error)

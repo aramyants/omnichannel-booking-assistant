@@ -26,7 +26,7 @@ export async function clientCertificates(client:Altegio,session:Session){
  if(!session.phone)throw new Failure('verification_required',403);
  // The lookup phone comes exclusively from successful session ownership proof.
  // Never accept a phone or client id from a public query/body for this read.
- const list=client.env.ECOSYSTEM_GATEWAY_ORIGIN?rows((await ecosystemContext(client.env,client.runtime,{action:'client-certificates',phone:session.phone})).certificates):rows(await client.call('/loyalty/certificates?salon_id='+client.env.ALTEGIO_COMPANY_ID+'&phone='+encodeURIComponent(session.phone.replace(/^\+/,'')),'GET',undefined,false,true));
+ const list=client.env.ECOSYSTEM_GATEWAY_ORIGIN?rows((await ecosystemContext(client.env,client.runtime,{action:'client-certificates',phone:session.phone})).certificates):rows(await client.call('/loyalty/certificates?company_id='+client.env.ALTEGIO_COMPANY_ID+'&phone='+encodeURIComponent(session.phone.replace(/^\+/,'')),'GET',undefined,false,true));
  return list.flatMap(row=>{
   const type=row.type as Wire|undefined,status=row.status as Wire|undefined,balance=amount(row.balance),number=typeof row.number==='string'?row.number.trim():'';
   if(balance===undefined||!number||number.length>100||/[<>\u0000-\u001f]/.test(number))return [];

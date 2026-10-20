@@ -25,10 +25,39 @@ func (r *benefitsReader) ListCertificateTypes(context.Context) ([]benefit.Certif
 	r.catalogCalls++
 	return []benefit.CertificateType{{ID: "5", Title: "Gift", Value: 50000}}, nil
 }
+func (r *benefitsReader) AnyStaffEnabled(context.Context) (bool, error) {
+	return true, nil
+}
 func (r *benefitsReader) ListPhoneCertificates(_ context.Context, phone string) ([]benefit.Certificate, error) {
 	r.clientCalls++
 	r.phone = phone
 	return []benefit.Certificate{{ID: "7", Title: "Gift", Number: "PRIVATE-1234", Balance: 50000}}, nil
+}
+
+func TestBookingSettingsBridgeRequiresSignature(t *testing.T) {
+	handler := bookingContextHandler(&notifications.Service{Repo: memory.New(), Reader: &benefitsReader{}}, "test-key", "https://book.motionconcept.rest/")
+	for _, signed := range []bool{false, true} {
+		raw := []byte(`{"action":"booking-settings"}`)
+		stamp := strconv.FormatInt(time.Now().Unix(), 10)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/internal/booking-context", bytes.NewReader(raw))
+		req.Header.Set("X-Emotion-Time", stamp)
+		if signed {
+			req.Header.Set("X-Emotion-Signature", contextSignature("test-key", stamp, raw))
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if !signed && rec.Code != 401 || signed && rec.Code != 200 {
+			t.Fatal(rec.Code, rec.Body.String())
+		}
+		if signed {
+			var output struct {
+				AnyStaff bool `json:"anyStaff"`
+			}
+			if json.Unmarshal(rec.Body.Bytes(), &output) != nil || !output.AnyStaff {
+				t.Fatal("missing native studio setting")
+			}
+		}
+	}
 }
 func TestCertificateBridgeRequiresFreshSignatureAndProvenPhone(t *testing.T) {
 	reader := &benefitsReader{}

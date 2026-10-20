@@ -108,9 +108,8 @@ func (c *Client) ListPhoneCertificates(ctx context.Context, rawPhone string) ([]
 	if err != nil {
 		return nil, booking.ErrRejected
 	}
-	// This legacy loyalty handler reads salon_id on the live V1 service.
-	// Keep the fixed studio scope explicit rather than relying on alias expansion.
-	query := url.Values{"salon_id": {c.companyID}, "phone": {strings.TrimPrefix(phone, "+")}}
+	// Use this V1 handler's company_id wire name, with the fixed studio scope.
+	query := url.Values{"company_id": {c.companyID}, "phone": {strings.TrimPrefix(phone, "+")}}
 	values, err := call[[]struct {
 		ID      int64           `json:"id"`
 		Number  json.RawMessage `json:"number"`
