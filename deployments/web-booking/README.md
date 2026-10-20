@@ -311,8 +311,9 @@ appointment, invented resource or separate therapist hold is added by our app.
 
 `GET /certificate-types` exposes only sanitized catalog fields from the configured
 location's canonical Altegio certificate-type endpoint. Archived types are hidden.
-The current location has 16 types, including deposits; online sale is disabled for
-all of them. The UI shows certificate value and validity and marks online purchase
+Certificate types, including deposits, are read live rather than counted or priced
+in frontend code. On 20 October the live catalog had online sale disabled for all
+published types. The UI shows value and validity and marks online purchase
 unavailable, without a support-chat substitute. It never interprets a zero
 online sale price as a free certificate.
 
@@ -327,6 +328,14 @@ record a payment, apply a discount or promise that service restrictions match.
 Production certificate reads use the existing signed ecosystem bridge, backed by
 the central API service's current Altegio credential. `certificate-types` accepts
 no client identity; `client-certificates` requires the proven session phone.
+The central adapter searches only the fixed location, matches the exact normalized
+phone and reads `/locations/{location}/client/{client}/loyalty`. This documented
+client summary works with `clients_loyalty_read_access`; the legacy certificate
+endpoint returned 403 even after that read permission was installed. No balance,
+payment, expiry-editing or loyalty-card issuance rights were added. Missing phone
+fields, incomplete searches and missing certificate lists fail closed. Duplicate
+client rows and identical certificate copies are deduplicated; conflicting copies
+are rejected. The app installation was reconnected to apply the approved grant.
 The legacy direct adapter is only a fallback for standalone installations without
 the ecosystem gateway. Private credentials never reach public catalog,
 availability or creation calls. The bridge remains fresh-body HMAC authenticated.

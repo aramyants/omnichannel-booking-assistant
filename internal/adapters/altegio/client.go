@@ -209,6 +209,10 @@ func (r request) logPath() string {
 		parts[len(parts)-1] = "[redacted]"
 		return "/" + strings.Join(parts, "/")
 	}
+	if len(parts) == 5 && parts[0] == "locations" && parts[2] == "client" && parts[4] == "loyalty" {
+		parts[3] = "[redacted]"
+		return "/" + strings.Join(parts, "/")
+	}
 	return path
 }
 
@@ -318,7 +322,7 @@ func (c *Client) attempt(ctx context.Context, req request, body []byte) (json.Ra
 	decodeErr := json.Unmarshal(raw, &env)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || (decodeErr == nil && !env.Success) {
-		if strings.HasPrefix(req.path, "/loyalty/certificates?") || strings.HasSuffix(req.path, "/settings/online") {
+		if strings.HasPrefix(req.path, "/loyalty/certificates?") || strings.HasSuffix(req.path, "/settings/online") || (strings.Contains(req.path, "/client/") && strings.HasSuffix(req.path, "/loyalty")) {
 			c.logger.WarnContext(ctx, "Altegio optional booking read rejected", "path", req.logPath(), "status", resp.StatusCode)
 		}
 		return nil, c.translate(req, resp.StatusCode, env.Meta, env.Errors)

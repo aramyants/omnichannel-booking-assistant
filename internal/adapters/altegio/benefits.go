@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -101,34 +100,64 @@ func (c *Client) ListCertificateTypes(ctx context.Context) ([]benefit.Certificat
 	return nil, fmt.Errorf("%w: incomplete certificate catalog", booking.ErrUnavailable)
 }
 
+type clientCertificateDTO struct {
+	ID      int64           `json:"id"`
+	Number  json.RawMessage `json:"number"`
+	Balance json.Number     `json:"balance"`
+	Expiry  json.RawMessage `json:"expiration_date"`
+	Type    struct {
+		Title string `json:"title"`
+	} `json:"type"`
+	Status struct {
+		Title string `json:"title"`
+	} `json:"status"`
+}
+
 // ListPhoneCertificates is privileged. The caller supplies only a phone whose
 // ownership was proven by its channel; this is never an assistant model argument.
+// The client-scoped summary needs only client-loyalty read access, unlike the
+// older /loyalty/certificates route, which also gates on the loyalty module.
 func (c *Client) ListPhoneCertificates(ctx context.Context, rawPhone string) ([]benefit.Certificate, error) {
 	phone, err := customer.NormalizePhone(rawPhone)
 	if err != nil {
 		return nil, booking.ErrRejected
 	}
-	// Use this V1 handler's company_id wire name, with the fixed studio scope.
-	query := url.Values{"company_id": {c.companyID}, "phone": {strings.TrimPrefix(phone, "+")}}
-	values, err := call[[]struct {
-		ID      int64           `json:"id"`
-		Number  json.RawMessage `json:"number"`
-		Balance json.Number     `json:"balance"`
-		Expiry  json.RawMessage `json:"expiration_date"`
-		Type    struct {
-			Title string `json:"title"`
-		} `json:"type"`
-		Status struct {
-			Title string `json:"title"`
-		} `json:"status"`
-	}](ctx, c, request{method: http.MethodGet, path: "/loyalty/certificates?" + query.Encode(), repeatable: true})
+	search := clientSearchRequest{Page: 1, PageSize: 100, Fields: []string{"id", "phone"}, Operation: "AND", Filters: []clientSearchFilter{{Type: "quick_search"}}}
+	search.Filters[0].State.Value = phone
+	clients, err := call[[]clientSearchResult](ctx, c, request{method: http.MethodPost, path: "/company/" + c.companyID + "/clients/search", body: search, repeatable: true})
 	if err != nil {
 		return nil, err
 	}
-	if len(values) > 500 {
+	if len(clients) >= 100 {
 		return nil, booking.ErrUnavailable
 	}
+	values := []clientCertificateDTO{}
+	seenClients := map[int64]bool{}
+	for _, client := range clients {
+		exact, phoneErr := clientPhone(client.Phone)
+		if phoneErr != nil {
+			return nil, booking.ErrUnavailable
+		}
+		if exact != phone || seenClients[client.ID] {
+			continue
+		}
+		if client.ID <= 0 || len(seenClients) >= 10 {
+			return nil, booking.ErrUnavailable
+		}
+		seenClients[client.ID] = true
+		summary, readErr := call[struct {
+			Certificates *[]clientCertificateDTO `json:"certificates"`
+		}](ctx, c, request{method: http.MethodGet, path: "/locations/" + c.companyID + "/client/" + strconv.FormatInt(client.ID, 10) + "/loyalty", repeatable: true})
+		if readErr != nil {
+			return nil, readErr
+		}
+		if summary.Certificates == nil || len(values)+len(*summary.Certificates) > 500 {
+			return nil, booking.ErrUnavailable
+		}
+		values = append(values, *summary.Certificates...)
+	}
 	result := []benefit.Certificate{}
+	seenCards := map[string]benefit.Certificate{}
 	for _, row := range values {
 		balance, err := certificateAmount(row.Balance)
 		number := certificateNumber(row.Number)
@@ -144,7 +173,15 @@ func (c *Client) ListPhoneCertificates(ctx context.Context, rawPhone string) ([]
 		if len(tail) > 4 {
 			tail = tail[len(tail)-4:]
 		}
-		result = append(result, benefit.Certificate{ID: strconv.FormatInt(row.ID, 10), Title: row.Type.Title, Balance: balance, Number: number, MaskedNumber: "•••• " + string(tail), ExpiresAt: certificateExpiry(row.Expiry), Status: row.Status.Title})
+		card := benefit.Certificate{ID: strconv.FormatInt(row.ID, 10), Title: row.Type.Title, Balance: balance, Number: number, MaskedNumber: "•••• " + string(tail), ExpiresAt: certificateExpiry(row.Expiry), Status: row.Status.Title}
+		if previous, exists := seenCards[card.ID]; exists {
+			if previous != card {
+				return nil, booking.ErrUnavailable
+			}
+			continue
+		}
+		seenCards[card.ID] = card
+		result = append(result, card)
 	}
 	return result, nil
 }
