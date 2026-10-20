@@ -260,8 +260,10 @@ Cloudflare free-quota failure behavior visible to users.
 ## Verified specialist reviews
 
 `/reviews/` reuses the secure booking session and SMS phone proof. The Go bridge
-lists only visits owned by that exact phone, within 90 days, explicitly marked
-attended and already finished. Submission re-reads the private record. The
+lists only past bookings owned by that exact phone, within 90 days and already
+finished. An arrival mark is not required; canceled records and explicit no-shows
+are excluded. The public badge means verified booking ownership, not independently
+verified attendance. Submission re-reads the private record. The
 browser cannot choose a specialist or supply attendance, client ID or phone.
 `verified_reviews` stores one immutable review per appointment with a unique
 primary key, HMAC phone identifier, actual specialist, 1–5 rating and optional
