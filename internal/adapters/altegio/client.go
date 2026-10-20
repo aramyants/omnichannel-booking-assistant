@@ -203,12 +203,13 @@ type request struct {
 }
 
 func (r request) logPath() string {
-	parts := strings.Split(strings.Trim(r.path, "/"), "/")
+	path := strings.SplitN(r.path, "?", 2)[0]
+	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if (len(parts) == 4 && parts[0] == "book_record") || (len(parts) == 4 && parts[0] == "user" && parts[1] == "records") {
 		parts[len(parts)-1] = "[redacted]"
 		return "/" + strings.Join(parts, "/")
 	}
-	return r.path
+	return path
 }
 
 // call sends req and decodes the response payload into a value of type T.
@@ -284,9 +285,8 @@ func (c *Client) attempt(ctx context.Context, req request, body []byte) (json.Ra
 	// application/json is rejected.
 	httpReq.Header.Set("Accept", "application/vnd.api.v2+json")
 	httpReq.Header.Set("Authorization", c.authorization())
-	if body != nil {
-		httpReq.Header.Set("Content-Type", "application/json")
-	}
+	// Some loyalty reads require the documented JSON media type even on GET.
+	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -318,6 +318,9 @@ func (c *Client) attempt(ctx context.Context, req request, body []byte) (json.Ra
 	decodeErr := json.Unmarshal(raw, &env)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || (decodeErr == nil && !env.Success) {
+		if strings.HasPrefix(req.path, "/loyalty/certificates?") {
+			c.logger.WarnContext(ctx, "Altegio certificate lookup rejected", "status", resp.StatusCode)
+		}
 		return nil, c.translate(req, resp.StatusCode, env.Meta, env.Errors)
 	}
 	if decodeErr != nil {

@@ -1,6 +1,7 @@
 package altegio
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -36,6 +37,25 @@ func certificateAmount(raw json.Number) (float64, error) {
 		return 0, booking.ErrUnavailable
 	}
 	return n, nil
+}
+
+// Altegio's documented examples include numeric codes as well as strings.
+// Decode numeric codes without floating-point conversion or loss of digits.
+func certificateNumber(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return strings.TrimSpace(text)
+	}
+	value := strings.TrimSpace(string(bytes.TrimSpace(raw)))
+	if value == "" {
+		return ""
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return value
 }
 func certificateExpiry(raw json.RawMessage) string {
 	if len(raw) == 0 || string(raw) == "null" || string(raw) == "0" || string(raw) == `""` {
@@ -91,7 +111,7 @@ func (c *Client) ListPhoneCertificates(ctx context.Context, rawPhone string) ([]
 	query := url.Values{"location_id": {c.companyID}, "phone": {strings.TrimPrefix(phone, "+")}}
 	values, err := call[[]struct {
 		ID      int64           `json:"id"`
-		Number  string          `json:"number"`
+		Number  json.RawMessage `json:"number"`
 		Balance json.Number     `json:"balance"`
 		Expiry  json.RawMessage `json:"expiration_date"`
 		Type    struct {
@@ -110,7 +130,7 @@ func (c *Client) ListPhoneCertificates(ctx context.Context, rawPhone string) ([]
 	result := []benefit.Certificate{}
 	for _, row := range values {
 		balance, err := certificateAmount(row.Balance)
-		number := strings.TrimSpace(row.Number)
+		number := certificateNumber(row.Number)
 		if err != nil || row.ID <= 0 || len(number) == 0 || len(number) > 100 {
 			return nil, booking.ErrUnavailable
 		}
