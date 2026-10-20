@@ -47,6 +47,9 @@ type staffDTO struct {
 	ID             int64  `json:"id"`
 	Name           string `json:"name"`
 	Specialization string `json:"specialization"`
+	Position       struct {
+		Title string `json:"title"`
+	} `json:"position"`
 
 	// Bookable reports whether this person accepts appointments. Altegio omits
 	// it in some responses, so the mapping treats a missing value as bookable

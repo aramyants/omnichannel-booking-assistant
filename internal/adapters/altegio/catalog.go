@@ -140,10 +140,14 @@ func (c *Client) ListStaffForServices(ctx context.Context, serviceIDs []string) 
 			bookable = *dto.Bookable
 		}
 
+		jobTitle := strings.TrimSpace(dto.Position.Title)
+		if jobTitle == "" {
+			jobTitle = dto.Specialization
+		}
 		staff = append(staff, booking.Staff{
 			ID:             strconv.FormatInt(dto.ID, 10),
 			Name:           dto.Name,
-			Specialisation: dto.Specialization,
+			Specialisation: jobTitle,
 			Bookable:       bookable,
 		})
 	}

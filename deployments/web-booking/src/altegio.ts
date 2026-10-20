@@ -4,17 +4,9 @@ import { normalizePhone } from './security.ts';
 import { ecosystemContext } from './ecosystem.ts';
 
 export interface Service { id: string; name: string; description: string; durationMinutes: number; priceMin: number; priceMax: number; category: string; kind:'treatment'|'extra'|'coordinated'; imageUrl?:string; discountAvailable?:boolean }
-export interface Staff { id: string; name: string; specialization: string; avatarUrl?:string; biography?:string }
+export interface Staff { id: string; name: string; specialization: string; positionTitle?:string; avatarUrl?:string; biography?:string }
 export interface Slot { datetime: string; label: string; durationMinutes: number }
 type Wire = Record<string, unknown>;
-const titles: Record<string, [string, string]> = {
- '13827004':['Motion Relax','Motion Relax · 80 min'], '13827160':['Motion Relax','Motion Relax · 110 min'],
- '13827161':['Motion Relax','Motion Relax · 140 min'], '13827167':['Motion Sport','Motion Sport · 90 min'],
- '13779299':['Motion Sport','Motion Sport · 120 min'], '13827163':['Motion Sport','Motion Sport · 150 min'],
- '13827186':['Motion Sculpt','Motion Sculpt · 60 min'], '13827188':['Motion Sculpt','Motion Sculpt · 90 min'],
- '13815928':['Face Motion','Face Motion Classic · 60 min'], '13827244':['Face Motion','Face Motion Gua Sha · 60 min'],
- '13827261':['Local','Back Motion · 50 min'], '13827262':['Local','Body Boost · 50 min'], '13827264':['Local','Head Motion · 30 min']
-};
 export function identifier(raw: unknown): string {
  const value = String(raw ?? '');
  if (!/^[1-9]\d{0,14}$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Failure('invalid_selection');
@@ -38,15 +30,13 @@ function array(value: unknown): Wire[] {
  return value.filter((x): x is Wire => x !== null && typeof x === 'object' && !Array.isArray(x));
 }
 function number(raw: unknown): number { return typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : 0; }
-export function treatmentMinutes(seconds:unknown,rawTitle:string,curatedTitle?:string):number {
+export function treatmentMinutes(seconds:unknown,rawTitle:string):number {
  const explicit=number(seconds)/60;
  if(explicit>0&&explicit<=480)return explicit;
  // Duration labels are maintained by the studio in the authoritative catalog.
  // A number without an explicit minute unit is not enough to infer duration.
- for(const title of [rawTitle,curatedTitle||'']){
-  const match=title.match(/(?:^|[\s·])([1-9]\d{0,2})\s*(?:min(?:ute)?s?|мин(?:ут)?|րոպե)(?=$|[\s.,])/i);
-  if(match&&Number(match[1])<=480)return Number(match[1]);
- }
+ const match=rawTitle.match(/(?:^|[\s·])([1-9]\d{0,2})\s*(?:min(?:ute)?s?|мин(?:ут)?|րոպե)(?=$|[\s.,])/i);
+ if(match&&Number(match[1])<=480)return Number(match[1]);
  return 0;
 }
 export function dateValue(raw: unknown): string {
@@ -135,13 +125,14 @@ export class Altegio {
   const categories = new Map(array(data.category).map(x=>[String(x.id),safeText(x.title,100)]));
   return array(data.services).filter(x=>Number(x.active)===1).flatMap(x=>{
    const id=identifier(x.id), category=categories.get(String(x.category_id)) || '';
-   const extra=category.trim().toLowerCase()==='add more time'||['13827268','13827269'].includes(id);
-   const copy=titles[id];
+   const extra=category.trim().toLowerCase()==='add more time';
    const nativeName=safeText(x.title,150);
-   const name=copy && copy[0].toLowerCase()===category.toLowerCase() ? copy[1] : /four hands/i.test(category) ? category+' · '+nativeName : nativeName;
+   // Both parts come from the current native catalog, never an ID-to-name table.
+   const needsContext=/^\+?\d/.test(nativeName)||/four hands/i.test(category);
+   const name=category&&nativeName&&needsContext&&!nativeName.toLowerCase().startsWith(category.toLowerCase())?category+' · '+nativeName:nativeName;
    if (!name || x.price_min===null || typeof x.price_min!=='number' || !Number.isFinite(x.price_min) || x.price_min<0) return [];
    const max=x.price_max??x.price_min;if(typeof max!=='number'||!Number.isFinite(max)||max<x.price_min)return [];
-   return [{id,name,description:safeText(x.comment || x.description),durationMinutes:treatmentMinutes(x.seance_length,nativeName,copy&&copy[0].toLowerCase()===category.toLowerCase()?copy[1]:undefined),priceMin:x.price_min,priceMax:max,category,kind:extra?'extra':'treatment',...(servicePhoto(x.image)?{imageUrl:servicePhoto(x.image)}:{}),...(number(x.discount)>0?{discountAvailable:true}:{})}];
+   return [{id,name,description:safeText(x.comment || x.description),durationMinutes:treatmentMinutes(x.seance_length,nativeName),priceMin:x.price_min,priceMax:max,category,kind:extra?'extra':'treatment',...(servicePhoto(x.image)?{imageUrl:servicePhoto(x.image)}:{}),...(number(x.discount)>0?{discountAvailable:true}:{})}];
   });
  }
  async services(staffId?:string):Promise<Service[]> {return (await this.catalog(staffId)).filter(s=>s.kind==='treatment');}
@@ -157,7 +148,7 @@ export class Altegio {
  async staff(serviceId: string,extraId?:string): Promise<Staff[]> {
   return array(await this.call('/book_staff/'+this.env.ALTEGIO_COMPANY_ID+'?'+this.queryServices(serviceId,extraId)))
    .filter(x=>!Number(x.fired) && x.bookable!==false && x.bookable!==0)
-   .map(x=>({id:identifier(x.id),name:safeText(x.name,150),specialization:safeText(x.specialization,250),biography:safeText(x.information,8000),...(staffPhoto(x.avatar_big)||staffPhoto(x.avatar)?{avatarUrl:staffPhoto(x.avatar_big)||staffPhoto(x.avatar)}:{})}));
+   .map(x=>({id:identifier(x.id),name:safeText(x.name,150),specialization:safeText(x.specialization,250),positionTitle:safeText(x.position&&typeof x.position==='object'&&!Array.isArray(x.position)?(x.position as Wire).title:undefined,250),biography:safeText(x.information,8000),...(staffPhoto(x.avatar_big)||staffPhoto(x.avatar)?{avatarUrl:staffPhoto(x.avatar_big)||staffPhoto(x.avatar)}:{})}));
  }
  async validateService(serviceId: string): Promise<Service> {
   const service=(await this.services()).find(x=>x.id===identifier(serviceId));

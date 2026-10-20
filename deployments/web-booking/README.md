@@ -344,11 +344,28 @@ Altegio-owned. Personal loyalty percentages are not inferred from product titles
 
 The native widget advertised 20 complimentary head/face minutes on 20 October,
 while service 13914939 (`First visit +20min`) was inactive and the documented
-location `booking_widget_promo` field was null. The localized banner is a reviewed
-copy snapshot of that public offer, not an automatically synchronized rule. The
-UI explicitly says the studio arranges it; it does not reserve or grant free time.
+location `booking_widget_promo` field was null. The former copied offer banner was
+removed: a locally stored advertisement is not an authoritative booking rule.
 Do not reactivate it or invent a historical-client eligibility test implicitly.
 Paid +20/+40 services use their current API prices and combined availability.
+
+### Native catalog authority
+
+The web adapter and bot adapter no longer replace native service names or missing
+descriptions with a historical service-ID table. Names come from native title
+plus native category context where the title is ambiguous; descriptions come only
+from native content. Native `seance_length` supplies the exact quote duration.
+Before a specialist is chosen, only explicit minute units in the current native
+title can label duration; no local historical title supplies a missing value.
+The native `Add More Time` category identifies add-ons, without hardcoded service
+IDs. Price, activation, qualified staff, availability, certificates and assignment
+settings remain live reads. Unknown or unreadable eligibility is never invented.
+
+Staff professions come from native `position.title`, with native specialization as
+fallback. The public web response has no account-access-role field. Known job
+titles can be translated for display; custom studio-authored titles are retained.
+The bot uses the same native position priority. UI headings such as “Specialist”
+describe a selection step, not the staff member's actual job title.
 
 ### Native automatic specialist assignment
 
