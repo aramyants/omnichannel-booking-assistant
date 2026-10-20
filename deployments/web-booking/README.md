@@ -312,8 +312,8 @@ appointment, invented resource or separate therapist hold is added by our app.
 `GET /certificate-types` exposes only sanitized catalog fields from the configured
 location's canonical Altegio certificate-type endpoint. Archived types are hidden.
 The current location has 16 types, including deposits; online sale is disabled for
-all of them. The UI shows certificate value and validity, with a client-initiated
-request to arrange issuance/payment with the studio. It never interprets a zero
+all of them. The UI shows certificate value and validity and marks online purchase
+unavailable, without a support-chat substitute. It never interprets a zero
 online sale price as a free certificate.
 
 `GET /benefits` requires successful session phone proof and only queries that
