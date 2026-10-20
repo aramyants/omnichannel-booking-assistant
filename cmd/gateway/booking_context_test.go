@@ -27,7 +27,7 @@ func TestBookingContextRejectsExpiredUnsignedAndTamperedBodies(t *testing.T) {
 			if mode == "expired" {
 				timestamp = strconv.FormatInt(time.Now().Add(-2*time.Minute).Unix(), 10)
 			}
-			req := httptest.NewRequest(http.MethodPost, "/internal/booking-context", bytes.NewReader(raw))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/internal/booking-context", bytes.NewReader(raw))
 			req.Header.Set("X-Emotion-Time", timestamp)
 			signature := contextSignature("private-test-token", timestamp, raw)
 			if mode == "tampered" {
@@ -80,7 +80,7 @@ func TestConfirmedWebBookingValidatesAndStoresOnlyItsOwnManagementProof(t *testi
 		s := &notifications.Service{Repo: repo, Scheduler: contextScheduler{}, Reader: contextProofReader{contextRecordReader{snap}}}
 		raw := []byte(`{"action":"confirmed","phone":"+37491123456","recordId":"123","managementProof":"` + proof + `"}`)
 		ts := strconv.FormatInt(time.Now().Unix(), 10)
-		req := httptest.NewRequest(http.MethodPost, "/internal/booking-context", bytes.NewReader(raw))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/internal/booking-context", bytes.NewReader(raw))
 		req.Header.Set("X-Emotion-Time", ts)
 		req.Header.Set("X-Emotion-Signature", contextSignature("test-token", ts, raw))
 		rec := httptest.NewRecorder()
@@ -144,7 +144,7 @@ func TestSignedReminderContextChecksCurrentRecipientAndStatus(t *testing.T) {
 			s := &notifications.Service{Repo: memory.New(), Reader: contextRecordReader{snap}}
 			raw := []byte(`{"action":"record-context","phone":"+37491123456","recordId":"123"}`)
 			ts := strconv.FormatInt(time.Now().Unix(), 10)
-			req := httptest.NewRequest(http.MethodPost, "/internal/booking-context", bytes.NewReader(raw))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/internal/booking-context", bytes.NewReader(raw))
 			req.Header.Set("X-Emotion-Time", ts)
 			req.Header.Set("X-Emotion-Signature", contextSignature("test-token", ts, raw))
 			rec := httptest.NewRecorder()

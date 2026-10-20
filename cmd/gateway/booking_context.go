@@ -37,17 +37,17 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 		timestamp := r.Header.Get("X-Emotion-Time")
 		seconds, err := strconv.ParseInt(timestamp, 10, 64)
 		if err != nil || token == "" || time.Since(time.Unix(seconds, 0)).Abs() > time.Minute {
-			http.Error(w, "Unauthorized", 401)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 		raw, err := io.ReadAll(io.LimitReader(r.Body, 4097))
 		if err != nil || len(raw) > 4096 {
-			http.Error(w, "Bad request", 400)
+			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
 		expected := contextSignature(token, timestamp, raw)
 		if !hmac.Equal([]byte(r.Header.Get("X-Emotion-Signature")), []byte(expected)) {
-			http.Error(w, "Unauthorized", 401)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 		var body struct {
@@ -62,7 +62,7 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 		decoder := json.NewDecoder(strings.NewReader(string(raw)))
 		decoder.DisallowUnknownFields()
 		if decoder.Decode(&body) != nil || decoder.Decode(new(any)) != io.EOF {
-			http.Error(w, "Bad request", 400)
+			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
 		if body.Action == "certificate-types" {
@@ -70,12 +70,12 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 				ListCertificateTypes(context.Context) ([]benefit.CertificateType, error)
 			})
 			if !ok {
-				http.Error(w, "Unavailable", 503)
+				http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			values, readErr := reader.ListCertificateTypes(r.Context())
 			if readErr != nil {
-				http.Error(w, "Unavailable", 503)
+				http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			lang := body.Locale
@@ -83,26 +83,26 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 				lang = "ru"
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{"locale": lang, "certificates": values})
+			_ = json.NewEncoder(w).Encode(map[string]any{"locale": lang, "certificates": values})
 			return
 		}
 		phone, err := customer.NormalizePhone(body.Phone)
 		if err != nil {
-			http.Error(w, "Bad request", 400)
+			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
 		if body.Action != "context" && body.Action != "prepare" && body.Action != "confirmed" && body.Action != "record-context" && body.Action != "review-visits" && body.Action != "review-check" && body.Action != "client-certificates" {
-			http.Error(w, "Bad request", 400)
+			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
 		lang, err := service.ResolveLanguage(r.Context(), phone, body.Locale, body.Explicit)
 		if err != nil {
-			http.Error(w, "Unavailable", 503)
+			http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		if body.Action == "prepare" {
 			if !body.Consent {
-				http.Error(w, "Consent required", 400)
+				http.Error(w, "Consent required", http.StatusBadRequest)
 				return
 			}
 			key := notifications.Key("web_phone", phone)
@@ -118,32 +118,32 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 				ListPhoneCertificates(context.Context, string) ([]benefit.Certificate, error)
 			})
 			if !ok {
-				http.Error(w, "Unavailable", 503)
+				http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			values, readErr := reader.ListPhoneCertificates(r.Context(), phone)
 			if readErr != nil {
-				http.Error(w, "Unavailable", 503)
+				http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			output["certificates"] = values
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(output)
+			_ = json.NewEncoder(w).Encode(output)
 			return
 		}
 		if body.Action == "review-visits" || body.Action == "review-check" {
 			if body.Action == "review-check" {
 				if value, parseErr := strconv.ParseUint(body.RecordID, 10, 64); parseErr != nil || value == 0 {
-					http.Error(w, "Bad request", 400)
+					http.Error(w, "Bad request", http.StatusBadRequest)
 					return
 				}
 				snap, readErr := service.Reader.ReadNativeBooking(r.Context(), body.RecordID)
 				if readErr != nil {
-					http.Error(w, "Unavailable", 503)
+					http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 					return
 				}
 				if snap.Phone != phone || !reviewEligible(snap.Booking, time.Now()) {
-					http.Error(w, "Not found", 404)
+					http.Error(w, "Not found", http.StatusNotFound)
 					return
 				}
 				output["visit"] = reviewVisit(snap.Booking)
@@ -152,12 +152,12 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 					ListPhoneBookings(context.Context, string, time.Time) ([]booking.Booking, error)
 				})
 				if !ok {
-					http.Error(w, "Unavailable", 503)
+					http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 					return
 				}
 				bookings, listErr := reader.ListPhoneBookings(r.Context(), phone, time.Now().Add(-90*24*time.Hour))
 				if listErr != nil {
-					http.Error(w, "Unavailable", 503)
+					http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 					return
 				}
 				visits := []map[string]any{}
@@ -169,17 +169,17 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 				output["visits"] = visits
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(output)
+			_ = json.NewEncoder(w).Encode(output)
 			return
 		}
 		if body.Action == "confirmed" || body.Action == "record-context" {
 			if _, parseErr := strconv.ParseUint(body.RecordID, 10, 64); parseErr != nil {
-				http.Error(w, "Bad request", 400)
+				http.Error(w, "Bad request", http.StatusBadRequest)
 				return
 			}
 			snap, readErr := service.Reader.ReadNativeBooking(r.Context(), body.RecordID)
 			if readErr != nil {
-				http.Error(w, "Unavailable", 503)
+				http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			owned := strings.HasPrefix(snap.APIID, "emotion-web-v2-") || (body.Action == "record-context" && strings.HasPrefix(snap.APIID, "omnichannel-web-"))
@@ -191,7 +191,7 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 			if body.Action == "record-context" && !owned {
 				row, recordErr := service.Repo.GetNotification(r.Context(), notifications.Key("record", body.RecordID))
 				if recordErr != nil {
-					http.Error(w, "Unavailable", 503)
+					http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 					return
 				}
 				owned = row.ManagementToken != "" && row.ManagementPhone == phone && row.CalendarPhone == phone
@@ -199,16 +199,16 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 			eligible := snap.Phone == phone && owned && snap.Booking.Status == booking.StatusConfirmed && snap.Booking.StartsAt.After(time.Now())
 			if body.Action == "record-context" {
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]any{"locale": lang, "eligible": eligible})
+				_ = json.NewEncoder(w).Encode(map[string]any{"locale": lang, "eligible": eligible})
 				return
 			}
 			if !eligible {
-				http.Error(w, "Unavailable", 503)
+				http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			b, calendarErr := ensureNativeCalendar(r.Context(), service, body.RecordID, snap)
 			if calendarErr != nil {
-				http.Error(w, "Unavailable", 503)
+				http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			if body.ManagementProof != "" {
@@ -216,12 +216,12 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 					ReadBooking(context.Context, booking.Booking) (booking.Booking, error)
 				})
 				if !ok || len(body.ManagementProof) > 256 {
-					http.Error(w, "Unavailable", 503)
+					http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 					return
 				}
 				b.ManagementToken = body.ManagementProof
 				if _, proofErr := reader.ReadBooking(r.Context(), b); proofErr != nil {
-					http.Error(w, "Unavailable", 503)
+					http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 					return
 				}
 				key := notifications.Key("record", body.RecordID)
@@ -232,7 +232,7 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 					rows[key].ManagementToken, rows[key].ManagementPhone = body.ManagementProof, phone
 					return nil
 				}); proofErr != nil {
-					http.Error(w, "Unavailable", 503)
+					http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 					return
 				}
 			}
@@ -241,11 +241,11 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 			err = service.Ingest(r.Context(), notifications.Event{ID: eventID, RecordID: body.RecordID, Status: "create"})
 		}
 		if err != nil {
-			http.Error(w, "Unavailable", 503)
+			http.Error(w, "Unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(output)
+		_ = json.NewEncoder(w).Encode(output)
 	})
 }
 

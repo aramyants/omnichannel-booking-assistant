@@ -46,7 +46,7 @@ func TestCertificateBridgeRequiresFreshSignatureAndProvenPhone(t *testing.T) {
 	} {
 		raw := []byte(tc.body)
 		stamp := strconv.FormatInt(time.Now().Unix(), 10)
-		req := httptest.NewRequest(http.MethodPost, "/internal/booking-context", bytes.NewReader(raw))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/internal/booking-context", bytes.NewReader(raw))
 		req.Header.Set("X-Emotion-Time", stamp)
 		if tc.signed {
 			req.Header.Set("X-Emotion-Signature", contextSignature("test-key", stamp, raw))

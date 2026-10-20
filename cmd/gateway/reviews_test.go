@@ -20,7 +20,7 @@ func TestReviewCheckNeverAcceptsAnotherVerifiedPhone(t *testing.T) {
 		s := &notifications.Service{Repo: memory.New(), Reader: contextRecordReader{snapshot: snap}}
 		raw := []byte(`{"action":"review-check","phone":"` + phone + `","recordId":"123"}`)
 		stamp := strconv.FormatInt(time.Now().Unix(), 10)
-		req := httptest.NewRequest(http.MethodPost, "/internal/booking-context", bytes.NewReader(raw))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/internal/booking-context", bytes.NewReader(raw))
 		req.Header.Set("X-Emotion-Time", stamp)
 		req.Header.Set("X-Emotion-Signature", contextSignature("test-key", stamp, raw))
 		rec := httptest.NewRecorder()

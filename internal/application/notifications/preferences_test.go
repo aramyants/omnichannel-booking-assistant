@@ -68,8 +68,12 @@ func TestAdminNoticeCutoverWithdrawalAndRecipientRotation(t *testing.T) {
 				r.snapshot.Phone = "+37499123456"
 				r.snapshot.ChangedAt = s.now().Add(time.Second)
 				e := Event{ID: uuid.NewString(), RecordID: "42", Status: "update"}
-				s.Ingest(ctx, e)
-				s.Deliver(ctx, e.ID)
+				if err := s.Ingest(ctx, e); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.Deliver(ctx, e.ID); err != nil {
+					t.Fatal(err)
+				}
 				if repo.rows[Key("record", "42")].CalendarID == before {
 					t.Fatal("recipient change retained calendar access")
 				}
