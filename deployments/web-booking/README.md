@@ -366,6 +366,10 @@ fallback. The public web response has no account-access-role field. Known job
 titles can be translated for display; custom studio-authored titles are retained.
 The bot uses the same native position priority. UI headings such as “Specialist”
 describe a selection step, not the staff member's actual job title.
+Four Hands no longer triggers the bot's former hardcoded coordination handoff.
+It uses native service/staff availability and the ordinary explicit-confirmation
+path. Extra time cannot be booked as a standalone treatment in chat; the bot links
+to the owned combined booking form instead of substituting a support handoff.
 
 ### Native automatic specialist assignment
 

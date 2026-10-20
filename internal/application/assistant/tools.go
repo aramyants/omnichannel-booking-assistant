@@ -808,8 +808,8 @@ func (t *toolset) prepareBooking(ctx context.Context, s *session, call ai.ToolCa
 	if err != nil {
 		return "", err
 	}
-	if requiresCoordination(service) {
-		return "", errors.New("this treatment requires a colleague: four-hands needs two simultaneous therapists; extra time cannot be booked alone. Offer request_handoff. Do not substitute a standard service")
+	if isTimeAddition(service) {
+		return "", errors.New("extra time cannot be booked alone. Direct the client to the studio booking form to select a main treatment and extra time together. Do not substitute another service or claim a booking exists")
 	}
 	staff, err := t.findStaff(ctx, args.StaffID)
 	if err != nil {
@@ -917,9 +917,9 @@ func (t *toolset) confirmBooking(ctx context.Context, s *session) (string, error
 		if err != nil {
 			return "", err
 		}
-		if requiresCoordination(service) {
+		if isTimeAddition(service) {
 			s.conv.Draft = nil
-			return "", errors.New("this treatment requires staff coordination; offer request_handoff. Nothing has been booked")
+			return "", errors.New("extra time cannot be booked alone. Direct the client to the studio booking form to select the full combined appointment. Nothing has been booked")
 		}
 	}
 

@@ -22,23 +22,23 @@ func cataloguePageSizeFor(provider messaging.Provider) int {
 }
 
 type navigationWords struct {
-	back, categories, next, previous, book, askDate, chooseStaff, noDates, coordinated string
+	back, categories, next, previous, book, askDate, chooseStaff, noDates string
 }
 
 func navigationSpeak(lang language) navigationWords {
 	switch lang {
 	case languageRussian:
-		return navigationWords{back: "← Назад", categories: "☰ Категории", next: "Далее →", previous: "← Ранее", book: "Выбрать услугу", askDate: "Выберите удобную дату.", chooseStaff: "Свободное время зависит от специалиста. Чьё расписание проверить?", noDates: "У этого специалиста сейчас нет доступных дат. Выберите другого специалиста.", coordinated: "Для этой услуги сотрудник согласует основную процедуру или одновременную работу двух специалистов. Запись пока не создана."}
+		return navigationWords{back: "← Назад", categories: "☰ Категории", next: "Далее →", previous: "← Ранее", book: "Выбрать услугу", askDate: "Выберите удобную дату.", chooseStaff: "Свободное время зависит от специалиста. Чьё расписание проверить?", noDates: "У этого специалиста сейчас нет доступных дат. Выберите другого специалиста."}
 	case languageArmenian:
-		return navigationWords{back: "← Հետ", categories: "☰ Բաժիններ", next: "Հաջորդը →", previous: "← Նախորդը", book: "Ընտրել ծառայությունը", askDate: "Ընտրեք ձեզ հարմար օրը։", chooseStaff: "Ազատ ժամերը կախված են մասնագետից։ Ո՞ր մասնագետի գրաֆիկը ստուգենք։", noDates: "Այս մասնագետի մոտ այժմ ազատ օրեր չկան։ Ընտրեք մեկ այլ մասնագետի։", coordinated: "Այս ծառայության համար աշխատակիցը կհամաձայնեցնի հիմնական սեանսը կամ երկու մասնագետի համատեղ աշխատանքը։ Ամրագրում դեռ չկա։"}
+		return navigationWords{back: "← Հետ", categories: "☰ Բաժիններ", next: "Հաջորդը →", previous: "← Նախորդը", book: "Ընտրել ծառայությունը", askDate: "Ընտրեք ձեզ հարմար օրը։", chooseStaff: "Ազատ ժամերը կախված են մասնագետից։ Ո՞ր մասնագետի գրաֆիկը ստուգենք։", noDates: "Այս մասնագետի մոտ այժմ ազատ օրեր չկան։ Ընտրեք մեկ այլ մասնագետի։"}
 	default:
-		return navigationWords{back: "← Back", categories: "☰ Categories", next: "Next →", previous: "← Previous", book: "Choose treatment", askDate: "Choose a date that suits you.", chooseStaff: "Availability depends on the specialist. Whose schedule should we check?", noDates: "This specialist has no open dates right now. Choose another specialist.", coordinated: "A team member needs to coordinate the main session or two therapists working together for this treatment. Nothing has been booked yet."}
+		return navigationWords{back: "← Back", categories: "☰ Categories", next: "Next →", previous: "← Previous", book: "Choose treatment", askDate: "Choose a date that suits you.", chooseStaff: "Availability depends on the specialist. Whose schedule should we check?", noDates: "This specialist has no open dates right now. Choose another specialist."}
 	}
 }
 
-func requiresCoordination(service booking.Service) bool {
+func isTimeAddition(service booking.Service) bool {
 	category := strings.ToLower(strings.TrimSpace(service.Category))
-	return category == "add more time" || category == "motion four hands"
+	return category == "add more time"
 }
 
 func (s *Service) navigateCatalogue(ctx context.Context, sess *session, input string, selected bool) (string, bool) {
@@ -150,8 +150,9 @@ func (s *Service) navigateCatalogue(ctx context.Context, sess *session, input st
 				continue
 			}
 			if input == n.book {
-				if requiresCoordination(service) {
-					return s.handOver(ctx, sess)
+				if isTimeAddition(service) {
+					sess.finalLinks = s.publicLinks(sess.language)
+					return navigationMenu(sess, timeAdditionInstructions(sess.language), []string{n.back, n.categories}), true
 				}
 				return s.catalogueStaffMenu(ctx, sess, service, n), true
 			}
@@ -184,9 +185,10 @@ func (s *Service) navigateCatalogue(ctx context.Context, sess *session, input st
 				heading += "\n\n" + description
 			}
 			options := []string{n.book, n.back, n.categories}
-			if requiresCoordination(service) {
-				heading += "\n\n" + n.coordinated
-				options[0] = speak(sess.language).talkToAPerson
+			if isTimeAddition(service) {
+				heading += "\n\n" + timeAdditionInstructions(sess.language)
+				_, options[0], _ = publicLinkLabels(sess.language)
+				sess.finalLinks = s.publicLinks(sess.language)
 			}
 			return navigationMenu(sess, heading, options), true
 		}
@@ -233,6 +235,17 @@ func (s *Service) navigateCatalogue(ctx context.Context, sess *session, input st
 	text.WriteString("\n" + catalogueSpeak(sess.language).chooseService)
 	sess.present(options...)
 	return text.String(), true
+}
+
+func timeAdditionInstructions(lang language) string {
+	switch lang {
+	case languageRussian:
+		return "Дополнительное время добавляется к основной процедуре. Выберите массаж и дополнительное время в форме записи: она проверит общее время и стоимость по Altegio."
+	case languageArmenian:
+		return "Հավելյալ ժամանակը կցվում է հիմնական սեանսին։ Ամրագրման ձևում ընտրեք մերսումը և հավելյալ ժամանակը․ ընդհանուր տևողությունն ու արժեքը կստուգվեն Altegio-ում։"
+	default:
+		return "Extra time is added to a main treatment. Choose your massage and extra time in the booking form; it checks the complete duration and price against Altegio."
+	}
 }
 
 // catalogueStaffChoice advances a button-driven booking from specialist to

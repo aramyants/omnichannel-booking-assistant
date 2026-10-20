@@ -25,16 +25,16 @@ func TestNavigationAbandonsOnlyUnconfirmedMutations(t *testing.T) {
 	}
 }
 
-func TestCoordinatedTreatmentCannotBeBookedThroughTools(t *testing.T) {
+func TestExtraTimeCannotBeBookedAloneThroughTools(t *testing.T) {
 	calendar := defaultScheduling()
-	calendar.services[0].Category = "Motion Four Hands"
+	calendar.services[0].Category = "Add More Time"
 	model := &scriptedAI{responses: []ai.Response{prepareCall("prepare"), textResponse("A colleague will help coordinate this treatment.")}}
 	svc, store := newAIService(t, model, calendar, &fakeSender{})
 	if err := svc.Handle(t.Context(), incoming("coordination")); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(resultOf(t, model, 1), "two simultaneous therapists") {
-		t.Fatal("tool did not explain coordination requirement")
+	if !strings.Contains(resultOf(t, model, 1), "booking form") {
+		t.Fatal("tool did not explain combined self-service booking")
 	}
 	if openConversation(t, store).Draft != nil || len(calendar.created) != 0 || len(calendar.checked) != 0 {
 		t.Fatal("unsafe booking was prepared")
@@ -219,7 +219,7 @@ func TestMetaStaleChoiceCannotNavigateCurrentPrompt(t *testing.T) {
 	_ = store
 }
 
-func TestCoordinatedTreatmentsNeverHaveBookButton(t *testing.T) {
+func TestNativeFourHandsRemainsBookableAndExtrasLinkToCombinedBooking(t *testing.T) {
 	for _, category := range []string{"Motion Four Hands", "Add More Time"} {
 		calendar := categoryCalendar()
 		calendar.services = []booking.Service{{ID: "special", Name: "Special treatment", Category: category}}
@@ -231,8 +231,15 @@ func TestCoordinatedTreatmentsNeverHaveBookButton(t *testing.T) {
 			}
 		}
 		choices := labelsOf(sender.sent[2].Choices)
-		if slices.Contains(choices, navigationSpeak(languageArmenian).book) || !slices.Contains(choices, speak(languageArmenian).talkToAPerson) {
-			t.Fatalf("unsafe choices %v", choices)
+		if slices.Contains(choices, speak(languageArmenian).talkToAPerson) {
+			t.Fatalf("native booking was replaced by a support handoff: %v", choices)
+		}
+		if category == "Motion Four Hands" && !slices.Contains(choices, navigationSpeak(languageArmenian).book) {
+			t.Fatalf("native Four Hands booking button missing: %v", choices)
+		}
+		_, online, _ := publicLinkLabels(languageArmenian)
+		if category == "Add More Time" && (!slices.Contains(choices, online) || slices.Contains(choices, navigationSpeak(languageArmenian).book)) {
+			t.Fatalf("extra time must link to combined booking: %v", choices)
 		}
 	}
 }
