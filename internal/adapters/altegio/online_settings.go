@@ -12,7 +12,7 @@ import (
 func (c *Client) AnyStaffEnabled(ctx context.Context) (bool, error) {
 	value, err := call[struct {
 		AnyMaster *bool `json:"any_master"`
-	}](ctx, c, request{method: http.MethodGet, path: "/company/" + c.companyID + "/settings/online", repeatable: true})
+	}](ctx, c, request{method: http.MethodGet, path: "/locations/" + c.companyID + "/settings/online", repeatable: true})
 	if err != nil {
 		return false, err
 	}

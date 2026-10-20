@@ -69,7 +69,7 @@ export class Altegio {
  constructor(env: Env, runtime: Runtime) { this.env=env; this.runtime=runtime; }
  async anyStaffEnabled():Promise<boolean> {
   if(this.env.ECOSYSTEM_GATEWAY_ORIGIN)return (await ecosystemContext(this.env,this.runtime,{action:'booking-settings'})).anyStaff===true;
-  const settings=await this.call('/company/'+this.env.ALTEGIO_COMPANY_ID+'/settings/online','GET',undefined,false,true) as Wire;
+  const settings=await this.call('/locations/'+this.env.ALTEGIO_COMPANY_ID+'/settings/online','GET',undefined,false,true) as Wire;
   if(typeof settings?.any_master!=='boolean')throw new Failure('booking_unavailable',503);
   return settings.any_master;
  }
