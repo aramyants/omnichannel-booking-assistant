@@ -162,8 +162,8 @@ Disable the transition flag after public DNS is verified.
 
 ## Calendar integrity and notifications
 
-Single-service bookings only. Services in `Add More Time` / `Motion Four Hands`
-and their known IDs are hidden and rejected. Staff qualification and service
+Treatments, including Four Hands, use their native service IDs. Optional paid
+extra time is added to the same appointment. Staff qualification and service
 duration/price use the filtered live catalog. The exact offered slot is checked
 again before creation, followed immediately by `book_check`. Availability is a
 snapshot, never a reservation. Changed quote/duration/name requires a new summary.
@@ -292,13 +292,22 @@ References: [D1 prepared/batch transactions](https://developers.cloudflare.com/d
 # Catalog, extra time and certificates — 20 October 2026
 
 The owned catalog now returns published service images, live prices and distinct
-`treatment`, `extra` and `coordinated` kinds. Extra time is never a standalone
+`treatment` and `extra` kinds. Extra time is never a standalone
 appointment. An optional `extra_id` joins the primary service in staff/date/time
 queries; `extraId` joins the draft and one native appointment's `services` array.
 Both specialist eligibility and the complete duration/quote are checked again
 before creation. Slots too short for the combined treatment are hidden. Existing
 single-service drafts retain their original representation. Reminder validation
 compares the complete native service set.
+
+Four Hands is not manually restricted. The current native widget treats Relax
+and Sport as selectable services with a specialist and calendar. Their unfiltered
+public catalog durations are null; the specialist-filtered catalog supplies 60
+minutes for both. The published Sport name is used instead of the older private
+title that says 80 minutes. `/dates` returns the specialist-specific selection
+quote so the browser updates duration and price before phone verification. Draft
+and confirmation re-read those values and call native `book_check`. No second
+appointment, invented resource or separate therapist hold is added by our app.
 
 `GET /certificate-types` exposes only sanitized catalog fields from the configured
 location's canonical Altegio certificate-type endpoint. Archived types are hidden.

@@ -301,6 +301,29 @@ test('public catalog sanitizes data, separates add-ons and removes unavailable s
  assert.equal(result.value.services[0].durationMinutes,80);
 });
 
+test('Four Hands follows native staff-specific duration and prices without a manual-only restriction',async()=>{
+ const f=fixture(),provider=f.runtime.fetch;let duration=3600,price=39000;f.slotSeconds=6900;
+ f.runtime.fetch=async(input,init)=>{
+  const response=await provider(input,init);
+  if(!String(input).includes('/book_services/'))return response;
+  const payload=await response.json(),specific=new URL(String(input)).searchParams.has('staff_id');
+  payload.data.category.push({id:13827298,title:'Motion Four Hands'});
+  payload.data.services.push({id:13827172,title:'Relax',category_id:13827298,active:1,price_min:specific?price:39000,price_max:specific?price:39000,seance_length:specific?duration:null});
+  return Response.json(payload);
+ };
+ const service=(await f.request('/services')).value.services.find((s:{id:string})=>s.id==='13827172');
+ assert.equal(service.kind,'treatment');assert.equal(service.name,'Motion Four Hands · Relax');assert.equal(service.durationMinutes,0,'do not invent a duration from a category or old marketing title');
+ assert.equal((await f.request('/staff?service_id=13827172')).value.staff[0].id,'99');
+ const dates=await f.request('/dates?service_id=13827172&staff_id=99');assert.equal(dates.response.status,200);assert.equal(dates.value.selection.durationMinutes,60);assert.equal(dates.value.selection.priceMin,39000);
+ duration=5400;price=41000;
+ const changed=await f.request('/dates?service_id=13827172&staff_id=99');assert.equal(changed.value.selection.durationMinutes,90);assert.equal(changed.value.selection.priceMin,41000);
+ await f.verified();
+ const draft=await f.request('/drafts',{serviceId:'13827172',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Test Guest',consent:true});
+ assert.equal(draft.response.status,200);assert.equal(draft.value.draft.durationMinutes,90);assert.equal(draft.value.draft.priceMin,41000);
+ assert.equal((await f.request('/appointments',{draftId:draft.value.draft.id})).value.status,'confirmed');
+ assert.deepEqual((f.createPayload?.appointments as {services:number[]}[])[0].services,[13827172]);assert.equal(f.counts.createCalls,1);
+});
+
 test('extra time uses one combined appointment and validates total duration, price and qualified staff',async()=>{
  const f=fixture();f.env.SMS_REMINDERS_ENABLED='true';await f.verified();
  const base={serviceId:'13827004',extraId:'13827268',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Test Guest',consent:true};

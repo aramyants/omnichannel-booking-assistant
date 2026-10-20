@@ -17,7 +17,7 @@ func TestCertificatesUseScopedPrivateReadsAndNormalizeAmounts(t *testing.T) {
 		case "/locations/" + testCompanyID + "/loyalty/certificate_types/search":
 			_, _ = w.Write([]byte(`{"success":true,"data":[{"id":5,"title":"Gift","balance":"50000.00","is_multi":true,"is_archived":false,"expiration_type_id":2,"expiration_timeout":6,"expiration_timeout_unit_id":3,"online_sale_is_enabled":false},{"id":6,"title":"Archived","balance":1,"is_archived":true}]}`))
 		case "/loyalty/certificates":
-			if r.URL.Query().Get("phone") != "37491123456" || r.URL.Query().Get("location_id") != testCompanyID {
+			if r.URL.Query().Get("phone") != "37491123456" || r.URL.Query().Get("salon_id") != testCompanyID {
 				t.Error("unscoped customer lookup")
 			}
 			_, _ = w.Write([]byte(`{"success":true,"data":[{"id":7,"number":"PRIVATE-1234","balance":50000,"expiration_date":"2027-10-21","type":{"title":"Gift"},"status":{"title":"Active"}}]}`))

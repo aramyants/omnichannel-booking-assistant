@@ -31,9 +31,6 @@ export function servicePhoto(raw:unknown):string|undefined {
  if(typeof raw!=='string'||raw.length>2048)return;
  try{const url=new URL(raw);if(url.protocol==='https:'&&url.hostname==='assets.alteg.io'&&!url.username&&!url.password&&url.pathname.startsWith('/main_service_image/'))return url.href;}catch{}
 }
-export function requiresCoordination(category: string, id: string): boolean {
- return ['add more time','motion four hands'].includes(category.trim().toLowerCase()) || ['13827172','13827180','13827268','13827269'].includes(id);
-}
 function array(value: unknown): Wire[] {
  if (!Array.isArray(value) || value.length > 500) throw new Failure('booking_unavailable', 503, 'The booking calendar is temporarily unavailable.');
  return value.filter((x): x is Wire => x !== null && typeof x === 'object' && !Array.isArray(x));
@@ -103,10 +100,11 @@ export class Altegio {
    const id=identifier(x.id), category=categories.get(String(x.category_id)) || '';
    const extra=category.trim().toLowerCase()==='add more time'||['13827268','13827269'].includes(id);
    const copy=titles[id];
-   const name=copy && copy[0].toLowerCase()===category.toLowerCase() ? copy[1] : safeText(x.title,150);
+   const nativeName=safeText(x.title,150);
+   const name=copy && copy[0].toLowerCase()===category.toLowerCase() ? copy[1] : /four hands/i.test(category) ? category+' · '+nativeName : nativeName;
    if (!name || x.price_min===null || typeof x.price_min!=='number' || !Number.isFinite(x.price_min) || x.price_min<0) return [];
    const max=x.price_max??x.price_min;if(typeof max!=='number'||!Number.isFinite(max)||max<x.price_min)return [];
-   return [{id,name,description:safeText(x.comment || x.description),durationMinutes:treatmentMinutes(x.seance_length,safeText(x.title,150),copy&&copy[0].toLowerCase()===category.toLowerCase()?copy[1]:undefined),priceMin:x.price_min,priceMax:max,category,kind:extra?'extra':requiresCoordination(category,id)?'coordinated':'treatment',...(servicePhoto(x.image)?{imageUrl:servicePhoto(x.image)}:{}),...(number(x.discount)>0?{discountAvailable:true}:{})}];
+   return [{id,name,description:safeText(x.comment || x.description),durationMinutes:treatmentMinutes(x.seance_length,nativeName,copy&&copy[0].toLowerCase()===category.toLowerCase()?copy[1]:undefined),priceMin:x.price_min,priceMax:max,category,kind:extra?'extra':'treatment',...(servicePhoto(x.image)?{imageUrl:servicePhoto(x.image)}:{}),...(number(x.discount)>0?{discountAvailable:true}:{})}];
   });
  }
  async services(staffId?:string):Promise<Service[]> {return (await this.catalog(staffId)).filter(s=>s.kind==='treatment');}

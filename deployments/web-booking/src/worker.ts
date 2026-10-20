@@ -168,12 +168,12 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
   if(path==='/certificate-types'&&request.method==='GET')return json(await certificateTypes(client));
   if(path==='/reviews'&&request.method==='GET')return json(await publicReviews(env,url.searchParams.get('staff_id')));
   if(request.method==='GET'&&['/services','/staff','/dates','/slots'].includes(path)){
-   if(path==='/services'){const catalog=await client.catalog();return json({services:catalog.filter(s=>s.kind!=='extra'),extras:catalog.filter(s=>s.kind==='extra'),constraints:'Treatments with two therapists are arranged directly with our team.'});}
+   if(path==='/services'){const catalog=await client.catalog();return json({services:catalog.filter(s=>s.kind!=='extra'),extras:catalog.filter(s=>s.kind==='extra')});}
    const serviceId=identifier(url.searchParams.get('service_id'));
    const extraId=url.searchParams.has('extra_id')?identifier(url.searchParams.get('extra_id')):undefined;
    if(path==='/staff'){await client.selection(serviceId,extraId);return json({staff:await client.staff(serviceId,extraId)});}
    const staffId=identifier(url.searchParams.get('staff_id')),pair=await client.validatePair(serviceId,staffId,extraId);
-   if(path==='/dates')return json({dates:await client.dates(serviceId,staffId,extraId)});
+   if(path==='/dates')return json({dates:await client.dates(serviceId,staffId,extraId),selection:{serviceName:pair.items.map(item=>item.name).join(' + '),durationMinutes:pair.items.reduce((sum,item)=>sum+item.durationMinutes,0),priceMin:pair.items.reduce((sum,item)=>sum+item.priceMin,0),priceMax:pair.items.reduce((sum,item)=>sum+item.priceMax,0)}});
    const date=dateValue(url.searchParams.get('date'));
    if(date<localDate(runtime.now())||new Date(date+'T00:00:00+04:00').getTime()>runtime.now()+183*86400000)throw new Failure('invalid_date');
    const minimum=pair.items.reduce((sum,item)=>sum+item.durationMinutes,0);
