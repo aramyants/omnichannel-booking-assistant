@@ -30,11 +30,14 @@ export interface Summary {
  reservedMinutes: number;
  priceMin: number; priceMax: number; currency: string; consent: true;
  locale?:'ru'|'en'|'hy'; email?:string; comment?:string;
+ extraId?:string; serviceIds?:string[];
+ certificate?:{id:string;title:string;number:string};
 }
 export interface Appointment {
  id: string; serviceName: string; staffName: string; datetime: string; durationMinutes: number; price: string;
  priceMin: number; priceMax: number;
  calendarUrl?:string;
+  certificate?:{id:string;title:string};
 }
 export interface Draft {
  id: string; session_id: string; phone: string; summary: string;

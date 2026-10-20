@@ -7,6 +7,7 @@ import { Store } from './store.ts';
 import { runNotifications } from './notifications.ts';
 import {ecosystemContext,otpMessage} from './ecosystem.ts';
 import {publicReviews,reviewVisits,submitReview} from './reviews.ts';
+import {certificateTypes,clientCertificates,selectedCertificate,publicCertificate} from './benefits.ts';
 
 const prefix='/api/booking';
 const responseHeaders={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY'};
@@ -94,7 +95,8 @@ async function book(store:Store,env:Env,runtime:Runtime,session:Session,request:
  }
  const client=new Altegio(env,runtime),summary=JSON.parse(draft.summary) as Summary;
  try {
-  const live=await client.summary(summary.serviceId,summary.staffId,localDatetime(summary.datetime,runtime.now()),summary.name,id);
+  const live=await client.summary(summary.serviceId,summary.staffId,localDatetime(summary.datetime,runtime.now()),summary.name,id,summary.extraId);
+  if(summary.certificate){const current=await selectedCertificate(client,session,summary.certificate.id,summary.datetime);if(current.number!==summary.certificate.number)throw new Failure('certificate_unavailable',409);}
   if(live.priceMin!==summary.priceMin||live.priceMax!==summary.priceMax||live.durationMinutes!==summary.durationMinutes||live.reservedMinutes!==summary.reservedMinutes||live.serviceName!==summary.serviceName||live.staffName!==summary.staffName)
    throw new Failure('selection_changed',409,'The appointment details changed. Please review a fresh summary.');
   await client.check(live);
@@ -112,7 +114,7 @@ async function book(store:Store,env:Env,runtime:Runtime,session:Session,request:
   }
   await store.state(id,'sending','uncertain',nowSeconds(runtime));return {status:'uncertain',message:'Please contact the studio before booking again. We are checking the result.'};
  }
- const appointment:Appointment={id:created.id,serviceName:summary.serviceName,staffName:summary.staffName,datetime:summary.datetime,durationMinutes:summary.durationMinutes,price:summary.price,priceMin:summary.priceMin,priceMax:summary.priceMax};
+ const appointment:Appointment={id:created.id,serviceName:summary.serviceName,staffName:summary.staffName,datetime:summary.datetime,durationMinutes:summary.durationMinutes,price:summary.price,priceMin:summary.priceMin,priceMax:summary.priceMax,...(summary.certificate?{certificate:{id:summary.certificate.id,title:summary.certificate.title}}:{})};
  try {await store.confirmed(id,appointment,created.managementHash,nowSeconds(runtime),env.SMS_REMINDERS_ENABLED==='true'?Date.parse(summary.datetime)/1000-7200:undefined);}catch{return {status:'uncertain',message:'Please contact the studio to check your booking before trying again.'};}
  // Booking success survives a notification/configuration failure. No provider retry.
  draft.management_hash=created.managementHash;
@@ -163,18 +165,22 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    return json({csrfToken:await hmac(env.SESSION_SECRET,'csrf:'+raw),phoneVerified:!!session.phone,...(session.phone?{phone:session.phone,preferredLocale:preference?.locale}:{}),...(unresolved?.session_id===session.id?{unresolvedDraftId:unresolved.id}:{})},200,{'Set-Cookie':setCookie(raw)});
   }
   const client=new Altegio(env,runtime);
+  if(path==='/certificate-types'&&request.method==='GET')return json(await certificateTypes(client));
   if(path==='/reviews'&&request.method==='GET')return json(await publicReviews(env,url.searchParams.get('staff_id')));
   if(request.method==='GET'&&['/services','/staff','/dates','/slots'].includes(path)){
-   if(path==='/services')return json({services:await client.services(),constraints:'Extra-time add-ons and treatments with two therapists are arranged directly with our team.'});
+   if(path==='/services'){const catalog=await client.catalog();return json({services:catalog.filter(s=>s.kind!=='extra'),extras:catalog.filter(s=>s.kind==='extra'),constraints:'Treatments with two therapists are arranged directly with our team.'});}
    const serviceId=identifier(url.searchParams.get('service_id'));
-   if(path==='/staff'){await client.validateService(serviceId);return json({staff:await client.staff(serviceId)});}
-   const staffId=identifier(url.searchParams.get('staff_id'));await client.validatePair(serviceId,staffId);
-   if(path==='/dates')return json({dates:await client.dates(serviceId,staffId)});
+   const extraId=url.searchParams.has('extra_id')?identifier(url.searchParams.get('extra_id')):undefined;
+   if(path==='/staff'){await client.selection(serviceId,extraId);return json({staff:await client.staff(serviceId,extraId)});}
+   const staffId=identifier(url.searchParams.get('staff_id')),pair=await client.validatePair(serviceId,staffId,extraId);
+   if(path==='/dates')return json({dates:await client.dates(serviceId,staffId,extraId)});
    const date=dateValue(url.searchParams.get('date'));
    if(date<localDate(runtime.now())||new Date(date+'T00:00:00+04:00').getTime()>runtime.now()+183*86400000)throw new Failure('invalid_date');
-   return json({slots:(await client.slots(serviceId,staffId,date)).map(({datetime,label})=>({datetime,label}))});
+   const minimum=pair.items.reduce((sum,item)=>sum+item.durationMinutes,0);
+   return json({slots:(await client.slots(serviceId,staffId,date,extraId)).filter(slot=>!extraId||slot.durationMinutes>=minimum).map(({datetime,label})=>({datetime,label}))});
   }
   const {session}=await authenticated(request,env,store,runtime,mutation);
+  if(path==='/benefits'&&request.method==='GET'){await store.rate('benefits-read:'+session.id,6,60,now);return json({certificates:(await clientCertificates(client,session)).map(publicCertificate)});}
   if(request.method==='GET'&&path==='/review-visits'){
    await store.rate('reviews-read:'+session.id,6,60,now);return json(await reviewVisits(env,runtime,session));
   }
@@ -215,20 +221,21 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    return json({phoneVerified:true,phone:attempt.otp_phone});
   }
   if(path==='/drafts'){
-   onlyKeys(data,['serviceId','staffId','datetime','name','consent','email','comment']);
+   onlyKeys(data,['serviceId','staffId','datetime','name','consent','email','comment','extraId','certificateId']);
    if(!session.phone)throw new Failure('verification_required',403,'Verify your booking phone first.');
    if(data.consent!==true)throw new Failure('consent_required',400,'Please confirm the booking request.');
    const name=safeText(data.name,120);
    if(!name||name.length<2||typeof data.name!=='string'||data.name.length>120||/[<>\u0000-\u001f]/.test(data.name))throw new Failure('invalid_name',400,'Enter your first and last name.');
    await store.rate('draft-session:'+session.id,10,3600,now);
-   const summary=await client.summary(identifier(data.serviceId),identifier(data.staffId),localDatetime(data.datetime,runtime.now()),name,randomToken(16));
+   const summary=await client.summary(identifier(data.serviceId),identifier(data.staffId),localDatetime(data.datetime,runtime.now()),name,randomToken(16),data.extraId===undefined?undefined:identifier(data.extraId));
+   if(data.certificateId!==undefined)summary.certificate=await selectedCertificate(client,session,identifier(data.certificateId),summary.datetime);
    const email=typeof data.email==='string'?data.email.trim():'';
    const comment=typeof data.comment==='string'?data.comment.trim():'';
    if((data.email!==undefined&&typeof data.email!=='string')||email.length>254||(email&&!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email))||/[\u0000-\u001f\u007f]/.test(email))throw new Failure('invalid_email');
    if((data.comment!==undefined&&typeof data.comment!=='string')||comment.length>1000||/[<>\u0000-\u0008\u000b-\u001f\u007f]/.test(comment))throw new Failure('invalid_comment');
    const preference=await ecosystemContext(env,runtime,{action:'prepare',phone:session.phone,locale:requestLanguage(request),explicit:request.headers.get('X-Booking-Language-Source')==='explicit',consent:true});
    summary.locale=preference.locale;summary.email=email;summary.comment=comment;
-   await store.saveDraft(session,summary,now);const {reservedMinutes:_privateReservation,...publicSummary}=summary;return json({draft:publicSummary,phoneVerified:true});
+   await store.saveDraft(session,summary,now);const {reservedMinutes:_privateReservation,certificate,...publicSummary}=summary;return json({draft:{...publicSummary,...(certificate?{certificate:{id:certificate.id,title:certificate.title}}:{})},phoneVerified:true});
   }
   if(path==='/appointments'){
    onlyKeys(data,['draftId']);return json(await book(store,env,runtime,session,request,validDraftId(data.draftId)));

@@ -5,7 +5,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import worker, { handle } from '../src/worker.ts';
 import { Store } from '../src/store.ts';
 import { normalizePhone, hash, smsCap } from '../src/security.ts';
-import { dateValue, staffPhoto, treatmentMinutes } from '../src/altegio.ts';
+import { dateValue, staffPhoto, servicePhoto, treatmentMinutes } from '../src/altegio.ts';
 import type { Database, D1Statement, Env, Runtime } from '../src/types.ts';
 import { runNotifications } from '../src/notifications.ts';
 import { allowedDestination, destinationCodes } from '../src/sms.ts';
@@ -137,12 +137,16 @@ function fixture(){
  const db=new SQLiteD1();
  const env:Env={DB:db,PUBLIC_ORIGIN:'https://booking.example.com',SESSION_SECRET:'test-only-secret-that-is-over-thirty-two-characters',ALTEGIO_PARTNER_TOKEN:'test-partner',ALTEGIO_USER_TOKEN:'test-private-user',ALTEGIO_COMPANY_ID:'1389810',TURNSTILE_SECRET:'test-turnstile',TURNSTILE_SITE_KEY:'test-sitekey',SMSGATE_CREDENTIALS_JSON:JSON.stringify({username:'test',password:'fake',device_id:'test-device',sim_number:1}),SMS_DAILY_CAP:'10',SMS_MONTHLY_CAP:'100',SMS_ALLOWED_COUNTRY_CODES:'374',BOOKING_ENABLED:'true'};
  let time=Date.parse('2026-10-20T08:00:00+04:00'),csrf='',cookie='',otp='',createCalls=0,checkCalls=0,turnstileHostname='booking.example.com',createMode='ok',createHook:undefined|(()=>Promise<void>);
- let createPayload:Record<string,unknown>|undefined;const smsTexts:string[]=[];let sentSms=0,receiptReads=0,price=18000,slotSeconds=4800,receiptState='Delivered',smsMode='ok',liveDeleted=false,liveStart='2026-10-21T12:00:00+04:00',liveReadFails=false,currentPhone='+37491123456';
+ let createPayload:Record<string,unknown>|undefined;const smsTexts:string[]=[],providerUrls:string[]=[];let sentSms=0,receiptReads=0,price=18000,slotSeconds=4800,receiptState='Delivered',smsMode='ok',liveDeleted=false,liveStart='2026-10-21T12:00:00+04:00',liveReadFails=false,currentPhone='+37491123456';
  const runtime:Runtime={now:()=>time,fetch:async(input:RequestInfo|URL,init?:RequestInit)=>{
   // workerd rejects redirect:'error' before sending; Node's native fetch does not.
   assert.equal(init?.redirect,'manual','all provider fetches must use Workers-supported manual redirects');
   const url=String(input);
-  if(url.startsWith('https://api.alteg.io/')&&!url.includes('/record/'))assert.equal((init!.headers as Record<string,string>).Authorization,'Bearer test-partner','private credentials must not reach public catalog or booking endpoints');
+  if(url.startsWith('https://api.alteg.io/'))providerUrls.push(url);
+  if(url.startsWith('https://api.alteg.io/')&&!url.includes('/record/')&&!url.includes('/loyalty/'))assert.equal((init!.headers as Record<string,string>).Authorization,'Bearer test-partner','private credentials must not reach public catalog or booking endpoints');
+  if(url.includes('/loyalty/'))assert.equal((init!.headers as Record<string,string>).Authorization,'Bearer test-partner, User test-private-user');
+  if(url.includes('/loyalty/certificate_types/search'))return Response.json({success:true,data:[{id:5,title:'Gift',balance:50000,is_multi:true,item_type_id:0,is_archived:false,online_sale_is_enabled:false,internal_note:'must not be public'},{id:6,title:'Archived',balance:1,is_archived:true}]});
+  if(url.includes('/loyalty/certificates?'))return Response.json({success:true,data:[{id:7,number:'PRIVATE-CERT-1234',balance:50000,expiration_date:'2027-10-21',type:{title:'Gift'},status:{title:'Active'}}]});
   if(url.includes('siteverify'))return Response.json({success:true,hostname:turnstileHostname,action:'booking_otp'});
   if(url.includes('sms-gate.app')&&!init?.body){receiptReads++;return Response.json({id:url.split('/').at(-1),state:receiptState});}
   if(url.includes('sms-gate.app')){const data=JSON.parse(init!.body as string);sentSms++;smsTexts.push(data.textMessage.text);otp=data.textMessage.text.match(/\b\d{6}\b/)?.[0]||'';if(smsMode==='timeout')throw new Error('simulated sms timeout');return Response.json({id:data.id,state:'Pending'},{status:202});}
@@ -151,7 +155,7 @@ function fixture(){
   if(url.includes('/book_dates/'))return Response.json({success:true,data:{booking_dates:['2026-10-21']}});
   if(url.includes('/book_times/'))return Response.json({success:true,data:[{datetime:'2026-10-21T12:00:00+04:00',seance_length:slotSeconds}]});
   if(url.includes('/book_check/')){checkCalls++;return Response.json({success:true,data:{}});}
-  if(url.includes('/book_record/')&&(!init?.method||init.method==='GET')){if(liveReadFails)throw new Error('calendar unavailable');return Response.json({success:true,data:{id:6789,datetime:liveStart,length:slotSeconds,deleted:liveDeleted,staff:{id:99,name:'Test Specialist'},services:[{id:13827004,title:'80 min'}]}});}
+  if(url.includes('/book_record/')&&(!init?.method||init.method==='GET')){if(liveReadFails)throw new Error('calendar unavailable');const ids=(createPayload?.appointments as {services:number[]}[]|undefined)?.[0]?.services||[13827004];return Response.json({success:true,data:{id:6789,datetime:liveStart,length:slotSeconds,deleted:liveDeleted,staff:{id:99,name:'Test Specialist'},services:ids.map(id=>({id,title:'Treatment'}))}});}
   if(url.includes('/record/')){assert.equal((init!.headers as Record<string,string>).Authorization,'Bearer test-partner, User test-private-user');return Response.json({success:true,data:{id:6789,company_id:1389810,deleted:liveDeleted,client:{phone:currentPhone}}});}
   if(url.includes('/book_record/')){createPayload=JSON.parse(String(init?.body));createCalls++;if(createHook)await createHook();if(createMode==='timeout')throw new Error('simulated timeout');if(createMode==='500')return new Response('bad',{status:500});return Response.json({success:true,data:[{record_id:6789,record_hash:'private-do-not-leak'}]});}
   throw new Error('unexpected fake endpoint '+url);
@@ -163,7 +167,7 @@ function fixture(){
  async function session(){const result=await request('/session',{});assert.equal(result.response.status,200);csrf=result.value.csrfToken;cookie=result.response.headers.get('set-cookie')!.split(';')[0];return result;}
  async function verified(){await session();assert.equal((await request('/verification/request',{phone:'+37491123456',turnstileToken:'test-token-accepted'})).response.status,200);assert.match(otp,/^\d{6}$/);assert.equal((await request('/verification/confirm',{code:otp})).response.status,200);}
  async function draft(){return request('/drafts',{serviceId:'13827004',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Test Guest',consent:true});}
- return {db,env,runtime,request,session,verified,draft,get createPayload(){return createPayload;},get smsTexts(){return smsTexts;},get counts(){return {createCalls,checkCalls,sentSms,receiptReads};},get otp(){return otp;},get cookie(){return cookie;},get csrf(){return csrf;},advance(seconds:number){time+=seconds*1000;},set hostname(v:string){turnstileHostname=v;},set createMode(v:string){createMode=v;},set price(v:number){price=v;},set slotSeconds(v:number){slotSeconds=v;},set receiptState(v:string){receiptState=v;},set smsMode(v:string){smsMode=v;},set liveDeleted(v:boolean){liveDeleted=v;},set liveStart(v:string){liveStart=v;},set liveReadFails(v:boolean){liveReadFails=v;},set currentPhone(v:string){currentPhone=v;},set createHook(v:(()=>Promise<void>)|undefined){createHook=v;}};
+ return {db,env,runtime,request,session,verified,draft,get providerUrls(){return providerUrls;},get createPayload(){return createPayload;},get smsTexts(){return smsTexts;},get counts(){return {createCalls,checkCalls,sentSms,receiptReads};},get otp(){return otp;},get cookie(){return cookie;},get csrf(){return csrf;},advance(seconds:number){time+=seconds*1000;},set hostname(v:string){turnstileHostname=v;},set createMode(v:string){createMode=v;},set price(v:number){price=v;},set slotSeconds(v:number){slotSeconds=v;},set receiptState(v:string){receiptState=v;},set smsMode(v:string){smsMode=v;},set liveDeleted(v:boolean){liveDeleted=v;},set liveStart(v:string){liveStart=v;},set liveReadFails(v:boolean){liveReadFails=v;},set currentPhone(v:string){currentPhone=v;},set createHook(v:(()=>Promise<void>)|undefined){createHook=v;}};
 }
 test('sessions use secure cookies, exact origin and CSRF; no session ID in response',async()=>{
  const f=fixture(),s=await f.session();
@@ -287,7 +291,7 @@ test('explicit unlimited skips business volume caps while all abuse limits remai
  for(let i=0;i<15;i++)await store.reserveSms({id:'unlimited'+i,sessionId:'distinct'+i,phoneHash:'distinct-phone'+i,ipHash:'distinct-ip'+i,purpose:'otp',now,expiry:now+300,daily:null,monthly:null});
  assert.equal((f.db.db.prepare('SELECT COUNT(*) as count FROM sms_outbox').get() as {count:number}).count,16);
 });
-test('public catalog sanitizes data and removes coordinated add-ons and unavailable staff',async()=>{
+test('public catalog sanitizes data, separates add-ons and removes unavailable staff',async()=>{
  const f=fixture(),result=await f.request('/services');assert.equal(result.value.services.length,1);assert.equal(result.value.services[0].name,'Motion Relax · 80 min');assert.equal(result.value.services[0].description,'Relax');
  const staff=await f.request('/staff?service_id=13827004');assert.equal(staff.value.staff.length,1);assert.equal(staff.value.staff[0].id,'99');
  assert.equal(staff.value.staff[0].avatarUrl,'https://assets.alteg.io/masters/origin/test.png');
@@ -295,6 +299,59 @@ test('public catalog sanitizes data and removes coordinated add-ons and unavaila
  assert.equal(staffPhoto('javascript:alert(1)'),undefined);assert.equal(staffPhoto('https://evil.example/photo.png'),undefined);assert.equal(staffPhoto('https://assets.alteg.io@evil.example/masters/x.png'),undefined);
  assert.throws(()=>dateValue('2026-99-99'));assert.throws(()=>dateValue('2026-02-31'));
  assert.equal(result.value.services[0].durationMinutes,80);
+});
+
+test('extra time uses one combined appointment and validates total duration, price and qualified staff',async()=>{
+ const f=fixture();f.env.SMS_REMINDERS_ENABLED='true';await f.verified();
+ const base={serviceId:'13827004',extraId:'13827268',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Test Guest',consent:true};
+ assert.equal((await f.request('/services')).value.extras[0].durationMinutes,20);
+ assert.equal((await f.request('/drafts',base)).response.status,409,'an 80 minute slot cannot fit a 100 minute treatment');
+ assert.equal((await f.request('/slots?service_id=13827004&staff_id=99&extra_id=13827268&date=2026-10-21')).value.slots.length,0,'short slots must also be hidden before phone confirmation');
+ assert.equal(f.counts.createCalls,0);
+ f.slotSeconds=6900;
+ const draft=await f.request('/drafts',base);assert.equal(draft.response.status,200);assert.equal(draft.value.draft.durationMinutes,100);assert.equal(draft.value.draft.priceMin,23000);assert.equal(draft.value.draft.reservedMinutes,undefined);
+ const slotUrl=f.providerUrls.find(url=>url.includes('/book_times/')&&url.includes('13827268'));assert(slotUrl);assert.deepEqual(new URL(slotUrl).searchParams.getAll('service_ids[]'),['13827004','13827268']);
+ assert.equal((await f.request('/appointments',{draftId:draft.value.draft.id})).value.status,'confirmed');
+ const appointments=f.createPayload?.appointments as {services:number[]}[];assert.equal(appointments.length,1);assert.deepEqual(appointments[0].services,[13827004,13827268]);
+ await f.request('/appointments',{draftId:draft.value.draft.id});assert.equal(f.counts.createCalls,1);
+ f.advance(26*3600);await runNotifications(f.env,f.runtime);assert.equal(f.counts.sentSms,2,'the reminder preserves and validates both native services');
+ const invalid=fixture();await invalid.verified();assert.equal((await invalid.request('/drafts',{...base,extraId:'13827004'})).response.status,409);assert.equal((await invalid.request('/drafts',{...base,serviceId:'13827268',extraId:undefined})).response.status,409);assert.equal(invalid.counts.createCalls,0);
+});
+
+test('certificates are rechecked before creation and expired or exhausted credit cannot be attached',async()=>{
+ const f=fixture();await f.verified();const provider=f.runtime.fetch;let balance=50000,expiry='2027-10-21';
+ f.runtime.fetch=async(input,init)=>{const response=await provider(input,init);if(!String(input).includes('/loyalty/certificates?'))return response;const payload=await response.json();payload.data[0].balance=balance;payload.data[0].expiration_date=expiry;return Response.json(payload);};
+ const base={serviceId:'13827004',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Test Guest',consent:true,certificateId:'7'};
+ expiry='2026-10-20';assert.equal((await f.request('/drafts',base)).response.status,409);
+ expiry='2027-10-21';const draft=await f.request('/drafts',base);assert.equal(draft.response.status,200);
+ balance=0;const result=await f.request('/appointments',{draftId:draft.value.draft.id});assert.equal(result.response.status,409);assert.equal(f.counts.createCalls,0);
+});
+
+test('certificate catalog is sanitized and personal certificates require exact session phone proof',async()=>{
+ const f=fixture(),catalog=await f.request('/certificate-types');assert.equal(catalog.response.status,200);assert.equal(catalog.value.certificates.length,1);assert(!JSON.stringify(catalog.value).includes('internal_note'));assert.equal(catalog.value.certificates[0].onlineSaleEnabled,false);
+ assert.equal((await f.request('/benefits')).response.status,401);await f.session();assert.equal((await f.request('/benefits')).response.status,403);assert(!f.providerUrls.some(url=>url.includes('/loyalty/certificates?')));
+ await f.verified();const benefits=await f.request('/benefits?phone=15551234567');assert.equal(benefits.response.status,200);assert(!JSON.stringify(benefits.value).includes('PRIVATE-CERT'));assert.equal(benefits.value.certificates[0].maskedNumber,'•••• 1234');
+ const lookup=f.providerUrls.find(url=>url.includes('/loyalty/certificates?'));assert(lookup);assert.equal(new URL(lookup).searchParams.get('phone'),'37491123456');
+ const base={serviceId:'13827004',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Test Guest',consent:true};
+ assert.equal((await f.request('/drafts',{...base,certificateId:'8'})).response.status,409);
+ const draft=await f.request('/drafts',{...base,certificateId:'7'});assert.equal(draft.response.status,200);assert(!JSON.stringify(draft.value).includes('PRIVATE-CERT'));assert.equal(draft.value.draft.priceMin,18000,'certificate selection must not claim a debit or discount');
+ const confirmation=await f.request('/appointments',{draftId:draft.value.draft.id});assert.equal(confirmation.value.status,'confirmed');assert(!JSON.stringify(confirmation.value).includes('PRIVATE-CERT'));assert.match(String(f.createPayload?.comment),/PRIVATE-CERT-1234/);assert.equal(f.counts.createCalls,1);
+ assert(!f.providerUrls.some(url=>/transactions|payments|writeoff/.test(url)));
+});
+
+test('service photos only accept the published HTTPS Altegio service image origin',()=>{
+ assert.equal(servicePhoto('https://assets.alteg.io/main_service_image/basic/example.png'),'https://assets.alteg.io/main_service_image/basic/example.png');
+ for(const raw of ['javascript:alert(1)','https://assets.alteg.io.attacker.test/main_service_image/a.png','https://assets.alteg.io@attacker.test/main_service_image/a.png','http://assets.alteg.io/main_service_image/a.png','https://assets.alteg.io/masters/a.png'])assert.equal(servicePhoto(raw),undefined);
+});
+
+test('production benefits use the signed central adapter rather than the legacy private credential',async()=>{
+ const f=fixture();f.env.ECOSYSTEM_GATEWAY_ORIGIN='https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app';const provider=f.runtime.fetch,actions:string[]=[];
+ f.runtime.fetch=async(input,init)=>{if(!String(input).includes('/internal/booking-context'))return provider(input,init);const data=JSON.parse(String(init?.body));actions.push(data.action);
+  if(data.action==='certificate-types'){assert.equal(data.phone,undefined);return Response.json({locale:'ru',certificates:[{id:'5',title:'Gift',value:50000,multipleUse:true,restriction:0,expiryType:0,expiryPeriod:0,expiryUnit:0,onlineSaleEnabled:false}]});}
+  if(data.action==='client-certificates'){assert.equal(data.phone,'+37491123456');return Response.json({locale:'en',certificates:[{id:'7',title:'Gift',balance:50000,number:'PRIVATE-CERT-1234',expiresAt:'2027-10-21',status:'Active'}]});}
+  return Response.json({locale:'en'});
+ };
+ assert.equal((await f.request('/certificate-types')).value.certificates[0].value,50000);await f.verified();const benefits=await f.request('/benefits');assert.equal(benefits.value.certificates[0].title,'Gift');assert(!JSON.stringify(benefits.value).includes('PRIVATE-CERT'));assert.deepEqual(actions,['certificate-types','client-certificates']);assert(!f.providerUrls.some(url=>url.includes('/loyalty/')));
 });
 test('OTP delivery status is private, paced and distinguishes queue acceptance from receipt',async()=>{
  const f=fixture();await f.session();await f.request('/verification/request',{phone:'+37491123456',turnstileToken:'test-token-accepted'});

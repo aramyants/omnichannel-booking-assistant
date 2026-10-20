@@ -289,3 +289,45 @@ is private/no-store at the API boundary, and the PWA does not cache API data.
 
 References: [D1 prepared/batch transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/),
 [Turnstile server verification](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/).
+# Catalog, extra time and certificates — 20 October 2026
+
+The owned catalog now returns published service images, live prices and distinct
+`treatment`, `extra` and `coordinated` kinds. Extra time is never a standalone
+appointment. An optional `extra_id` joins the primary service in staff/date/time
+queries; `extraId` joins the draft and one native appointment's `services` array.
+Both specialist eligibility and the complete duration/quote are checked again
+before creation. Slots too short for the combined treatment are hidden. Existing
+single-service drafts retain their original representation. Reminder validation
+compares the complete native service set.
+
+`GET /certificate-types` exposes only sanitized catalog fields from the configured
+location's canonical Altegio certificate-type endpoint. Archived types are hidden.
+The current location has 16 types, including deposits; online sale is disabled for
+all of them. The UI shows certificate value and validity, with a client-initiated
+request to arrange issuance/payment with the studio. It never interprets a zero
+online sale price as a free certificate.
+
+`GET /benefits` requires successful session phone proof and only queries that
+verified phone. Full certificate codes stay server-side; the client sees masked
+references and its own balance/status. Optional `certificateId` is rechecked when
+preparing and confirming a draft. Expired/exhausted or no-longer-owned certificates
+cannot be attached. The actual reference reaches only the appointment's private
+studio comment as a request to apply it at checkout. It does not debit credit,
+record a payment, apply a discount or promise that service restrictions match.
+
+Production certificate reads use the existing signed ecosystem bridge, backed by
+the central API service's current Altegio credential. `certificate-types` accepts
+no client identity; `client-certificates` requires the proven session phone.
+The legacy direct adapter is only a fallback for standalone installations without
+the ecosystem gateway. Private credentials never reach public catalog,
+availability or creation calls. The bridge remains fresh-body HMAC authenticated.
+All currency values, activation, native availability and eligibility remain
+Altegio-owned. Personal loyalty percentages are not inferred from product titles.
+
+The native widget advertised 20 complimentary head/face minutes on 20 October,
+while service 13914939 (`First visit +20min`) was inactive and the documented
+location `booking_widget_promo` field was null. The localized banner is a reviewed
+copy snapshot of that public offer, not an automatically synchronized rule. The
+UI explicitly says the studio arranges it; it does not reserve or grant free time.
+Do not reactivate it or invent a historical-client eligibility test implicitly.
+Paid +20/+40 services use their current API prices and combined availability.

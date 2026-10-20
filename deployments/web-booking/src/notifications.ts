@@ -43,7 +43,8 @@ async function reminder(env:Env,runtime:Runtime,store:Store,draft:Draft,now:numb
  try{
   credentials(env);allowedDestination(draft.phone,env);
   const client=new Altegio(env,runtime),live=await client.readOwned(appointment.id,draft.management_hash);
-  if(live.deleted||live.datetime!==summary.datetime||live.staffId!==summary.staffId||live.serviceIds.length!==1||live.serviceIds[0]!==summary.serviceId||live.reservedMinutes!==summary.reservedMinutes||(live.phone&&!samePhone(live.phone,draft.phone))){
+  const expected=summary.serviceIds||[summary.serviceId];
+  if(live.deleted||live.datetime!==summary.datetime||live.staffId!==summary.staffId||live.serviceIds.length!==expected.length||!expected.every(id=>live.serviceIds.includes(id))||live.reservedMinutes!==summary.reservedMinutes||(live.phone&&!samePhone(live.phone,draft.phone))){
    await store.reminderState(draft.id,'checking','skipped',now);return;
   }
   // The public capability response can omit its current recipient. Never infer

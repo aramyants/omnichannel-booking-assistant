@@ -2,7 +2,7 @@ import { Failure } from './types.ts';
 import type { Env, Runtime, Summary } from './types.ts';
 import { normalizePhone } from './security.ts';
 
-export interface Service { id: string; name: string; description: string; durationMinutes: number; priceMin: number; priceMax: number; category: string }
+export interface Service { id: string; name: string; description: string; durationMinutes: number; priceMin: number; priceMax: number; category: string; kind:'treatment'|'extra'|'coordinated'; imageUrl?:string; discountAvailable?:boolean }
 export interface Staff { id: string; name: string; specialization: string; avatarUrl?:string; biography?:string }
 export interface Slot { datetime: string; label: string; durationMinutes: number }
 type Wire = Record<string, unknown>;
@@ -26,6 +26,10 @@ export function safeText(raw: unknown, max = 2000): string {
 export function staffPhoto(raw:unknown):string|undefined {
  if(typeof raw!=='string'||raw.length>2048)return;
  try{const url=new URL(raw);if(url.protocol==='https:'&&url.hostname==='assets.alteg.io'&&!url.username&&!url.password&&url.pathname.startsWith('/masters/'))return url.href;}catch{}
+}
+export function servicePhoto(raw:unknown):string|undefined {
+ if(typeof raw!=='string'||raw.length>2048)return;
+ try{const url=new URL(raw);if(url.protocol==='https:'&&url.hostname==='assets.alteg.io'&&!url.username&&!url.password&&url.pathname.startsWith('/main_service_image/'))return url.href;}catch{}
 }
 export function requiresCoordination(category: string, id: string): boolean {
  return ['add more time','motion four hands'].includes(category.trim().toLowerCase()) || ['13827172','13827180','13827268','13827269'].includes(id);
@@ -69,7 +73,8 @@ export class Altegio {
   let response: Response;
   try {
    response = await this.runtime.fetch('https://api.alteg.io/api/v1'+path, {
-    // Private CRM auth is restricted to the explicit current-recipient read.
+    // Private CRM auth is restricted to explicit server-owned business reads:
+    // current recipient and the scoped certificate catalog/verified phone.
     // Catalog, availability, creation and owned-hash reads use partner auth only.
     method, headers:{'Accept':'application/vnd.api.v2+json','User-Agent':'E-Motion-Owned-Booking/1.0','Authorization':'Bearer '+this.env.ALTEGIO_PARTNER_TOKEN+(privateRead?', User '+this.env.ALTEGIO_USER_TOKEN:''), ...(data ? {'Content-Type':'application/json'} : {})},
     body: data ? JSON.stringify(data): undefined, redirect:'manual', signal:AbortSignal.timeout(12000)
@@ -90,21 +95,32 @@ export class Altegio {
   if (envelope.success !== true) throw new Failure(creation ? 'outcome_unknown':'selection_rejected',409);
   return envelope.data;
  }
- async services(staffId?: string): Promise<Service[]> {
+ async catalog(staffId?: string): Promise<Service[]> {
   const data = await this.call('/book_services/'+this.env.ALTEGIO_COMPANY_ID+(staffId?'?staff_id='+identifier(staffId):'')) as Wire;
   if (!data || typeof data !== 'object') throw new Failure('booking_unavailable',503);
   const categories = new Map(array(data.category).map(x=>[String(x.id),safeText(x.title,100)]));
   return array(data.services).filter(x=>Number(x.active)===1).flatMap(x=>{
    const id=identifier(x.id), category=categories.get(String(x.category_id)) || '';
-   if (requiresCoordination(category,id)) return [];
+   const extra=category.trim().toLowerCase()==='add more time'||['13827268','13827269'].includes(id);
    const copy=titles[id];
    const name=copy && copy[0].toLowerCase()===category.toLowerCase() ? copy[1] : safeText(x.title,150);
    if (!name || x.price_min===null || typeof x.price_min!=='number' || !Number.isFinite(x.price_min) || x.price_min<0) return [];
-   return [{id,name,description:safeText(x.comment || x.description),durationMinutes:treatmentMinutes(x.seance_length,safeText(x.title,150),copy&&copy[0].toLowerCase()===category.toLowerCase()?copy[1]:undefined),priceMin:number(x.price_min),priceMax:number(x.price_max ?? x.price_min),category}];
+   const max=x.price_max??x.price_min;if(typeof max!=='number'||!Number.isFinite(max)||max<x.price_min)return [];
+   return [{id,name,description:safeText(x.comment || x.description),durationMinutes:treatmentMinutes(x.seance_length,safeText(x.title,150),copy&&copy[0].toLowerCase()===category.toLowerCase()?copy[1]:undefined),priceMin:x.price_min,priceMax:max,category,kind:extra?'extra':requiresCoordination(category,id)?'coordinated':'treatment',...(servicePhoto(x.image)?{imageUrl:servicePhoto(x.image)}:{}),...(number(x.discount)>0?{discountAvailable:true}:{})}];
   });
  }
- async staff(serviceId: string): Promise<Staff[]> {
-  return array(await this.call('/book_staff/'+this.env.ALTEGIO_COMPANY_ID+'?service_ids%5B%5D='+identifier(serviceId)))
+ async services(staffId?:string):Promise<Service[]> {return (await this.catalog(staffId)).filter(s=>s.kind==='treatment');}
+ async selection(serviceId:string,extraId?:string,staffId?:string):Promise<Service[]> {
+  const catalog=await this.catalog(staffId),base=catalog.find(s=>s.id===identifier(serviceId)&&s.kind==='treatment');
+  if(!base)throw new Failure('service_unavailable',409);
+  if(!extraId)return [base];
+  const extra=catalog.find(s=>s.id===identifier(extraId)&&s.kind==='extra'&&s.durationMinutes>0&&s.durationMinutes<=60);
+  if(!extra||extra.id===base.id)throw new Failure('selection_rejected',409);
+  return [base,extra];
+ }
+ queryServices(serviceId:string,extraId?:string):string {return [serviceId,...(extraId?[extraId]:[])].map(id=>'service_ids%5B%5D='+identifier(id)).join('&');}
+ async staff(serviceId: string,extraId?:string): Promise<Staff[]> {
+  return array(await this.call('/book_staff/'+this.env.ALTEGIO_COMPANY_ID+'?'+this.queryServices(serviceId,extraId)))
    .filter(x=>!Number(x.fired) && x.bookable!==false && x.bookable!==0)
    .map(x=>({id:identifier(x.id),name:safeText(x.name,150),specialization:safeText(x.specialization,250),biography:safeText(x.information,8000),...(staffPhoto(x.avatar_big)||staffPhoto(x.avatar)?{avatarUrl:staffPhoto(x.avatar_big)||staffPhoto(x.avatar)}:{})}));
  }
@@ -113,22 +129,22 @@ export class Altegio {
   if (!service) throw new Failure('service_unavailable',409,'This treatment requires our team or is no longer available online.');
   return service;
  }
- async validatePair(serviceId: string,staffId: string): Promise<{service:Service;staff:Staff}> {
-  await this.validateService(serviceId);
-  const staff=(await this.staff(serviceId)).find(x=>x.id===identifier(staffId));
-  const service=(await this.services(staffId)).find(x=>x.id===serviceId);
+ async validatePair(serviceId: string,staffId: string,extraId?:string): Promise<{service:Service;staff:Staff;items:Service[]}> {
+  await this.selection(serviceId,extraId);
+  const staff=(await this.staff(serviceId,extraId)).find(x=>x.id===identifier(staffId));
+  const items=await this.selection(serviceId,extraId,staffId),service=items[0];
   if (!staff || !service) throw new Failure('selection_rejected',409,'Please choose a specialist for this treatment.');
-  return {service,staff};
+  return {service,staff,items};
  }
- async dates(serviceId: string,staffId: string): Promise<string[]> {
-  const data=await this.call('/book_dates/'+this.env.ALTEGIO_COMPANY_ID+'?staff_id='+identifier(staffId)+'&service_ids%5B%5D='+identifier(serviceId)) as Wire;
+ async dates(serviceId: string,staffId: string,extraId?:string): Promise<string[]> {
+  const data=await this.call('/book_dates/'+this.env.ALTEGIO_COMPANY_ID+'?staff_id='+identifier(staffId)+'&'+this.queryServices(serviceId,extraId)) as Wire;
   if (!data || !Array.isArray(data.booking_dates)) throw new Failure('booking_unavailable',503);
   const today=localDate(this.runtime.now());
   return [...new Set(data.booking_dates.filter((x):x is string=>typeof x==='string' && /^\d{4}-\d{2}-\d{2}$/.test(x) && x>=today))].sort().slice(0,183);
  }
- async slots(serviceId: string,staffId: string,date: string): Promise<Slot[]> {
+ async slots(serviceId: string,staffId: string,date: string,extraId?:string): Promise<Slot[]> {
   dateValue(date);
-  const data=array(await this.call('/book_times/'+this.env.ALTEGIO_COMPANY_ID+'/'+identifier(staffId)+'/'+date+'?service_ids%5B%5D='+identifier(serviceId)));
+  const data=array(await this.call('/book_times/'+this.env.ALTEGIO_COMPANY_ID+'/'+identifier(staffId)+'/'+date+'?'+this.queryServices(serviceId,extraId)));
   return data.flatMap(x=>{
    const raw=typeof x.datetime==='string' && x.datetime ? x.datetime : date+'T'+String(x.time)+':00+04:00';
    try { const datetime=localDatetime(raw,this.runtime.now()); if (datetime.slice(0,10)!==date) return [];
@@ -136,22 +152,25 @@ export class Altegio {
    } catch { return []; }
   });
  }
- async summary(serviceId:string,staffId:string,datetime:string,name:string,id:string):Promise<Summary> {
-  const pair=await this.validatePair(serviceId,staffId);
-  const slot=(await this.slots(serviceId,staffId,datetime.slice(0,10))).find(x=>x.datetime===datetime);
+ async summary(serviceId:string,staffId:string,datetime:string,name:string,id:string,extraId?:string):Promise<Summary> {
+  const pair=await this.validatePair(serviceId,staffId,extraId);
+  const slot=(await this.slots(serviceId,staffId,datetime.slice(0,10),extraId)).find(x=>x.datetime===datetime);
   if (!slot) throw new Failure('slot_unavailable',409,'That time is no longer available. Choose another time.');
-  const durationMinutes=pair.service.durationMinutes;
+  if(pair.items.some(item=>item.durationMinutes<=0))throw new Failure('selection_rejected',409);
+  const durationMinutes=pair.items.reduce((sum,item)=>sum+item.durationMinutes,0);
   const reservedMinutes=slot.durationMinutes || durationMinutes;
   if (durationMinutes<=0 || durationMinutes>480 || reservedMinutes<durationMinutes || reservedMinutes>480) throw new Failure('selection_rejected',409);
   const currency=this.env.ALTEGIO_CURRENCY || 'AMD';
-  const price=pair.service.priceMin===pair.service.priceMax ? `${pair.service.priceMin} ${currency}` : `${pair.service.priceMin}–${pair.service.priceMax} ${currency}`;
-  return {id,serviceId,serviceName:pair.service.name,staffId,staffName:pair.staff.name,datetime,name,durationMinutes,reservedMinutes,price,priceMin:pair.service.priceMin,priceMax:pair.service.priceMax,currency,consent:true};
+  const priceMin=pair.items.reduce((sum,item)=>sum+item.priceMin,0),priceMax=pair.items.reduce((sum,item)=>sum+item.priceMax,0);
+  if(!Number.isFinite(priceMin)||!Number.isFinite(priceMax)||priceMax>Number.MAX_SAFE_INTEGER)throw new Failure('selection_rejected',409);
+  const price=priceMin===priceMax ? `${priceMin} ${currency}` : `${priceMin}–${priceMax} ${currency}`;
+  return {id,serviceId,...(extraId?{extraId,serviceIds:pair.items.map(item=>item.id)}:{}),serviceName:pair.items.map(item=>item.name).join(' + '),staffId,staffName:pair.staff.name,datetime,name,durationMinutes,reservedMinutes,price,priceMin,priceMax,currency,consent:true};
  }
- appointment(summary:Summary):Wire {return {id:1,services:[Number(summary.serviceId)],staff_id:Number(summary.staffId),datetime:summary.datetime};}
+ appointment(summary:Summary):Wire {return {id:1,services:(summary.serviceIds||[summary.serviceId]).map(Number),staff_id:Number(summary.staffId),datetime:summary.datetime};}
  async check(summary:Summary):Promise<void> { await this.call('/book_check/'+this.env.ALTEGIO_COMPANY_ID,'POST',{appointments:[this.appointment(summary)]}); }
  async create(summary:Summary,phone:string):Promise<{id:string;managementHash:string}> {
   const result=await this.call('/book_record/'+this.env.ALTEGIO_COMPANY_ID,'POST',{
-   phone,fullname:summary.name,email:summary.email||'',comment:'E-Motion web booking. '+(summary.comment||''),
+   phone,fullname:summary.name,email:summary.email||'',comment:'E-Motion web booking. '+(summary.comment||'')+(summary.certificate?' | Client requests certificate: '+summary.certificate.title+'; code '+summary.certificate.number+'. Verify eligibility and redeem at studio checkout.':''),
    appointments:[this.appointment(summary)],api_id:(this.env.ECOSYSTEM_GATEWAY_ORIGIN?'emotion-web-v2-':'omnichannel-web-')+summary.id,notify_by_sms:0,notify_by_email:0
   },true);
   if (!Array.isArray(result) || result.length!==1 || !result[0] || !Number.isSafeInteger(Number(result[0].record_id)) || Number(result[0].record_id)<=0) throw new Failure('outcome_unknown',503);
