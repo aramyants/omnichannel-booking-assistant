@@ -3,7 +3,7 @@ import {Failure} from './types.ts';
 export type Locale='ru'|'en'|'hy';
 export function locale(raw:unknown):Locale{return raw==='en'||raw==='hy'?raw:'ru';}
 export interface ReviewVisit {id:string;staffId:string;staffName:string;serviceName:string;datetime:string}
-export async function ecosystemContext(env:Env,runtime:Runtime,data:{action:'context'|'prepare'|'confirmed'|'record-context'|'review-visits'|'review-check'|'certificate-types'|'client-certificates'|'booking-settings';phone?:string;locale?:Locale;explicit?:boolean;consent?:boolean;recordId?:string;managementProof?:string}):Promise<{locale:Locale;calendarUrl?:string;eligible?:boolean;anyStaff?:boolean;visits?:ReviewVisit[];visit?:ReviewVisit;certificates?:Record<string,unknown>[]} >{
+export async function ecosystemContext(env:Env,runtime:Runtime,data:{action:'context'|'prepare'|'confirmed'|'record-context'|'review-visits'|'review-check'|'booking-settings';phone?:string;locale?:Locale;explicit?:boolean;consent?:boolean;recordId?:string;managementProof?:string}):Promise<{locale:Locale;calendarUrl?:string;eligible?:boolean;anyStaff?:boolean;visits?:ReviewVisit[];visit?:ReviewVisit} >{
  if(!env.ECOSYSTEM_GATEWAY_ORIGIN)return {locale:locale(data.locale)};
  if(env.ECOSYSTEM_GATEWAY_ORIGIN!=='https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app'||!env.ALTEGIO_USER_TOKEN)throw new Failure('booking_unavailable',503);
  const encoder=new TextEncoder(),body=JSON.stringify(data),timestamp=String(Math.floor(runtime.now()/1000));
@@ -14,7 +14,7 @@ export async function ecosystemContext(env:Env,runtime:Runtime,data:{action:'con
  try{
   const response=await runtime.fetch(env.ECOSYSTEM_GATEWAY_ORIGIN+'/internal/booking-context',{method:'POST',headers:{'Content-Type':'application/json','X-Emotion-Time':timestamp,'X-Emotion-Signature':signature},body,redirect:'manual',signal:AbortSignal.timeout(12000)});
   if(!response.ok)throw new Error();
-  const raw=await response.text();if(raw.length>(['review-visits','certificate-types','client-certificates'].includes(data.action)?131072:8192))throw new Error();const result=JSON.parse(raw);
+  const raw=await response.text();if(raw.length>(data.action==='review-visits'?131072:8192))throw new Error();const result=JSON.parse(raw);
   if(!['en','ru','hy'].includes(result.locale))throw new Error();
   if(result.calendarUrl&&(!result.calendarUrl.startsWith(env.PUBLIC_ORIGIN+'/calendar/')||result.calendarUrl.length>300))throw new Error();
   return result;

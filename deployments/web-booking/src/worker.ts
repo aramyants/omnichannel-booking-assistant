@@ -7,7 +7,7 @@ import { Store } from './store.ts';
 import { runNotifications } from './notifications.ts';
 import {ecosystemContext,otpMessage} from './ecosystem.ts';
 import {publicReviews,reviewVisits,submitReview} from './reviews.ts';
-import {certificateTypes,clientCertificates,selectedCertificate,publicCertificate} from './benefits.ts';
+import {giftCertificateCatalog} from './gift-certificates.ts';
 
 const prefix='/api/booking';
 const responseHeaders={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY'};
@@ -56,7 +56,7 @@ async function status(store:Store,session:Session,id:string,now:number,env?:Env,
  if(draft.phone!==session.phone)throw new Failure('verification_required',403,'Verify your booking phone again.');
  // A crashed reservation must never be automatically retried, even after expiry.
  if(['checking','sending'].includes(draft.status)&&draft.updated_at<now-90){await store.state(id,draft.status,'uncertain',now);draft=await store.draft(session.id,id);}
- if(draft.status==='confirmed'){const appointment=JSON.parse(draft.appointment!) as Appointment;if(!appointment.calendarUrl&&env?.ECOSYSTEM_GATEWAY_ORIGIN&&runtime&&request){try{await optionalConfirmation(store,env,runtime,session,request,draft,appointment);}catch{/* The confirmed appointment remains valid; only its idempotent context handoff may repeat. */}}return {status:'confirmed',appointment};}
+ if(draft.status==='confirmed'){const appointment=JSON.parse(draft.appointment!) as Appointment;if(!appointment.calendarUrl&&env?.ECOSYSTEM_GATEWAY_ORIGIN&&runtime&&request){try{await optionalConfirmation(store,env,runtime,session,request,draft,appointment);}catch{/* The confirmed appointment remains valid; only its idempotent context handoff may repeat. */}}const {certificate:_retired,...view}=appointment;return {status:'confirmed',appointment:view};}
  if(draft.status==='uncertain')return {status:'uncertain',message:'We could not confirm the booking result. Please contact the studio before booking again.'};
  if(draft.status==='rejected'||draft.status==='superseded')throw new Failure(draft.error_code||'selection_rejected',409,'Please review availability and choose again.');
  if(draft.expires_at<=now)throw new Failure('draft_expired',409,'Please choose your time again.');
@@ -95,8 +95,9 @@ async function book(store:Store,env:Env,runtime:Runtime,session:Session,request:
  }
  const client=new Altegio(env,runtime),summary=JSON.parse(draft.summary) as Summary;
  try {
+  // Old pending drafts cannot silently apply retired native credit requests.
+  if(summary.certificate)throw new Failure('certificate_unavailable',409);
   const live=await client.summary(summary.serviceId,summary.staffId,localDatetime(summary.datetime,runtime.now()),summary.name,id,summary.extraId);
-  if(summary.certificate){const current=await selectedCertificate(client,session,summary.certificate.id,summary.datetime);if(current.number!==summary.certificate.number)throw new Failure('certificate_unavailable',409);}
   if(live.priceMin!==summary.priceMin||live.priceMax!==summary.priceMax||live.durationMinutes!==summary.durationMinutes||live.reservedMinutes!==summary.reservedMinutes||live.serviceName!==summary.serviceName||live.staffName!==summary.staffName)
    throw new Failure('selection_changed',409,'The appointment details changed. Please review a fresh summary.');
   await client.check(live);
@@ -114,7 +115,7 @@ async function book(store:Store,env:Env,runtime:Runtime,session:Session,request:
   }
   await store.state(id,'sending','uncertain',nowSeconds(runtime));return {status:'uncertain',message:'Please contact the studio before booking again. We are checking the result.'};
  }
- const appointment:Appointment={id:created.id,serviceName:summary.serviceName,staffName:summary.staffName,datetime:summary.datetime,durationMinutes:summary.durationMinutes,price:summary.price,priceMin:summary.priceMin,priceMax:summary.priceMax,...(summary.certificate?{certificate:{id:summary.certificate.id,title:summary.certificate.title}}:{})};
+ const appointment:Appointment={id:created.id,serviceName:summary.serviceName,staffName:summary.staffName,datetime:summary.datetime,durationMinutes:summary.durationMinutes,price:summary.price,priceMin:summary.priceMin,priceMax:summary.priceMax};
  try {await store.confirmed(id,appointment,created.managementHash,nowSeconds(runtime),env.SMS_REMINDERS_ENABLED==='true'?Date.parse(summary.datetime)/1000-7200:undefined);}catch{return {status:'uncertain',message:'Please contact the studio to check your booking before trying again.'};}
  // Booking success survives a notification/configuration failure. No provider retry.
  draft.management_hash=created.managementHash;
@@ -165,7 +166,8 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    return json({csrfToken:await hmac(env.SESSION_SECRET,'csrf:'+raw),phoneVerified:!!session.phone,...(session.phone?{phone:session.phone,preferredLocale:preference?.locale}:{}),...(unresolved?.session_id===session.id?{unresolvedDraftId:unresolved.id}:{})},200,{'Set-Cookie':setCookie(raw)});
   }
   const client=new Altegio(env,runtime);
-  if(path==='/certificate-types'&&request.method==='GET')return json(await certificateTypes(client));
+  if(path==='/certificate-types'&&request.method==='GET')return json(giftCertificateCatalog());
+  if(path==='/benefits'&&request.method==='GET')throw new Failure('certificate_selection_disabled',410);
   if(path==='/reviews'&&request.method==='GET')return json(await publicReviews(env,url.searchParams.get('staff_id')));
   if(request.method==='GET'&&['/services','/staff','/dates','/slots'].includes(path)){
    if(path==='/services'){const catalog=await client.catalog();return json({services:catalog.filter(s=>s.kind!=='extra'),extras:catalog.filter(s=>s.kind==='extra')});}
@@ -188,7 +190,6 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    return json({slots:(await client.slots(serviceId,staffId,date,extraId)).filter(slot=>!extraId||slot.durationMinutes>=minimum).map(({datetime,label})=>({datetime,label}))});
   }
   const {session}=await authenticated(request,env,store,runtime,mutation);
-  if(path==='/benefits'&&request.method==='GET'){await store.rate('benefits-read:'+session.id,6,60,now);return json({certificates:(await clientCertificates(client,session)).map(publicCertificate)});}
   if(request.method==='GET'&&path==='/review-visits'){
    await store.rate('reviews-read:'+session.id,6,60,now);return json(await reviewVisits(env,runtime,session));
   }
@@ -232,12 +233,12 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    onlyKeys(data,['serviceId','staffId','datetime','name','consent','email','comment','extraId','certificateId']);
    if(!session.phone)throw new Failure('verification_required',403,'Verify your booking phone first.');
    if(data.consent!==true)throw new Failure('consent_required',400,'Please confirm the booking request.');
+   if(data.certificateId!==undefined)throw new Failure('certificate_unavailable',409);
    const name=safeText(data.name,120);
    if(!name||name.length<2||typeof data.name!=='string'||data.name.length>120||/[<>\u0000-\u001f]/.test(data.name))throw new Failure('invalid_name',400,'Enter your first and last name.');
    await store.rate('draft-session:'+session.id,10,3600,now);
    const staffId=staffIdentifier(data.staffId);
    const summary=await (staffId==='0'?client.anySummary(identifier(data.serviceId),localDatetime(data.datetime,runtime.now()),name,randomToken(16),data.extraId===undefined?undefined:identifier(data.extraId)):client.summary(identifier(data.serviceId),staffId,localDatetime(data.datetime,runtime.now()),name,randomToken(16),data.extraId===undefined?undefined:identifier(data.extraId)));
-   if(data.certificateId!==undefined)summary.certificate=await selectedCertificate(client,session,identifier(data.certificateId),summary.datetime);
    const email=typeof data.email==='string'?data.email.trim():'';
    const comment=typeof data.comment==='string'?data.comment.trim():'';
    if((data.email!==undefined&&typeof data.email!=='string')||email.length>254||(email&&!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email))||/[\u0000-\u001f\u007f]/.test(email))throw new Failure('invalid_email');

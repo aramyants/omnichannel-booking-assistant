@@ -309,38 +309,14 @@ quote so the browser updates duration and price before phone verification. Draft
 and confirmation re-read those values and call native `book_check`. No second
 appointment, invented resource or separate therapist hold is added by our app.
 
-`GET /certificate-types` exposes only sanitized catalog fields from the configured
-location's canonical Altegio certificate-type endpoint. Archived types are hidden.
-Certificate types, including deposits, are read live rather than counted or priced
-in frontend code. On 20 October the live catalog had online sale disabled for all
-published types. The UI shows value and validity and marks online purchase
-unavailable, without a support-chat substitute. It never interprets a zero
-online sale price as a free certificate.
-
-`GET /benefits` requires successful session phone proof and only queries that
-verified phone. Full certificate codes stay server-side; the client sees masked
-references and its own balance/status. Optional `certificateId` is rechecked when
-preparing and confirming a draft. Expired/exhausted or no-longer-owned certificates
-cannot be attached. The actual reference reaches only the appointment's private
-studio comment as a request to apply it at checkout. It does not debit credit,
-record a payment, apply a discount or promise that service restrictions match.
-
-Production certificate reads use the existing signed ecosystem bridge, backed by
-the central API service's current Altegio credential. `certificate-types` accepts
-no client identity; `client-certificates` requires the proven session phone.
-The central adapter searches only the fixed location, matches the exact normalized
-phone and reads `/locations/{location}/client/{client}/loyalty`. This documented
-client summary works with `clients_loyalty_read_access`; the legacy certificate
-endpoint returned 403 even after that read permission was installed. No balance,
-payment, expiry-editing or loyalty-card issuance rights were added. Missing phone
-fields, incomplete searches and missing certificate lists fail closed. Duplicate
-client rows and identical certificate copies are deduplicated; conflicting copies
-are rejected. The app installation was reconnected to apply the approved grant.
-The legacy direct adapter is only a fallback for standalone installations without
-the ecosystem gateway. Private credentials never reach public catalog,
-availability or creation calls. The bridge remains fresh-body HMAC authenticated.
-All currency values, activation, native availability and eligibility remain
-Altegio-owned. Personal loyalty percentages are not inferred from product titles.
+Gift certificates now use a studio-owned configuration: custom whole-AMD amounts,
+50,000 / 100,000 / 150,000 quick choices, and treatment selection using the live
+booking catalog. This is a preview; checkout and issuance are disabled. Native
+certificate types, client credit and deposits are no longer represented. Existing
+native financial records remain untouched. The retired balance endpoint and
+signed bridge actions return 410, and stale certificate drafts cannot create.
+See [owned gift certificates](../../docs/gift-certificates.md) for the current
+contract and the separate future payment/Altegio issuance flow.
 
 The native widget advertised 20 complimentary head/face minutes on 20 October,
 while service 13914939 (`First visit +20min`) was inactive and the documented
@@ -358,7 +334,7 @@ from native content. Native `seance_length` supplies the exact quote duration.
 Before a specialist is chosen, only explicit minute units in the current native
 title can label duration; no local historical title supplies a missing value.
 The native `Add More Time` category identifies add-ons, without hardcoded service
-IDs. Price, activation, qualified staff, availability, certificates and assignment
+IDs. Price, activation, qualified staff, availability and assignment
 settings remain live reads. Unknown or unreadable eligibility is never invented.
 
 Staff professions come from native `position.title`, with native specialization as

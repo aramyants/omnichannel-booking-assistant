@@ -59,7 +59,7 @@ func TestBookingSettingsBridgeRequiresSignature(t *testing.T) {
 		}
 	}
 }
-func TestCertificateBridgeRequiresFreshSignatureAndProvenPhone(t *testing.T) {
+func TestRetiredCertificateBridgeKeepsSignatureGateAndNeverReadsNativeData(t *testing.T) {
 	reader := &benefitsReader{}
 	service := &notifications.Service{Repo: memory.New(), Reader: reader}
 	handler := bookingContextHandler(service, "test-key", "https://book.motionconcept.rest/")
@@ -69,9 +69,9 @@ func TestCertificateBridgeRequiresFreshSignatureAndProvenPhone(t *testing.T) {
 		want   int
 	}{
 		{`{"action":"certificate-types"}`, false, 401},
-		{`{"action":"certificate-types"}`, true, 200},
-		{`{"action":"client-certificates"}`, true, 400},
-		{`{"action":"client-certificates","phone":"+37491123456"}`, true, 200},
+		{`{"action":"certificate-types"}`, true, 410},
+		{`{"action":"client-certificates"}`, true, 410},
+		{`{"action":"client-certificates","phone":"+37491123456"}`, true, 410},
 	} {
 		raw := []byte(tc.body)
 		stamp := strconv.FormatInt(time.Now().Unix(), 10)
@@ -85,14 +85,8 @@ func TestCertificateBridgeRequiresFreshSignatureAndProvenPhone(t *testing.T) {
 		if rec.Code != tc.want {
 			t.Fatal(tc.body, rec.Code, rec.Body.String())
 		}
-		if tc.want == 200 {
-			var output map[string]any
-			if json.Unmarshal(rec.Body.Bytes(), &output) != nil || output["certificates"] == nil {
-				t.Fatal("missing typed result")
-			}
-		}
 	}
-	if reader.catalogCalls != 1 || reader.clientCalls != 1 || reader.phone != "+37491123456" {
+	if reader.catalogCalls != 0 || reader.clientCalls != 0 || reader.phone != "" {
 		t.Fatal("unauthorized or incorrect phone read", reader)
 	}
 }

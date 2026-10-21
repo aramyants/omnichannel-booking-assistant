@@ -9,7 +9,6 @@ import (
 	"errors"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/calendar"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/notifications"
-	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/benefit"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
 	"github.com/google/uuid"
@@ -65,6 +64,12 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
+		// Native loyalty representation is retired. Our public gift catalog is
+		// studio-owned; no client balance or deposit is exposed through this bridge.
+		if body.Action == "certificate-types" || body.Action == "client-certificates" {
+			http.Error(w, "Gone", http.StatusGone)
+			return
+		}
 		if body.Action == "booking-settings" {
 			reader, ok := service.Reader.(interface {
 				AnyStaffEnabled(context.Context) (bool, error)
@@ -82,33 +87,12 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 			_ = json.NewEncoder(w).Encode(map[string]any{"locale": "ru", "anyStaff": enabled})
 			return
 		}
-		if body.Action == "certificate-types" {
-			reader, ok := service.Reader.(interface {
-				ListCertificateTypes(context.Context) ([]benefit.CertificateType, error)
-			})
-			if !ok {
-				http.Error(w, "Unavailable", http.StatusServiceUnavailable)
-				return
-			}
-			values, readErr := reader.ListCertificateTypes(r.Context())
-			if readErr != nil {
-				http.Error(w, "Unavailable", http.StatusServiceUnavailable)
-				return
-			}
-			lang := body.Locale
-			if lang != "en" && lang != "hy" {
-				lang = "ru"
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"locale": lang, "certificates": values})
-			return
-		}
 		phone, err := customer.NormalizePhone(body.Phone)
 		if err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
-		if body.Action != "context" && body.Action != "prepare" && body.Action != "confirmed" && body.Action != "record-context" && body.Action != "review-visits" && body.Action != "review-check" && body.Action != "client-certificates" {
+		if body.Action != "context" && body.Action != "prepare" && body.Action != "confirmed" && body.Action != "record-context" && body.Action != "review-visits" && body.Action != "review-check" {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
@@ -130,24 +114,6 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 			})
 		}
 		output := map[string]any{"locale": lang}
-		if body.Action == "client-certificates" {
-			reader, ok := service.Reader.(interface {
-				ListPhoneCertificates(context.Context, string) ([]benefit.Certificate, error)
-			})
-			if !ok {
-				http.Error(w, "Unavailable", http.StatusServiceUnavailable)
-				return
-			}
-			values, readErr := reader.ListPhoneCertificates(r.Context(), phone)
-			if readErr != nil {
-				http.Error(w, "Unavailable", http.StatusServiceUnavailable)
-				return
-			}
-			output["certificates"] = values
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(output)
-			return
-		}
 		if body.Action == "review-visits" || body.Action == "review-check" {
 			if body.Action == "review-check" {
 				if value, parseErr := strconv.ParseUint(body.RecordID, 10, 64); parseErr != nil || value == 0 {

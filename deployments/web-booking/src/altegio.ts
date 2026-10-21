@@ -98,7 +98,7 @@ export class Altegio {
   try {
    response = await this.runtime.fetch('https://api.alteg.io/api/v1'+path, {
     // Private CRM auth is restricted to explicit server-owned business reads:
-    // current recipient and the scoped certificate catalog/verified phone.
+    // current recipient and native booking settings.
     // Catalog, availability, creation and owned-hash reads use partner auth only.
     method, headers:{'Accept':'application/vnd.api.v2+json','User-Agent':'E-Motion-Owned-Booking/1.0','Authorization':'Bearer '+this.env.ALTEGIO_PARTNER_TOKEN+(privateRead?', User '+this.env.ALTEGIO_USER_TOKEN:''), ...(data ? {'Content-Type':'application/json'} : {})},
     body: data ? JSON.stringify(data): undefined, redirect:'manual', signal:AbortSignal.timeout(12000)
@@ -196,7 +196,7 @@ export class Altegio {
  async check(summary:Summary):Promise<void> { await this.call('/book_check/'+this.env.ALTEGIO_COMPANY_ID,'POST',{appointments:[this.appointment(summary)]}); }
  async create(summary:Summary,phone:string):Promise<{id:string;managementHash:string}> {
   const result=await this.call('/book_record/'+this.env.ALTEGIO_COMPANY_ID,'POST',{
-   phone,fullname:summary.name,email:summary.email||'',comment:'E-Motion web booking. '+(summary.comment||'')+(summary.certificate?' | Client requests certificate: '+summary.certificate.title+'; code '+summary.certificate.number+'. Verify eligibility and redeem at studio checkout.':''),
+   phone,fullname:summary.name,email:summary.email||'',comment:'E-Motion web booking. '+(summary.comment||''),
    appointments:[this.appointment(summary)],api_id:(this.env.ECOSYSTEM_GATEWAY_ORIGIN?'emotion-web-v2-':'omnichannel-web-')+summary.id,notify_by_sms:0,notify_by_email:0
   },true);
   if (!Array.isArray(result) || result.length!==1 || !result[0] || !Number.isSafeInteger(Number(result[0].record_id)) || Number(result[0].record_id)<=0) throw new Failure('outcome_unknown',503);

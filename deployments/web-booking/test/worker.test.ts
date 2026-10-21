@@ -146,8 +146,6 @@ function fixture(){
   if(url.startsWith('https://api.alteg.io/')&&!url.includes('/record/')&&!url.includes('/loyalty/')&&!url.includes('/settings/online'))assert.equal((init!.headers as Record<string,string>).Authorization,'Bearer test-partner','private credentials must not reach public catalog or booking endpoints');
   if(url.includes('/settings/online')){assert.equal((init!.headers as Record<string,string>).Authorization,'Bearer test-partner, User test-private-user');return Response.json({success:true,data:{any_master:false}});}
   if(url.includes('/loyalty/'))assert.equal((init!.headers as Record<string,string>).Authorization,'Bearer test-partner, User test-private-user');
-  if(url.includes('/loyalty/certificate_types/search'))return Response.json({success:true,data:[{id:5,title:'Gift',balance:50000,is_multi:true,item_type_id:0,is_archived:false,online_sale_is_enabled:false,internal_note:'must not be public'},{id:6,title:'Archived',balance:1,is_archived:true}]});
-  if(url.includes('/loyalty/certificates?'))return Response.json({success:true,data:[{id:7,number:'PRIVATE-CERT-1234',balance:50000,expiration_date:'2027-10-21',type:{title:'Gift'},status:{title:'Active'}}]});
   if(url.includes('siteverify'))return Response.json({success:true,hostname:turnstileHostname,action:'booking_otp'});
   if(url.includes('sms-gate.app')&&!init?.body){receiptReads++;return Response.json({id:url.split('/').at(-1),state:receiptState});}
   if(url.includes('sms-gate.app')){const data=JSON.parse(init!.body as string);sentSms++;smsTexts.push(data.textMessage.text);otp=data.textMessage.text.match(/\b\d{6}\b/)?.[0]||'';if(smsMode==='timeout')throw new Error('simulated sms timeout');return Response.json({id:data.id,state:'Pending'},{status:202});}
@@ -358,25 +356,29 @@ test('extra time uses one combined appointment and validates total duration, pri
  const invalid=fixture();await invalid.verified();assert.equal((await invalid.request('/drafts',{...base,extraId:'13827004'})).response.status,409);assert.equal((await invalid.request('/drafts',{...base,serviceId:'13827268',extraId:undefined})).response.status,409);assert.equal(invalid.counts.createCalls,0);
 });
 
-test('certificates are rechecked before creation and expired or exhausted credit cannot be attached',async()=>{
- const f=fixture();await f.verified();const provider=f.runtime.fetch;let balance=50000,expiry='2027-10-21';
- f.runtime.fetch=async(input,init)=>{const response=await provider(input,init);if(!String(input).includes('/loyalty/certificates?'))return response;const payload=await response.json();payload.data[0].balance=balance;payload.data[0].expiration_date=expiry;return Response.json(payload);};
- const base={serviceId:'13827004',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Test Guest',consent:true,certificateId:'7'};
- expiry='2026-10-20';assert.equal((await f.request('/drafts',base)).response.status,409);
- expiry='2027-10-21';const draft=await f.request('/drafts',base);assert.equal(draft.response.status,200);
- balance=0;const result=await f.request('/appointments',{draftId:draft.value.draft.id});assert.equal(result.response.status,409);assert.equal(f.counts.createCalls,0);
+test('studio gift catalog stays available without any native or central catalog read',async()=>{
+ for(const central of [false,true]){
+  const f=fixture();if(central)f.env.ECOSYSTEM_GATEWAY_ORIGIN='https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app';
+  let calls=0;f.runtime.fetch=async()=>{calls++;throw new Error('Upstream is unavailable');};
+  const {response,value}=await f.request('/certificate-types');assert.equal(response.status,200);
+  assert.equal(value.source,'studio');assert.equal(value.version,2);
+  assert.deepEqual(value.amount,{presets:[50000,100000,150000],min:1,max:Number.MAX_SAFE_INTEGER});
+  assert.equal(value.currency,'AMD');assert.equal(value.validityMonths,6);assert.equal(value.multipleUse,true);
+  assert.equal(value.checkoutEnabled,false);assert.equal(value.serviceCertificates,true);assert.deepEqual(value.certificates,[]);
+  assert.equal(calls,0);assert(!/deposit|balance|number|Altegio/i.test(JSON.stringify(value)));
+ }
 });
 
-test('certificate catalog is sanitized and personal certificates require exact session phone proof',async()=>{
- const f=fixture(),catalog=await f.request('/certificate-types');assert.equal(catalog.response.status,200);assert.equal(catalog.value.certificates.length,1);assert(!JSON.stringify(catalog.value).includes('internal_note'));assert.equal(catalog.value.certificates[0].onlineSaleEnabled,false);
- assert.equal((await f.request('/benefits')).response.status,401);await f.session();assert.equal((await f.request('/benefits')).response.status,403);assert(!f.providerUrls.some(url=>url.includes('/loyalty/certificates?')));
- await f.verified();const benefits=await f.request('/benefits?phone=15551234567');assert.equal(benefits.response.status,200);assert(!JSON.stringify(benefits.value).includes('PRIVATE-CERT'));assert.equal(benefits.value.certificates[0].maskedNumber,'•••• 1234');
- const lookup=f.providerUrls.find(url=>url.includes('/loyalty/certificates?'));assert(lookup);assert.equal(new URL(lookup).searchParams.get('phone'),'37491123456');
+test('native benefit lookups and certificate selections are retired for every session',async()=>{
+ const f=fixture();assert.equal((await f.request('/benefits?phone=15551234567')).response.status,410);
+ await f.session();assert.equal((await f.request('/benefits')).response.status,410);
+ await f.verified();assert.equal((await f.request('/benefits')).response.status,410);
  const base={serviceId:'13827004',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Test Guest',consent:true};
- assert.equal((await f.request('/drafts',{...base,certificateId:'8'})).response.status,409);
- const draft=await f.request('/drafts',{...base,certificateId:'7'});assert.equal(draft.response.status,200);assert(!JSON.stringify(draft.value).includes('PRIVATE-CERT'));assert.equal(draft.value.draft.priceMin,18000,'certificate selection must not claim a debit or discount');
- const confirmation=await f.request('/appointments',{draftId:draft.value.draft.id});assert.equal(confirmation.value.status,'confirmed');assert(!JSON.stringify(confirmation.value).includes('PRIVATE-CERT'));assert.match(String(f.createPayload?.comment),/PRIVATE-CERT-1234/);assert.equal(f.counts.createCalls,1);
- assert(!f.providerUrls.some(url=>/transactions|payments|writeoff/.test(url)));
+ for(const certificateId of ['7','ec-gift-amd-50000-v1','native-deposit'])assert.equal((await f.request('/drafts',{...base,certificateId})).response.status,409);
+ assert.equal(f.counts.createCalls,0);assert(!f.providerUrls.some(url=>url.includes('/loyalty/')));
+ const draft=await f.request('/drafts',base);assert.equal(draft.response.status,200);
+ const result=await f.request('/appointments',{draftId:draft.value.draft.id});assert.equal(result.value.status,'confirmed');
+ assert(!String(f.createPayload?.comment).includes('certificate'));assert.equal(f.counts.createCalls,1);
 });
 
 test('service photos only accept the published HTTPS Altegio service image origin',()=>{
@@ -384,15 +386,16 @@ test('service photos only accept the published HTTPS Altegio service image origi
  for(const raw of ['javascript:alert(1)','https://assets.alteg.io.attacker.test/main_service_image/a.png','https://assets.alteg.io@attacker.test/main_service_image/a.png','http://assets.alteg.io/main_service_image/a.png','https://assets.alteg.io/masters/a.png'])assert.equal(servicePhoto(raw),undefined);
 });
 
-test('production benefits use the signed central adapter rather than the legacy private credential',async()=>{
- const f=fixture();f.env.ECOSYSTEM_GATEWAY_ORIGIN='https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app';const provider=f.runtime.fetch,actions:string[]=[];
- f.runtime.fetch=async(input,init)=>{if(!String(input).includes('/internal/booking-context'))return provider(input,init);const data=JSON.parse(String(init?.body));actions.push(data.action);
-  if(data.action==='certificate-types'){assert.equal(data.phone,undefined);return Response.json({locale:'ru',certificates:[{id:'5',title:'Gift',value:50000,multipleUse:true,restriction:0,expiryType:0,expiryPeriod:0,expiryUnit:0,onlineSaleEnabled:false}]});}
-  if(data.action==='client-certificates'){assert.equal(data.phone,'+37491123456');return Response.json({locale:'en',certificates:[{id:'7',title:'Gift',balance:50000,number:'PRIVATE-CERT-1234',expiresAt:'2027-10-21',status:'Active'}]});}
-  return Response.json({locale:'en'});
- };
- assert.equal((await f.request('/certificate-types')).value.certificates[0].value,50000);await f.verified();const benefits=await f.request('/benefits');assert.equal(benefits.value.certificates[0].title,'Gift');assert(!JSON.stringify(benefits.value).includes('PRIVATE-CERT'));assert.deepEqual(actions,['certificate-types','client-certificates']);assert(!f.providerUrls.some(url=>url.includes('/loyalty/')));
+test('legacy pending certificate drafts are rejected before another upstream read or creation',async()=>{
+ const f=fixture();await f.verified();const prepared=await f.draft(),id=prepared.value.draft.id;
+ const row=await f.db.prepare('SELECT summary FROM drafts WHERE id=?').bind(id).first<{summary:string}>();
+ const summary=JSON.parse(row!.summary);summary.certificate={id:'7',title:'Old native deposit',number:'PRIVATE-1234'};
+ await f.db.prepare('UPDATE drafts SET summary=? WHERE id=?').bind(JSON.stringify(summary),id).run();
+ const before=f.providerUrls.length;
+ const result=await f.request('/appointments',{draftId:id});assert.equal(result.response.status,409);assert.equal(result.value.error.code,'certificate_unavailable');
+ assert.equal(f.counts.createCalls,0);assert.equal(f.providerUrls.length,before);assert(!JSON.stringify(result.value).includes('PRIVATE-1234'));
 });
+
 test('OTP delivery status is private, paced and distinguishes queue acceptance from receipt',async()=>{
  const f=fixture();await f.session();await f.request('/verification/request',{phone:'+37491123456',turnstileToken:'test-token-accepted'});
  const queued=await f.request('/verification/status');assert.equal(queued.value.status,'queued');assert.equal(f.counts.receiptReads,0);assert.ok(!JSON.stringify(queued.value).includes(f.otp));assert.ok(!JSON.stringify(queued.value).includes('+374'));
