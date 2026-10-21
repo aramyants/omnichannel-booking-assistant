@@ -1,5 +1,5 @@
 # Build the binary against the full toolchain.
-FROM golang:1.27.2-alpine AS build
+FROM golang:1.27.3-alpine AS build
 
 # Stamped into the binary so a running container can report which commit it is.
 ARG VERSION=dev
