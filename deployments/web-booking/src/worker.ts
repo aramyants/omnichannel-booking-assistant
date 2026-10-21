@@ -166,7 +166,7 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    return json({csrfToken:await hmac(env.SESSION_SECRET,'csrf:'+raw),phoneVerified:!!session.phone,...(session.phone?{phone:session.phone,preferredLocale:preference?.locale}:{}),...(unresolved?.session_id===session.id?{unresolvedDraftId:unresolved.id}:{})},200,{'Set-Cookie':setCookie(raw)});
   }
   const client=new Altegio(env,runtime);
-  if(path==='/certificate-types'&&request.method==='GET')return json(giftCertificateCatalog());
+  if(path==='/certificate-types'&&request.method==='GET')return json(giftCertificateCatalog(await client.catalog()));
   if(path==='/benefits'&&request.method==='GET')throw new Failure('certificate_selection_disabled',410);
   if(path==='/reviews'&&request.method==='GET')return json(await publicReviews(env,url.searchParams.get('staff_id')));
   if(request.method==='GET'&&['/services','/staff','/dates','/slots'].includes(path)){

@@ -7,10 +7,13 @@ source of truth for services, prices, specialists, availability or bookings.
 ## Live selection
 
 `GET /api/booking/certificate-types` returns studio configuration version 2:
-whole AMD, an editable positive amount, suggested 50,000 / 100,000 / 150,000 AMD,
+whole AMD, an editable amount at least the lowest positive live treatment price, suggested 50,000 / 100,000 / 150,000 AMD,
 six months from purchase, and a service-certificate selection mode. Amounts use
 safe integers; the maximum is a representation boundary, not a new sales policy.
-The service picker shares the live booking service query and native IDs/prices;
+The minimum is recalculated from active native treatments, excluding add-ons and
+zero prices, rounded up to whole AMD. An unreadable or empty eligible catalog
+fails closed. The certificate/deposit type list remains unused.
+The searchable service picker shares the live booking service query and native IDs/prices;
 add-ons and zero-priced services are excluded. A price range remains a range.
 No local treatment names, prices, native certificate types or balances are copied.
 

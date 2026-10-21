@@ -356,16 +356,22 @@ test('extra time uses one combined appointment and validates total duration, pri
  const invalid=fixture();await invalid.verified();assert.equal((await invalid.request('/drafts',{...base,extraId:'13827004'})).response.status,409);assert.equal((await invalid.request('/drafts',{...base,serviceId:'13827268',extraId:undefined})).response.status,409);assert.equal(invalid.counts.createCalls,0);
 });
 
-test('studio gift catalog stays available without any native or central catalog read',async()=>{
+test('owned gift configuration derives its minimum from live treatments without native credit reads',async()=>{
  for(const central of [false,true]){
   const f=fixture();if(central)f.env.ECOSYSTEM_GATEWAY_ORIGIN='https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app';
-  let calls=0;f.runtime.fetch=async()=>{calls++;throw new Error('Upstream is unavailable');};
   const {response,value}=await f.request('/certificate-types');assert.equal(response.status,200);
   assert.equal(value.source,'studio');assert.equal(value.version,2);
-  assert.deepEqual(value.amount,{presets:[50000,100000,150000],min:1,max:Number.MAX_SAFE_INTEGER});
+  assert.deepEqual(value.amount,{presets:[50000,100000,150000],min:18000,max:Number.MAX_SAFE_INTEGER,minimumSource:'lowest-service-price'});
   assert.equal(value.currency,'AMD');assert.equal(value.validityMonths,6);assert.equal(value.multipleUse,true);
   assert.equal(value.checkoutEnabled,false);assert.equal(value.serviceCertificates,true);assert.deepEqual(value.certificates,[]);
-  assert.equal(calls,0);assert(!/deposit|balance|number|Altegio/i.test(JSON.stringify(value)));
+  f.price=24000;assert.equal((await f.request('/certificate-types')).value.amount.min,24000);
+  assert(f.providerUrls.every(url=>url.includes('/book_services/')));
+  assert(!/deposit|balance|number|Altegio/i.test(JSON.stringify(value)));
+  // Add-ons cost 5,000 but cannot lower the gift minimum. Empty/free/unreadable
+  // treatment catalogs must never produce a permissive invented minimum.
+  f.price=0;assert.equal((await f.request('/certificate-types')).response.status,503);
+  f.runtime.fetch=async()=>{throw new Error('Upstream unavailable');};
+  assert.equal((await f.request('/certificate-types')).response.status,503);
  }
 });
 
