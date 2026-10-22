@@ -235,8 +235,9 @@ type Message struct {
 	ContentType    messaging.ContentType
 	Text           string
 
-	// ExternalMessageID is the provider's identifier for an inbound message,
-	// and empty for replies this system generated.
+	// ExternalMessageID is the provider's identifier for an inbound message
+	// or a staff reply observed from the native business inbox. It is empty
+	// for replies this system generated.
 	ExternalMessageID string
 
 	CreatedAt time.Time
