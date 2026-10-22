@@ -13,17 +13,17 @@ import (
 )
 
 type nativeRecord struct {
-	ID             int64          `json:"id"`
-	CompanyID      int64          `json:"company_id"`
-	Datetime       string         `json:"datetime"`
-	Length         int64          `json:"seance_length"`
-	TechnicalBreak int64          `json:"technical_break_duration"`
-	Deleted        bool           `json:"deleted"`
-	Created        string         `json:"create_date"`
-	Changed        string         `json:"last_change_date"`
-	APIID          nativeSourceID `json:"api_id"`
-	Online         bool           `json:"online"`
-	Attendance     int            `json:"attendance"`
+	ID             int64            `json:"id"`
+	CompanyID      int64            `json:"company_id"`
+	Datetime       string           `json:"datetime"`
+	Length         int64            `json:"seance_length"`
+	TechnicalBreak int64            `json:"technical_break_duration"`
+	Deleted        bool             `json:"deleted"`
+	Created        string           `json:"create_date"`
+	Changed        string           `json:"last_change_date"`
+	APIID          nativeExternalID `json:"api_id"`
+	Online         bool             `json:"online"`
+	Attendance     int              `json:"attendance"`
 	Client         *struct {
 		ID    int64  `json:"id"`
 		Name  string `json:"name"`
@@ -39,11 +39,11 @@ type nativeRecord struct {
 	} `json:"services"`
 }
 
-// Altegio represents an absent API source as null, "", "0" or numeric zero.
-// A real source must remain distinct from a native/admin appointment.
-type nativeSourceID string
+// Altegio represents an absent external appointment ID as null, "", "0" or
+// numeric zero. A nonempty value does not identify an API-created appointment.
+type nativeExternalID string
 
-func (v *nativeSourceID) UnmarshalJSON(raw []byte) error {
+func (v *nativeExternalID) UnmarshalJSON(raw []byte) error {
 	if string(raw) == "null" {
 		*v = ""
 		return nil
@@ -59,7 +59,7 @@ func (v *nativeSourceID) UnmarshalJSON(raw []byte) error {
 	if text == "0" {
 		text = ""
 	}
-	*v = nativeSourceID(text)
+	*v = nativeExternalID(text)
 	return nil
 }
 

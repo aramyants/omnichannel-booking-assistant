@@ -29,7 +29,7 @@ type Snapshot struct {
 	Booking   booking.Booking `firestore:"booking"`
 	Phone     string          `firestore:"phone"`
 	ChangedAt time.Time       `firestore:"changed_at"`
-	APIID     string          `firestore:"api_id"`
+	APIID     string          `firestore:"api_id"` // Native external appointment ID, not a source/app ID.
 	Online    bool            `firestore:"online"`
 	Attended  bool            `firestore:"attended,omitempty"`
 }
@@ -260,12 +260,8 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 				purpose = BookingCancelled
 			}
 			permission := record.Contact
-			if first && row.Event.Status == "create" && snap.Online && snap.APIID == "" && !s.BookingPermissionSince.IsZero() && !snap.Booking.CreatedAt.Before(s.BookingPermissionSince) {
-				if phone, err := customer.NormalizePhone(snap.Phone); err == nil {
-					permission = Contact{Phone: phone, RequestedAt: snap.Booking.CreatedAt}
-				}
-			}
-			if first && row.Event.Status == "create" && snap.APIID == "" && !snap.Online && !s.ManualPermissionSince.IsZero() && !snap.Booking.CreatedAt.Before(s.ManualPermissionSince) {
+			since := s.nativeRequestSince(snap)
+			if first && row.Event.Status == "create" && !since.IsZero() && !snap.Booking.CreatedAt.Before(since) {
 				if phone, err := customer.NormalizePhone(snap.Phone); err == nil {
 					permission = Contact{Phone: phone, RequestedAt: snap.Booking.CreatedAt}
 				}
@@ -358,19 +354,17 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 		telegramLanguage = sharedLanguage.Contact.Language
 		whatsappLanguage = sharedLanguage.Contact.Language
 	}
-	// A request printed at native booking submission applies only to new online
-	// records after rollout, never imported/API or administrator records.
+	// Native online and manual bookings have separate rollout cutoffs. api_id is
+	// an external appointment identifier; a dashboard-created booking can have it.
+	// Owned app IDs continue through their own confirmation/consent paths.
 	permission, err := s.Repo.GetNotification(ctx, Key("record", row.Event.RecordID))
 	if err != nil {
 		return err
 	}
-	// Repair a native source that previously arrived as the string "0". Only
-	// the same current recipient can acquire the original creation permission.
-	if permission.Contact.RequestedAt.IsZero() && permission.CalendarPhone == phone && !latest.Online && latest.APIID == "" && !latest.Booking.CreatedAt.IsZero() {
-		since := s.BookingPermissionSince
-		if !latest.Online {
-			since = s.ManualPermissionSince
-		}
+	// Repair proven-unsent manual notices suppressed by the old external-ID
+	// classification. Never transfer the original request to a replacement phone.
+	if permission.Contact.RequestedAt.IsZero() && permission.CalendarPhone == phone && !latest.Online && !latest.Booking.CreatedAt.IsZero() {
+		since := s.nativeRequestSince(latest)
 		if !since.IsZero() && !latest.Booking.CreatedAt.Before(since) {
 			recordKey := Key("record", row.Event.RecordID)
 			if err = s.Repo.TransactNotifications(ctx, []string{recordKey}, func(rows map[string]*Entry) error {
@@ -384,10 +378,11 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 			}
 		}
 	}
-	requested := !permission.Contact.RequestedAt.IsZero() && permission.Contact.Phone == phone && latest.Online && latest.APIID == "" && !s.BookingPermissionSince.IsZero() && !permission.Contact.RequestedAt.Before(s.BookingPermissionSince)
-	manualRequested := !s.ManualPermissionSince.IsZero() && !permission.Contact.RequestedAt.Before(s.ManualPermissionSince) && permission.Contact.Phone == phone && !latest.Online && latest.APIID == ""
+	since := s.nativeRequestSince(latest)
+	requested := !permission.Contact.RequestedAt.IsZero() && permission.Contact.Phone == phone && !since.IsZero() && !permission.Contact.RequestedAt.Before(since)
+	manualRequested := requested && !latest.Online
 	webRequested := strings.HasPrefix(latest.APIID, "emotion-web-v2-") && webPermission.Contact.Phone == phone && webPermission.Contact.ExpiresAt.After(now)
-	requested = requested || manualRequested || webRequested
+	requested = requested || webRequested
 	staffRequested := staffPermission.Contact.Phone == phone && staffPermission.Contact.ExpiresAt.After(now) && !staffPermission.Contact.Blocked
 	if staffRequested {
 		requested = true
@@ -515,6 +510,18 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 		}
 	}
 	return nil
+}
+
+// Altegio documents api_id as an external appointment ID and online as the
+// client/admin distinction. Only our explicit prefixes identify our own flows.
+func (s *Service) nativeRequestSince(snap Snapshot) time.Time {
+	if strings.HasPrefix(snap.APIID, "omnichannel-") || strings.HasPrefix(snap.APIID, "emotion-web-") {
+		return time.Time{}
+	}
+	if snap.Online {
+		return s.BookingPermissionSince
+	}
+	return s.ManualPermissionSince
 }
 
 // AllowPhone records a client's request documented by authenticated studio

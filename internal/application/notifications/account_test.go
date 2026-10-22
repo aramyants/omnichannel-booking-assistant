@@ -43,7 +43,9 @@ func TestOnlineRequestDoesNotApplyToAdministratorOrChangedPhone(t *testing.T) {
 	}{
 		{"new online booking", "create", true, "", false, 1},
 		{"administrator booking", "create", false, "", false, 0},
-		{"external API booking", "create", true, "external-app", false, 0},
+		{"native external appointment ID", "create", true, "external-app", false, 1},
+		{"owned website booking", "create", true, "emotion-web-v2-test", false, 0},
+		{"owned assistant booking", "create", true, "omnichannel-test", false, 0},
 		{"before visible permission", "create", true, "", true, 0},
 		{"lost creation event", "update", true, "", false, 0},
 	} {

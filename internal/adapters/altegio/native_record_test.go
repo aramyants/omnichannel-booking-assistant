@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestNativeSourceZeroFormsAreNotThirdPartyAPI(t *testing.T) {
+func TestNativeExternalIDNormalizesAbsentValuesAndPreservesIDs(t *testing.T) {
 	for _, raw := range []string{`null`, `""`, `"0"`, `0`, `"external-app"`, `2555`} {
 		var dto nativeRecord
 		if err := json.Unmarshal([]byte(`{"api_id":`+raw+`}`), &dto); err != nil {
