@@ -14,7 +14,7 @@ import (
 // replay protection. It deliberately does not wait for the assistant's lease:
 // an already-running model turn must see that staff have started answering.
 type externalReplyRepository interface {
-	RecordExternalReply(context.Context, conversation.Conversation, conversation.Message, time.Time, time.Time) error
+	RecordExternalReplyObserved(context.Context, conversation.Conversation, conversation.Message, time.Time, time.Time) (conversation.Conversation, bool, error)
 }
 
 func (s *Service) RecordExternalReply(ctx context.Context, reply messaging.ExternalReply) error {
@@ -34,7 +34,7 @@ func (s *Service) RecordExternalReply(ctx context.Context, reply messaging.Exter
 	if err != nil {
 		return err
 	}
-	return repository.RecordExternalReply(ctx, conversation.Conversation{
+	conv, observed, err := repository.RecordExternalReplyObserved(ctx, conversation.Conversation{
 		ID: id.New(), CustomerID: cust.ID, Provider: reply.Provider,
 		ExternalThreadID: reply.ExternalThreadID, State: conversation.StateAssistantActive,
 		CreatedAt: now, UpdatedAt: now, LastMessageAt: now,
@@ -43,12 +43,23 @@ func (s *Service) RecordExternalReply(ctx context.Context, reply messaging.Exter
 		ContentType: reply.Content.Type, Text: reply.Content.Text,
 		ExternalMessageID: reply.ExternalMessageID, CreatedAt: reply.SentAt,
 	}, reply.SentAt, now)
+	if err != nil {
+		return err
+	}
+	if observed {
+		history, _ := s.History(ctx, conv.ID)
+		if len(history) > 6 {
+			history = history[len(history)-6:]
+		}
+		s.notifyStaff(ctx, HandoffNotice{ConversationID: conv.ID, Reason: ReasonStaffReplied, Detail: "An administrator replied in the client chat. Assistant paused; use Resume to return it now, or it resumes on the next client message after 2 hours without an administrator reply.", Provider: reply.Provider, Customer: cust, ExternalUserID: reply.ExternalThreadID, Recent: history, RequestedAt: now})
+	}
+	return nil
 }
 
 func (s *Service) checkExternalReply(ctx context.Context, conv conversation.Conversation) error {
-	if conv.Provider != messaging.ProviderWhatsApp {
+	if conv.Provider == "" {
 		return nil
-	}
+	} // Internal sessions without a channel cannot receive echoes.
 	current, err := s.conversations.FindByID(ctx, conv.ID)
 	if err != nil {
 		return fmt.Errorf("check whether staff have replied: %w", err)

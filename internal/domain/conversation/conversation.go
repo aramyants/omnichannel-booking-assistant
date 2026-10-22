@@ -204,7 +204,7 @@ func (c *Conversation) TransitionTo(next State, at time.Time) error {
 				c.AssistantResumedAt = at
 			}
 
-			if next == StateHumanRequested {
+			if next == StateHumanRequested || next == StateHumanActive {
 				c.HandoffAt = at
 			}
 			return nil

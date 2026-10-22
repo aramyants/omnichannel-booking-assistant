@@ -32,6 +32,7 @@ const (
 	// check the calendar before the customer is told anything.
 	ReasonBookingUnresolved  HandoffReason = "booking_unresolved"
 	ReasonChannelUnavailable HandoffReason = "channel_unavailable"
+	ReasonStaffReplied       HandoffReason = "staff_replied"
 )
 
 // Urgent reports whether the business should act now rather than in due course.

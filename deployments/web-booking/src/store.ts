@@ -54,7 +54,12 @@ export class Store {
   await this.db.prepare("INSERT OR IGNORE INTO reminder_jobs(draft_id,state,due_at,expires_at,updated_at) VALUES(?,'pending',?,?,?)").bind(id,due,due+900,now).run();
  }
  async remindersDue(now:number):Promise<Draft[]>{
-  const result=await this.db.prepare(`SELECT d.* FROM reminder_jobs r JOIN drafts d ON d.id=r.draft_id WHERE r.state='pending' AND r.due_at<=? AND d.status='confirmed' ORDER BY r.due_at LIMIT 2`).bind(now).all<Draft>();return result.results;
+  const result=await this.db.prepare(`SELECT d.* FROM reminder_jobs r JOIN drafts d ON d.id=r.draft_id WHERE r.state='pending' AND r.due_at<=? AND d.status='confirmed' ORDER BY r.due_at LIMIT 8`).bind(now).all<Draft>();return result.results;
+ }
+ async recoverReminderHandoffs(now:number):Promise<void>{
+  // Only the new idempotent Go handoff can be replayed. Legacy SMS send intents
+  // stay untouched because an unknown provider outcome must never be repeated.
+  await this.db.prepare(`UPDATE reminder_jobs SET state='pending',updated_at=? WHERE state='checking' AND updated_at<? AND draft_id IN (SELECT id FROM drafts WHERE json_extract(summary,'$.reminderMinutes') IS NOT NULL)`).bind(now,now-300).run();
  }
  async reminderState(id:string,from:string,to:string,now:number):Promise<boolean>{
   const result=await this.db.prepare('UPDATE reminder_jobs SET state=?,updated_at=? WHERE draft_id=? AND state=?').bind(to,now,id,from).run();return !!result.meta.changes;

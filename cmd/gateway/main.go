@@ -264,6 +264,9 @@ func run() error {
 			}
 			guard := &notifications.HealthGuard{Provider: provider, Repo: repo, Read: client.ReadHealth}
 			client.SetAuthRejected(guard.Block)
+			if nativeNotifications != nil {
+				client.SetOutboundRecorder(nativeNotifications.RecordDirectSend)
+			}
 			directHealth[provider] = guard
 		}
 	}
@@ -352,14 +355,14 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		gw.messenger = meta.NewMessengerHandler(webhook, assistantService, logger, cfg.Messenger.AccountID).WithFeedback(messengerClient).WithProfiles(messengerClient)
+		gw.messenger = meta.NewMessengerHandler(webhook, notificationMessages{service: nativeNotifications, next: assistantService}, logger, cfg.Messenger.AccountID).WithFeedback(messengerClient).WithProfiles(messengerClient)
 	}
 	if cfg.Instagram.Enabled() {
 		webhook, err := meta.NewWebhook(cfg.Instagram.AppSecret, cfg.Instagram.VerifyToken)
 		if err != nil {
 			return err
 		}
-		gw.instagram = meta.NewInstagramHandler(webhook, assistantService, logger, cfg.Instagram.AccountID).WithFeedback(instagramClient).WithProfiles(instagramClient)
+		gw.instagram = meta.NewInstagramHandler(webhook, notificationMessages{service: nativeNotifications, next: assistantService}, logger, cfg.Instagram.AccountID).WithFeedback(instagramClient).WithProfiles(instagramClient)
 	}
 
 	srv, err := httpserver.New(ctx, cfg.Addr(), gw.routes(), logger, cfg.ShutdownTimeout)

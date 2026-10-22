@@ -499,6 +499,38 @@ test('one reminder re-reads the owned appointment and sends only once',async()=>
  f.advance(301);await runNotifications(f.env,f.runtime);assert.equal(f.counts.sentSms,2);
  const reminder=f.db.db.prepare("SELECT status FROM sms_outbox WHERE purpose='reminder'").get() as {status:string};assert.equal(reminder.status,'Delivered');
 });
+
+test('form reminder choices validate, persist and allow opting out',async()=>{
+ for(const minutes of [0,60,120,1440]){
+  const f=fixture();f.env.SMS_REMINDERS_ENABLED='true';await f.verified();
+  const draft=await f.request('/drafts',{serviceId:'13827004',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Guest',consent:true,reminderMinutes:minutes});
+  assert.equal(draft.response.status,200);await f.request('/appointments',{draftId:draft.value.draft.id});
+  const row=f.db.db.prepare('SELECT summary FROM drafts').get() as {summary:string};assert.equal(JSON.parse(row.summary).reminderMinutes,minutes);
+  const jobs=f.db.db.prepare('SELECT COUNT(*) AS count FROM reminder_jobs').get() as {count:number};assert.equal(jobs.count,minutes===0?0:1);
+ }
+ const f=fixture();await f.verified();
+ for(const minutes of [-1,1,61,120.5,'120',true]){
+  assert.equal((await f.request('/drafts',{serviceId:'13827004',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Guest',consent:true,reminderMinutes:minutes})).response.status,400);
+ }
+});
+
+test('new reminders hand off once to channel routing and recover a lost response without SMS',async()=>{
+ const f=fixture();f.env.SMS_REMINDERS_ENABLED='true';await f.verified();
+ const draft=await f.request('/drafts',{serviceId:'13827004',staffId:'99',datetime:'2026-10-21T12:00:00+04:00',name:'Guest',consent:true,reminderMinutes:60});await f.request('/appointments',{draftId:draft.value.draft.id});
+ f.env.ECOSYSTEM_GATEWAY_ORIGIN='https://omnichannel-booking-assistant-q6l3x4lyuq-ew.a.run.app';
+ const upstream=f.runtime.fetch;let handoffs=0;
+ f.runtime.fetch=async(input,init)=>{
+  if(String(input).includes('/internal/booking-context')){
+   const request=JSON.parse(String(init!.body));
+   if(request.action==='record-context')return Response.json({locale:'en',eligible:true});
+   if(request.action==='reminder'){handoffs++;assert.equal(request.reminderMinutes,60);assert.equal(request.recordId,'6789');assert(request.managementProof);if(handoffs===1)throw new Error('lost response');return Response.json({locale:'en'});}
+   return Response.json({locale:'en',calendarUrl:'https://book.motionconcept.rest/calendar/42?key=fixture'});
+  }return upstream(input,init);
+ };
+ f.advance(27*3600);await runNotifications(f.env,f.runtime);assert.equal(handoffs,1);assert.equal(f.counts.sentSms,1);
+ await runNotifications(f.env,f.runtime);await runNotifications(f.env,f.runtime);assert.equal(handoffs,2);assert.equal(f.counts.sentSms,1);
+ assert.equal((f.db.db.prepare('SELECT state FROM reminder_jobs').get() as {state:string}).state,'done');
+});
 test('bookings made close to the visit do not schedule a late two-hour reminder',async()=>{
  const f=fixture();f.env.SMS_REMINDERS_ENABLED='true';f.advance(27*3600);await f.verified();const draft=await f.draft();
  assert.equal((await f.request('/appointments',{draftId:draft.value.draft.id})).value.status,'confirmed');

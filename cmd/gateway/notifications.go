@@ -63,7 +63,16 @@ func openNotifications(ctx context.Context, cfg config.Config, store appStore, r
 			return nil, nil, nil, nil, err
 		}
 	}
-	service := &notifications.Service{Repo: repo, Scheduler: scheduler, Reader: reader, Owned: store, Sender: nativeNotificationSender{tg: tg, wa: wa, account: account, sms: sms, store: store, logger: logger, location: cfg.Altegio.Location, renderer: newAppointmentMessages(cfg), bookingURL: cfg.BusinessProfile.BookingURL, websiteURL: cfg.BusinessProfile.WebsiteURL}, ActivatedAt: cfg.Notifications.ActivatedAt, WhatsAppTemplates: cfg.Notifications.WhatsAppTemplates, TelegramAccount: account != nil, BookingPermissionSince: cfg.Notifications.BookingPermissionSince, NativeLanguage: cfg.Notifications.NativeLanguage, SMSReady: sms != nil, SMSPermissionSince: cfg.Notifications.SMSPermissionSince}
+	templates := map[string]string{}
+	for key, name := range cfg.Notifications.WhatsAppTemplates {
+		templates[key] = name
+	}
+	for lang, name := range cfg.WhatsApp.ReminderTemplates {
+		if name != "" {
+			templates[string(notifications.BookingReminder)+":"+lang] = name
+		}
+	}
+	service := &notifications.Service{Repo: repo, Scheduler: scheduler, Reader: reader, Owned: store, Sender: nativeNotificationSender{tg: tg, wa: wa, account: account, sms: sms, store: store, logger: logger, location: cfg.Altegio.Location, renderer: newAppointmentMessages(cfg), bookingURL: cfg.BusinessProfile.BookingURL, websiteURL: cfg.BusinessProfile.WebsiteURL}, ActivatedAt: cfg.Notifications.ActivatedAt, WhatsAppTemplates: templates, TelegramAccount: account != nil, BookingPermissionSince: cfg.Notifications.BookingPermissionSince, NativeLanguage: cfg.Notifications.NativeLanguage, SMSReady: sms != nil, SMSPermissionSince: cfg.Notifications.SMSPermissionSince}
 	service.ManualPermissionSince = cfg.Notifications.ManualPermissionSince
 	if sms != nil {
 		service.SMSStatus = func(ctx context.Context, notice notifications.Notice) (string, error) {
@@ -292,6 +301,9 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 		"ru": {notifications.BookingCreated: "Ваша запись подтверждена", notifications.BookingChanged: "Ваша запись изменена", notifications.BookingCancelled: "Ваша запись отменена"},
 		"hy": {notifications.BookingCreated: "Ձեր ամրագրումը հաստատված է", notifications.BookingChanged: "Ձեր ամրագրումը փոփոխված է", notifications.BookingCancelled: "Ձեր ամրագրումը չեղարկված է"},
 	}[lang][notice.Purpose]
+	if notice.Purpose == notifications.BookingReminder {
+		title = map[string]string{"en": "Appointment reminder", "ru": "Напоминание о записи", "hy": "Այցի հիշեցում"}[lang]
+	}
 	if target.Channel == notifications.SMS {
 		if s.sms == nil {
 			return true, errors.New("SMS unavailable")
@@ -319,6 +331,11 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 		if s.wa == nil {
 			return true, errors.New("WhatsApp unavailable")
 		}
+		if notice.Purpose == notifications.BookingReminder {
+			sender := meta.TemplateReminders{Client: s.wa, Templates: map[string]string{lang: target.TemplateID}, Location: s.location}
+			err := sender.SendReminderWithReference(ctx, messaging.Outgoing{Provider: messaging.ProviderWhatsApp, ExternalThreadID: target.Address}, lang, b, calendarURL, "native-booking:"+notice.ID)
+			return errors.Is(err, meta.ErrRejected), err
+		}
 		err := s.wa.SendBookingTemplateWithReference(ctx, target.Address, target.TemplateID, lang, []string{title, when, details}, "native-booking:"+notice.ID)
 		return errors.Is(err, meta.ErrRejected), err
 	}
@@ -329,6 +346,8 @@ func (s nativeNotificationSender) SendNotification(ctx context.Context, target n
 		render = s.renderer.Changed
 	case notifications.BookingCancelled:
 		render = s.renderer.Cancelled
+	case notifications.BookingReminder:
+		render = s.renderer.Reminder
 	}
 	text := render(appointmentmessage.Language(lang), appointment)
 	msg := messaging.Outgoing{Provider: messaging.ProviderTelegram, ExternalThreadID: target.Address, Text: text}
@@ -398,6 +417,31 @@ type notificationMessages struct {
 // The Meta handler applies these before customer messages so staff takeover
 // can suppress an assistant answer already being composed.
 func (h notificationMessages) RecordExternalReply(ctx context.Context, reply messaging.ExternalReply) error {
+	if reply.Provider == messaging.ProviderInstagram || reply.Provider == messaging.ProviderMessenger {
+		if h.service == nil {
+			return errors.New("outbound echo registry unavailable")
+		}
+		// The signed echo may race the Send API response. Briefly allow the
+		// opaque response ID to be persisted before treating an echo as staff.
+		for attempt := 0; attempt < 4; attempt++ {
+			own, err := h.service.IsDirectSend(ctx, reply.Provider, reply.ExternalMessageID)
+			if err != nil {
+				return err
+			}
+			if own {
+				return nil
+			}
+			if attempt < 3 {
+				timer := time.NewTimer(500 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return ctx.Err()
+				case <-timer.C:
+				}
+			}
+		}
+	}
 	recorder, ok := h.next.(interface {
 		RecordExternalReply(context.Context, messaging.ExternalReply) error
 	})

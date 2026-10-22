@@ -42,8 +42,10 @@ history-sharing choice.
 Subscribe the webhook to `smb_message_echoes` as well as `messages`. Each echo
 is a message a colleague sent from the WhatsApp Business app on the phone. The
 service stores it in the transcript as an outbound message and hands the
-conversation to that colleague. The assistant stops answering until the manager
-uses the one-shot “Done — return to assistant” action on the handoff notification.
+conversation to that colleague and forwards a short transcript to the managers'
+chat. The assistant stops answering until the manager uses the one-shot
+“Done — return to assistant” action, or the next customer message after two hours
+without a staff reply. Each new staff reply restarts that inactivity window.
 An assistant turn that was already running when the
 echo arrived is dropped rather than sent. Echoes are deduplicated by message id,
 so Meta redelivering one changes nothing, and an echo that arrives late for a
@@ -53,6 +55,13 @@ fetched. Only `smb_message_echoes` has this effect: Cloud API `message_echoes`
 and delivery `statuses` are ignored. The `history` and `smb_app_state_sync`
 fields are not handled yet, so contact and chat history from the phone are not
 imported.
+
+Messenger `message_echoes` and Instagram outbound `messages` echoes apply the
+same takeover policy. Business asset and signature checks still apply. App-tagged
+automated messages and our own persisted Send API message IDs do not count as
+staff replies. Telegram staff-inbox replies use the same pause and resume flow;
+a normal Bot API connection cannot observe messages sent in an unrelated private
+Telegram user-account chat.
 [Meta's coexistence documentation](https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-business-app-users).
 
 For a separate number that is not kept in the Business app, use standard Cloud API

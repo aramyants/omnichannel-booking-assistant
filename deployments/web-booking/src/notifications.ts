@@ -31,17 +31,19 @@ export async function runNotifications(env:Env,runtime:Runtime):Promise<void>{
   }catch{/* Unknown reads never become delivered or failed and never resend. */}
  }
  if(env.SMS_REMINDERS_ENABLED!=='true')return;
+ if(env.ECOSYSTEM_GATEWAY_ORIGIN)await store.recoverReminderHandoffs(now);
  for(const draft of await store.remindersDue(now))await reminder(env,runtime,store,draft,now);
 }
 async function reminder(env:Env,runtime:Runtime,store:Store,draft:Draft,now:number):Promise<void>{
  if(!await store.reminderState(draft.id,'pending','checking',now))return;
  const summary=JSON.parse(draft.summary) as Summary,appointment=JSON.parse(draft.appointment!) as Appointment;
- const due=Date.parse(summary.datetime)/1000-7200;
+ const lead=summary.reminderMinutes??120,due=Date.parse(summary.datetime)/1000-lead*60;
+ if(![60,120,1440].includes(lead)){await store.reminderState(draft.id,'checking','skipped',now);return;}
  if(now>due+900||Date.parse(summary.datetime)/1000<=now||!summary.consent||!draft.management_hash||!env.ALTEGIO_USER_TOKEN){await store.reminderState(draft.id,'checking','skipped',now);return;}
  const daily=smsCap(env.SMS_DAILY_CAP),monthly=smsCap(env.SMS_MONTHLY_CAP);
- if(daily===0||monthly===0){await store.reminderState(draft.id,'checking','skipped',now);return;}
+ if((!env.ECOSYSTEM_GATEWAY_ORIGIN||summary.reminderMinutes===undefined)&&(daily===0||monthly===0)){await store.reminderState(draft.id,'checking','skipped',now);return;}
  try{
-  credentials(env);allowedDestination(draft.phone,env);
+  if(!env.ECOSYSTEM_GATEWAY_ORIGIN||summary.reminderMinutes===undefined){credentials(env);allowedDestination(draft.phone,env);}
   const client=new Altegio(env,runtime),live=await client.readOwned(appointment.id,draft.management_hash);
   const expected=summary.serviceIds||[summary.serviceId];
   if(live.deleted||live.datetime!==summary.datetime||live.staffId!==summary.staffId||live.serviceIds.length!==expected.length||!expected.every(id=>live.serviceIds.includes(id))||live.reservedMinutes!==summary.reservedMinutes||(live.phone&&!samePhone(live.phone,draft.phone))){
@@ -57,6 +59,15 @@ async function reminder(env:Env,runtime:Runtime,store:Store,draft:Draft,now:numb
  }catch{
   // No customer send intent exists yet; retry only the read within the due window.
   await store.reminderState(draft.id,'checking','pending',now);return;
+ }
+ if(env.ECOSYSTEM_GATEWAY_ORIGIN&&summary.reminderMinutes!==undefined){
+  try{
+   // This signed handoff creates one deterministic event. Retrying a lost
+   // response never sends another reminder or changes the appointment.
+   await ecosystemContext(env,runtime,{action:'reminder',phone:draft.phone,recordId:appointment.id,managementProof:draft.management_hash,reminderMinutes:lead});
+   await store.reminderState(draft.id,'checking','done',now);
+  }catch{await store.reminderState(draft.id,'checking','pending',now);}
+  return;
  }
  const id=randomToken(16),expiry=Math.min(now+900,Date.parse(summary.datetime)/1000);
  try{

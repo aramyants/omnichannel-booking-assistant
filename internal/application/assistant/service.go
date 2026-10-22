@@ -472,7 +472,7 @@ func (s *Service) Handle(ctx context.Context, msg messaging.Envelope) (resultErr
 
 	// A colleague was asked for and never arrived. Resuming is better than
 	// leaving the customer talking to nobody indefinitely.
-	if conv.WaitingForHumanLongerThan(handoffTimeout, now) {
+	if conv.WaitingForHumanLongerThan(handoffTimeout, now) || (conv.State == conversation.StateHumanActive && !conv.HandoffAt.IsZero() && now.Sub(conv.HandoffAt) > handoffTimeout) {
 		if err := conv.TransitionTo(conversation.StateAssistantActive, now); err != nil {
 			s.logger.ErrorContext(ctx, "could not resume a conversation nobody picked up",
 				"error", err, "conversation_id", conv.ID)

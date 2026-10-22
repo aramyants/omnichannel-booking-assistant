@@ -74,6 +74,7 @@ type Entry struct {
 	CalendarPhone       string                  `firestore:"calendar_phone,omitempty"`
 	ManagementToken     string                  `firestore:"management_token,omitempty"`
 	ManagementPhone     string                  `firestore:"management_phone,omitempty"`
+	ConfirmationChannel Channel                 `firestore:"confirmation_channel,omitempty"`
 }
 type Repository interface {
 	TransactNotifications(context.Context, []string, func(map[string]*Entry) error) error
@@ -270,6 +271,7 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 				}
 			}
 			calendarID := record.CalendarID
+			confirmationChannel := record.ConfirmationChannel
 			managementToken, managementPhone := record.ManagementToken, record.ManagementPhone
 			if calendarID == "" || record.CalendarPhone != snap.Phone {
 				calendarID = uuid.NewString()
@@ -277,6 +279,7 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 			}
 			*record = Entry{Kind: "record", Fingerprint: fp, ChangedAt: snap.ChangedAt, UpdatedAt: now, Contact: permission, CalendarID: calendarID, CalendarPhone: snap.Phone}
 			record.ManagementToken, record.ManagementPhone = managementToken, managementPhone
+			record.ConfirmationChannel = confirmationChannel
 			event.Notice = Notice{ID: event.Event.ID, Snapshot: snap, Purpose: purpose, Fingerprint: fp}
 			event.State = "prepared"
 			event.UpdatedAt = now
@@ -309,6 +312,9 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 	}
 	if latest.Booking.Status != booking.StatusCancelled && !latest.Booking.StartsAt.After(s.now()) {
 		return s.finish(ctx, key, owner, "appointment_started")
+	}
+	if row.Notice.Purpose == BookingReminder && (s.now().Sub(row.Event.ReceivedAt) > 15*time.Minute || latest.Booking.Status == booking.StatusCancelled) {
+		return s.finish(ctx, key, owner, "reminder_expired")
 	}
 	phone, err := customer.NormalizePhone(latest.Phone)
 	if err != nil {
@@ -408,6 +414,9 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 	if policyRow.Order == "whatsapp" {
 		order = []Channel{WhatsApp, Telegram}
 	}
+	if row.Notice.Purpose == BookingReminder && permission.ConfirmationChannel == WhatsApp {
+		order = []Channel{WhatsApp, Telegram}
+	}
 	template := s.WhatsAppTemplates[string(row.Notice.Purpose)+":"+whatsappLanguage]
 	whatsappReady := template != ""
 	if whatsappReady && s.Health != nil {
@@ -416,7 +425,8 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 			return err
 		}
 	}
-	targets, err := Plan(Policy{MessengerOrder: order, TelegramAccount: s.TelegramAccount, Enabled: map[Channel]bool{Telegram: true, WhatsApp: whatsappReady, SMS: s.SMSReady && smsRequested}, Templates: map[Purpose]string{row.Notice.Purpose: template}}, recipient, row.Notice.Purpose)
+	smsOnly := row.Notice.Purpose == BookingReminder && permission.ConfirmationChannel == SMS
+	targets, err := Plan(Policy{MessengerOrder: order, TelegramAccount: s.TelegramAccount, Enabled: map[Channel]bool{Telegram: !smsOnly, WhatsApp: whatsappReady && !smsOnly, SMS: s.SMSReady && smsRequested}, Templates: map[Purpose]string{row.Notice.Purpose: template}}, recipient, row.Notice.Purpose)
 	if err != nil {
 		return err
 	}
@@ -472,6 +482,17 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 		}
 		// Once this intent is durable, a timeout is ambiguous and is never repeated.
 		rejected, sendErr := s.Sender.SendNotification(ctx, target, row.Notice, lang)
+		if row.Notice.Purpose != BookingReminder && (sendErr == nil || !rejected) {
+			recordKey := Key("record", row.Event.RecordID)
+			if err := s.Repo.TransactNotifications(ctx, []string{recordKey}, func(rows map[string]*Entry) error {
+				if rows[recordKey].CalendarPhone == phone {
+					rows[recordKey].ConfirmationChannel = target.Channel
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
 		outcome := "accepted_" + route
 		if sendErr != nil {
 			outcome = "uncertain_" + route

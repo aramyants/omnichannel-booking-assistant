@@ -116,7 +116,8 @@ async function book(store:Store,env:Env,runtime:Runtime,session:Session,request:
   await store.state(id,'sending','uncertain',nowSeconds(runtime));return {status:'uncertain',message:'Please contact the studio before booking again. We are checking the result.'};
  }
  const appointment:Appointment={id:created.id,serviceName:summary.serviceName,staffName:summary.staffName,datetime:summary.datetime,durationMinutes:summary.durationMinutes,price:summary.price,priceMin:summary.priceMin,priceMax:summary.priceMax};
- try {await store.confirmed(id,appointment,created.managementHash,nowSeconds(runtime),env.SMS_REMINDERS_ENABLED==='true'?Date.parse(summary.datetime)/1000-7200:undefined);}catch{return {status:'uncertain',message:'Please contact the studio to check your booking before trying again.'};}
+ const reminderLead=summary.reminderMinutes??120;
+ try {await store.confirmed(id,appointment,created.managementHash,nowSeconds(runtime),env.SMS_REMINDERS_ENABLED==='true'&&reminderLead>0?Date.parse(summary.datetime)/1000-reminderLead*60:undefined);}catch{return {status:'uncertain',message:'Please contact the studio to check your booking before trying again.'};}
  // Booking success survives a notification/configuration failure. No provider retry.
  draft.management_hash=created.managementHash;
  try{await optionalConfirmation(store,env,runtime,session,request,draft,appointment);}catch{/* durable provider attempts remain available for operator review */}
@@ -230,7 +231,8 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    return json({phoneVerified:true,phone:attempt.otp_phone});
   }
   if(path==='/drafts'){
-   onlyKeys(data,['serviceId','staffId','datetime','name','consent','email','comment','extraId','certificateId']);
+   onlyKeys(data,['serviceId','staffId','datetime','name','consent','email','comment','extraId','certificateId','reminderMinutes']);
+   if(data.reminderMinutes!==undefined&&![0,60,120,1440].includes(data.reminderMinutes as number))throw new Failure('invalid_reminder');
    if(!session.phone)throw new Failure('verification_required',403,'Verify your booking phone first.');
    if(data.consent!==true)throw new Failure('consent_required',400,'Please confirm the booking request.');
    if(data.certificateId!==undefined)throw new Failure('certificate_unavailable',409);
@@ -245,7 +247,7 @@ async function handleRequest(request:Request,env:Env,runtime:Runtime):Promise<Re
    if((data.comment!==undefined&&typeof data.comment!=='string')||comment.length>1000||/[<>\u0000-\u0008\u000b-\u001f\u007f]/.test(comment))throw new Failure('invalid_comment');
    await client.check(summary);
    const preference=await ecosystemContext(env,runtime,{action:'prepare',phone:session.phone,locale:requestLanguage(request),explicit:request.headers.get('X-Booking-Language-Source')==='explicit',consent:true});
-   summary.locale=preference.locale;summary.email=email;summary.comment=comment;
+   summary.locale=preference.locale;summary.email=email;summary.comment=comment;summary.reminderMinutes=data.reminderMinutes===undefined?120:data.reminderMinutes as number;
    await store.saveDraft(session,summary,now);const {reservedMinutes:_privateReservation,certificate,...publicSummary}=summary;return json({draft:{...publicSummary,...(certificate?{certificate:{id:certificate.id,title:certificate.title}}:{})},phoneVerified:true});
   }
   if(path==='/appointments'){

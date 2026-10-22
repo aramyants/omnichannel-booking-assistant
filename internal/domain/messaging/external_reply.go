@@ -17,7 +17,8 @@ type ExternalReply struct {
 }
 
 func (r ExternalReply) Validate() error {
-	if r.Provider != ProviderWhatsApp || r.ExternalMessageID == "" || r.ExternalThreadID == "" || r.Content.Type == "" || r.SentAt.IsZero() || r.ReceivedAt.IsZero() {
+	validProvider := r.Provider == ProviderWhatsApp || r.Provider == ProviderInstagram || r.Provider == ProviderMessenger || r.Provider == ProviderTelegram
+	if !validProvider || r.ExternalMessageID == "" || r.ExternalThreadID == "" || r.Content.Type == "" || r.SentAt.IsZero() || r.ReceivedAt.IsZero() {
 		return fmt.Errorf("%w: invalid external staff reply", ErrInvalidEnvelope)
 	}
 	return nil

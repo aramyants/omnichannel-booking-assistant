@@ -29,7 +29,7 @@ export interface Summary {
  datetime: string; name: string; durationMinutes: number; price: string;
  reservedMinutes: number;
  priceMin: number; priceMax: number; currency: string; consent: true;
- locale?:'ru'|'en'|'hy'; email?:string; comment?:string;
+ locale?:'ru'|'en'|'hy'; email?:string; comment?:string; reminderMinutes?:number;
  extraId?:string; serviceIds?:string[];
  certificate?:{id:string;title:string;number:string};
 }

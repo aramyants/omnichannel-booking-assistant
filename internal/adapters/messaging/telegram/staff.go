@@ -126,7 +126,9 @@ func (n *StaffNotifier) moveTo(chatID string) {
 func formatHandoff(notice assistant.HandoffNotice) string {
 	var b strings.Builder
 
-	if notice.Reason == assistant.ReasonChannelUnavailable {
+	if notice.Reason == assistant.ReasonStaffReplied {
+		b.WriteString("ADMIN REPLIED — ASSISTANT PAUSED\n\n")
+	} else if notice.Reason == assistant.ReasonChannelUnavailable {
 		b.WriteString("CHANNEL UNAVAILABLE - contact the customer through an available channel\n\n")
 	} else if notice.Reason.Urgent() {
 		b.WriteString("UNRESOLVED BOOKING - please check the calendar now\n\n")

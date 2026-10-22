@@ -1,5 +1,7 @@
 package meta
 
+import "encoding/json"
+
 // The types in this file mirror the Meta webhook and Graph API wire formats.
 // They are unexported: nothing outside this package should depend on how Meta
 // shapes its payloads.
@@ -134,8 +136,9 @@ type messagingEvent struct {
 
 		// IsEcho marks a message this system sent, echoed back. Treating one
 		// as a customer message would have the assistant answer itself.
-		IsEcho    bool `json:"is_echo"`
-		IsDeleted bool `json:"is_deleted"`
+		IsEcho    bool            `json:"is_echo"`
+		AppID     json.RawMessage `json:"app_id"`
+		IsDeleted bool            `json:"is_deleted"`
 	} `json:"message"`
 
 	Postback *struct {

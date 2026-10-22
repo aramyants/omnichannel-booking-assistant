@@ -57,6 +57,7 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 			Consent         bool   `json:"consent"`
 			RecordID        string `json:"recordId"`
 			ManagementProof string `json:"managementProof"`
+			ReminderMinutes int    `json:"reminderMinutes"`
 		}
 		decoder := json.NewDecoder(strings.NewReader(string(raw)))
 		decoder.DisallowUnknownFields()
@@ -92,7 +93,7 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
-		if body.Action != "context" && body.Action != "prepare" && body.Action != "confirmed" && body.Action != "record-context" && body.Action != "review-visits" && body.Action != "review-check" {
+		if body.Action != "context" && body.Action != "prepare" && body.Action != "confirmed" && body.Action != "record-context" && body.Action != "review-visits" && body.Action != "review-check" && body.Action != "reminder" {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
@@ -114,6 +115,15 @@ func bookingContextHandler(service *notifications.Service, token, base string) h
 			})
 		}
 		output := map[string]any{"locale": lang}
+		if body.Action == "reminder" {
+			if err := service.QueueWebReminder(r.Context(), body.RecordID, phone, body.ManagementProof, body.ReminderMinutes); err != nil {
+				http.Error(w, "Unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(output)
+			return
+		}
 		if body.Action == "review-visits" || body.Action == "review-check" {
 			if body.Action == "review-check" {
 				if value, parseErr := strconv.ParseUint(body.RecordID, 10, 64); parseErr != nil || value == 0 {

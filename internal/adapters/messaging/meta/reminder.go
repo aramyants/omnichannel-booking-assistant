@@ -19,6 +19,9 @@ type TemplateReminders struct {
 
 func (s TemplateReminders) SupportsReminder(lang string) bool { return s.Templates[lang] != "" }
 func (s TemplateReminders) SendReminder(ctx context.Context, msg messaging.Outgoing, lang string, b booking.Booking, calendarURL string) error {
+	return s.SendReminderWithReference(ctx, msg, lang, b, calendarURL, "")
+}
+func (s TemplateReminders) SendReminderWithReference(ctx context.Context, msg messaging.Outgoing, lang string, b booking.Booking, calendarURL, reference string) error {
 	name := s.Templates[lang]
 	if name == "" || msg.Provider != messaging.ProviderWhatsApp || calendarURL == "" {
 		return errors.New("approved reminder template or private calendar link unavailable")
@@ -37,5 +40,8 @@ func (s TemplateReminders) SendReminder(ctx context.Context, msg messaging.Outgo
 		params = append(params, map[string]string{"type": "text", "text": value})
 	}
 	payload := map[string]any{"messaging_product": "whatsapp", "to": msg.ExternalThreadID, "type": "template", "template": map[string]any{"name": name, "language": map[string]string{"code": lang}, "components": []any{map[string]any{"type": "body", "parameters": params}}}}
+	if reference != "" {
+		payload["biz_opaque_callback_data"] = reference
+	}
 	return s.post(ctx, s.phoneNumberID+"/messages", payload)
 }

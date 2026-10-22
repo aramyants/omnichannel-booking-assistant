@@ -27,6 +27,23 @@ type DirectClient struct {
 
 func (c *DirectClient) SetAuthRejected(handler func(context.Context) error) { c.authRejected = handler }
 
+// Retain only the opaque provider ID, allowing webhook echoes of our own sends
+// to be distinguished from manual replies in the native business inbox.
+func (c *DirectClient) SetOutboundRecorder(record func(context.Context, messaging.Provider, string) error) {
+	c.client.responseObserver = func(ctx context.Context, path string, raw []byte) error {
+		if path != c.accountID+"/messages" {
+			return nil
+		}
+		var response struct {
+			MessageID string `json:"message_id"`
+		}
+		if json.Unmarshal(raw, &response) != nil || response.MessageID == "" {
+			return nil
+		}
+		return record(ctx, c.provider, response.MessageID)
+	}
+}
+
 // ReadHealth validates this account's current token without sending a message.
 // Missing permission on an unrelated read is not proof that sending is blocked.
 func (c *DirectClient) ReadHealth(ctx context.Context) (messaging.ChannelHealth, error) {
@@ -242,6 +259,9 @@ func newDirectHandler(webhook *Webhook, messages MessageHandler, logger *slog.Lo
 		webhook: webhook, messages: messages, logger: logger, now: time.Now,
 		parse: func(body []byte, receivedAt time.Time) ([]messaging.Envelope, error) {
 			return parseDirect(body, receivedAt, provider, accountID)
+		},
+		parseExternalReplies: func(body []byte, receivedAt time.Time) ([]messaging.ExternalReply, error) {
+			return parseDirectExternalReplies(body, receivedAt, provider, accountID)
 		},
 	}
 }

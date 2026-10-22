@@ -49,12 +49,13 @@ var (
 
 // Client calls the Meta Graph API.
 type Client struct {
-	httpClient    *http.Client
-	baseURL       string
-	version       string
-	accessToken   string
-	phoneNumberID string
-	deliveryGuard func(context.Context, string, string) (bool, error)
+	httpClient       *http.Client
+	baseURL          string
+	version          string
+	accessToken      string
+	phoneNumberID    string
+	deliveryGuard    func(context.Context, string, string) (bool, error)
+	responseObserver func(context.Context, string, []byte) error
 }
 
 // Option customises a Client.
@@ -152,6 +153,11 @@ func (c *Client) post(ctx context.Context, path string, payload any) error {
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		if c.responseObserver != nil {
+			if err := c.responseObserver(ctx, path, raw); err != nil {
+				return fmt.Errorf("record accepted Meta send: %w: %w", messaging.ErrDeliveryUncertain, err)
+			}
+		}
 		return nil
 	}
 	err = c.translate(path, resp.StatusCode, raw)

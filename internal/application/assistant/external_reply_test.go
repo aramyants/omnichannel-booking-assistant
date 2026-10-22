@@ -23,6 +23,41 @@ func customerWhatsApp(id string) messaging.Envelope {
 	return msg
 }
 
+func TestManualReplyPausesEveryChannelNotifiesStaffOnceAndExpiresAfterInactivity(t *testing.T) {
+	for _, provider := range []messaging.Provider{messaging.ProviderWhatsApp, messaging.ProviderInstagram, messaging.ProviderMessenger, messaging.ProviderTelegram} {
+		t.Run(string(provider), func(t *testing.T) {
+			sender := &fakeSender{}
+			svc, _ := newTestService(t, sender)
+			staff := &recordingStaff{}
+			svc.staff = staff
+			svc.senders[provider] = sender
+			reply := staffAppReply("staff-1")
+			reply.Provider = provider
+			for range 2 {
+				if err := svc.RecordExternalReply(t.Context(), reply); err != nil {
+					t.Fatal(err)
+				}
+			}
+			msg := customerWhatsApp("client-1")
+			msg.Provider = provider
+			if err := svc.Handle(t.Context(), msg); err != nil {
+				t.Fatal(err)
+			}
+			if len(sender.sent) != 0 || len(staff.notices) != 1 || staff.notices[0].Reason != ReasonStaffReplied {
+				t.Fatal("manual reply was interrupted or staff notification duplicated")
+			}
+			svc.now = func() time.Time { return testNow.Add(2*time.Hour + time.Minute) }
+			msg.ExternalMessageID = "client-later"
+			if err := svc.Handle(t.Context(), msg); err != nil {
+				t.Fatal(err)
+			}
+			if len(sender.sent) != 1 {
+				t.Fatal("assistant did not resume after staff inactivity")
+			}
+		})
+	}
+}
+
 func TestExternalReplyRecordsHumanContextAndStaysSilentUntilResume(t *testing.T) {
 	sender := &fakeSender{}
 	svc, store := newTestService(t, sender)

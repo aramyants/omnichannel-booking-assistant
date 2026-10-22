@@ -95,6 +95,7 @@ func (s *Service) RelayStaffReply(ctx context.Context, reply StaffReply) error {
 	conv.PresentedChoices = nil
 	// Persist takeover before attempting the external send. A slow or unknown
 	// send result must not leave the assistant answering over staff.
+	conv.HandoffAt = s.now()
 	if conv.State != conversation.StateHumanActive {
 		if err := conv.TransitionTo(conversation.StateHumanActive, s.now()); err != nil {
 			return err
@@ -146,6 +147,7 @@ func (s *Service) RelayStaffReply(ctx context.Context, reply StaffReply) error {
 	}
 	conv.UpdatedAt = now
 	conv.LastMessageAt = now
+	conv.HandoffAt = now
 
 	if err := s.conversations.Save(ctx, conv); err != nil {
 		return fmt.Errorf("save the conversation after a colleague replied: %w", err)

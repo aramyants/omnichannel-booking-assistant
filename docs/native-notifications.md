@@ -88,6 +88,19 @@ already attempted and proceeds to the remaining route. It rechecks the booking
 and withdrawal before sending. Unknown outcomes do not trigger SMS. Read or
 delivered receipts cannot be overwritten by an older failure.
 
+The owned booking form offers no reminder, 1 hour, 2 hours, or 24 hours before
+the visit. New reminder jobs revalidate the exact live booking and phone before
+handing off to one deterministic Go outbox event. Its routing prefers the
+confirmation channel, honors withdrawals and approved WhatsApp reminder templates,
+and uses the existing fallback policy. The scheduled worker checks every five
+minutes; reminders more than 15 minutes late are skipped. Legacy SMS-only jobs
+keep their original no-resend semantics. Choosing no reminder creates no job.
+
+Altegio 404 responses retire events as `record_unavailable`; no recipient is
+guessed from an inaccessible deleted record. Recovery reuses one named task per
+event/hour rather than producing a fresh retry task every five minutes. Provider
+attempt logs include only opaque event ID, channel, acceptance and elapsed time.
+
 Fallback eligibility is persisted before Cloud Tasks enqueueing, so a queue
 outage is repaired by the periodic recovery action. A failed receipt arriving
 before the send call returns is also preserved. A later delivered/read receipt

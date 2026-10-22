@@ -11,6 +11,7 @@ func (c *Conversation) ObserveExternalReply(sentAt, receivedAt time.Time) {
 	}
 	c.ExternalReplyRevision++
 	c.State = StateHumanActive
+	c.HandoffAt = receivedAt
 	c.UpdatedAt = receivedAt
 	c.LastMessageAt = receivedAt
 	c.LastChoiceMessageID = ""
