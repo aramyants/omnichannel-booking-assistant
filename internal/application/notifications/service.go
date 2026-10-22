@@ -168,7 +168,9 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		if row.Kind != "event" || row.LeaseUntil.After(s.now()) {
 			continue
 		}
-		if err = s.schedule(ctx, row.Event.ID, s.now().Truncate(5*time.Minute).Format(time.RFC3339)); err != nil {
+		// Cloud Tasks already retries delivery. One recovery task per hour bounds
+		// duplicate recovery work when a record or provider remains unavailable.
+		if err = s.schedule(ctx, row.Event.ID, "recovery:"+s.now().Truncate(time.Hour).Format(time.RFC3339)); err != nil {
 			recoveryErr = errors.Join(recoveryErr, err)
 		}
 	}
@@ -222,6 +224,11 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 	if row.State == "pending" {
 		snap, readErr := s.Reader.ReadNativeBooking(ctx, row.Event.RecordID)
 		if readErr != nil {
+			if errors.Is(readErr, booking.ErrNotFound) {
+				// Deleted records can disappear from Altegio entirely. There is no
+				// trusted recipient to notify; retrying 404s only starves new work.
+				return s.finish(ctx, key, owner, "record_unavailable")
+			}
 			return readErr
 		}
 		_, ownedErr := s.Owned.FindBooking(ctx, row.Event.RecordID)
@@ -292,6 +299,9 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 	// be followed by a stale queued confirmation.
 	latest, err := s.Reader.ReadNativeBooking(ctx, row.Event.RecordID)
 	if err != nil {
+		if errors.Is(err, booking.ErrNotFound) {
+			return s.finish(ctx, key, owner, "record_unavailable")
+		}
 		return err
 	}
 	if fingerprint(latest) != row.Notice.Fingerprint {

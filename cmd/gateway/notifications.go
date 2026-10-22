@@ -24,6 +24,7 @@ import (
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/cabinet"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/calendar"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/application/notifications"
+	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/booking"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/conversation"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/customer"
 	"github.com/aramyants/omnichannel-booking-assistant/internal/domain/messaging"
@@ -245,7 +246,7 @@ func notificationTaskHandler(auth notificationAuthorizer, service notificationDe
 			return
 		}
 		if err != nil {
-			logger.ErrorContext(r.Context(), "native notification task needs retry")
+			logger.ErrorContext(r.Context(), "native notification task needs retry", "event_id", body.EventID, "reconcile", body.Reconcile, "busy", errors.Is(err, notifications.ErrBusy), "upstream_unavailable", errors.Is(err, booking.ErrUnavailable))
 			http.Error(w, "processing failed", http.StatusServiceUnavailable)
 			return
 		}
@@ -265,7 +266,13 @@ type nativeNotificationSender struct {
 	bookingURL, websiteURL string
 }
 
-func (s nativeNotificationSender) SendNotification(ctx context.Context, target notifications.Target, notice notifications.Notice, lang string) (bool, error) {
+func (s nativeNotificationSender) SendNotification(ctx context.Context, target notifications.Target, notice notifications.Notice, lang string) (sendRejected bool, sendError error) {
+	started := time.Now()
+	defer func() {
+		if s.logger != nil {
+			s.logger.InfoContext(ctx, "booking notification provider attempt", "event_id", notice.ID, "channel", target.Channel, "studio_account", target.StudioAccount, "accepted", sendError == nil, "rejected", sendRejected, "duration_ms", time.Since(started).Milliseconds())
+		}
+	}()
 	lang = string(appointmentmessage.ParseLanguage(lang))
 	b := notice.Snapshot.Booking
 	calendarURL := ""
