@@ -31,6 +31,12 @@ health: the production API still reported GREEN/LIMITED while the phone app
 displayed an account ban on 22 October 2026. SIP calling errors and an unapproved
 display name alone do not prove a messaging ban.
 
+A phone asset that explicitly reports a non-`CLOUD_API` platform is excluded
+from cloud delivery even if its messaging health is GREEN/LIMITED. Signing back
+into the phone app does not by itself restore coexistence. Reconnect the same
+app/number through Business App Onboarding, and verify a fresh inbound event
+before sending. A missing platform field does not fabricate a restriction.
+
 The private WhatsApp health entry supports `operator_paused` and
 `operator_pause_reason`. An operator review hold blocks automated replies,
 templates and read/typing acknowledgements; periodic or already-running green
@@ -66,7 +72,9 @@ history synchronization process within 24 hours, respecting the business's
 history-sharing choice.
 
 Subscribe the webhook to `smb_message_echoes` as well as `messages`. Each echo
-is a message a colleague sent from the WhatsApp Business app on the phone. The
+is a message Meta reports from the WhatsApp Business app or a supported linked
+client. The source device does not change the takeover rules; messages from a
+linked browser or companion phone use the same signed echo route. The
 service stores it in the transcript as an outbound message and hands the
 conversation to that colleague and forwards a short transcript to the managers'
 chat. The assistant stops answering until the manager uses the one-shot
@@ -81,6 +89,14 @@ fetched. Only `smb_message_echoes` has this effect: Cloud API `message_echoes`
 and delivery `statuses` are ignored. The `history` and `smb_app_state_sync`
 fields are not handled yet, so contact and chat history from the phone are not
 imported.
+
+Pair additional phones using WhatsApp's **Link as companion device** flow and
+desktops through **WhatsApp Web**, using the main phone's Linked devices screen.
+Do not register the studio number as a new primary account on each device.
+Validate each device with a controlled staff reply: its echo must reach the
+webhook, pause the assistant and produce the managers' notice. A linked client
+that does not emit an echo cannot be claimed to support automatic takeover;
+use a validated client for staff replies while the assistant is active.
 
 Messenger `message_echoes` and Instagram outbound `messages` echoes apply the
 same takeover policy. Business asset and signature checks still apply. App-tagged

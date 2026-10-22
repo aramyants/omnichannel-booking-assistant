@@ -70,3 +70,33 @@ func TestTemplateMetadataFailureDoesNotFabricateRestriction(t *testing.T) {
 		t.Fatalf("partial health=%+v err=%v", health, err)
 	}
 }
+
+func TestDisconnectedCloudPhoneDoesNotPostEvenWithGreenMessagingHealth(t *testing.T) {
+	platform := "ON_PREMISE"
+	posts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts++
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		if !strings.Contains(r.URL.Query().Get("fields"), "platform_type") {
+			t.Error("health probe did not request the current platform")
+		}
+		_, _ = fmt.Fprintf(w, `{"platform_type":%q,"quality_rating":"GREEN","health_status":{"can_send_message":"LIMITED","entities":[{"entity_type":"WABA","id":"waba","can_send_message":"AVAILABLE"}]}}`, platform)
+	}))
+	defer server.Close()
+	client, _ := NewClient("token", "phone", WithBaseURL(server.URL))
+	client.SetDeliveryGuard(func(ctx context.Context, _, _ string) (bool, error) {
+		health, err := client.ReadWhatsAppHealth(ctx, nil)
+		return health.Allows("", ""), err
+	})
+	message := messaging.Outgoing{Provider: messaging.ProviderWhatsApp, ExternalThreadID: "client", Text: "Hello"}
+	if err := client.Send(t.Context(), message); !errors.Is(err, messaging.ErrDeliveryRejected) || posts != 0 {
+		t.Fatalf("disconnected phone posted a message: posts=%d err=%v", posts, err)
+	}
+	platform = "CLOUD_API"
+	if err := client.Send(t.Context(), message); err != nil || posts != 1 {
+		t.Fatalf("restored cloud phone was not usable: posts=%d err=%v", posts, err)
+	}
+}

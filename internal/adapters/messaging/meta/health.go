@@ -23,10 +23,11 @@ type healthStatus struct {
 // expected maps template name:language to true, derived from runtime configuration.
 func (c *Client) ReadWhatsAppHealth(ctx context.Context, expected map[string]bool) (messaging.ChannelHealth, error) {
 	var phone struct {
-		Health  healthStatus `json:"health_status"`
-		Quality string       `json:"quality_rating"`
+		Health   healthStatus `json:"health_status"`
+		Quality  string       `json:"quality_rating"`
+		Platform string       `json:"platform_type"`
 	}
-	if err := c.get(ctx, c.phoneNumberID, url.Values{"fields": {"health_status,quality_rating"}}, &phone); err != nil {
+	if err := c.get(ctx, c.phoneNumberID, url.Values{"fields": {"health_status,quality_rating,platform_type"}}, &phone); err != nil {
 		return messaging.ChannelHealth{}, err
 	}
 	switch phone.Health.CanSend {
@@ -35,6 +36,12 @@ func (c *Client) ReadWhatsAppHealth(ctx context.Context, expected map[string]boo
 		return messaging.ChannelHealth{}, errors.New("meta did not report messaging health")
 	}
 	health := messaging.ChannelHealth{Known: true, Blocked: phone.Health.CanSend == "BLOCKED", ProactivePaused: phone.Quality == "RED"}
+	// A restored Business app login can leave the old phone asset reporting
+	// GREEN/LIMITED while it is no longer on Cloud API. Keep that confirmed
+	// disconnection out of delivery routes until coexistence is restored.
+	if phone.Platform != "" && phone.Platform != "CLOUD_API" {
+		health.Blocked = true
+	}
 	waba := ""
 	for _, entity := range phone.Health.Entities {
 		if entity.CanSend == "BLOCKED" {
