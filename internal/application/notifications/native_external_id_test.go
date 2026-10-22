@@ -15,6 +15,9 @@ func TestNativeExternalIDDoesNotSuppressManualBookingLifecycle(t *testing.T) {
 	s.ManualPermissionSince = s.now().Add(-time.Minute)
 	s.SMSReady = true
 	reader.snapshot.APIID = "a1b85ccc-11e3-4f08-92e5-9a0c552a1b84"
+	if err := s.LinkWhatsApp(t.Context(), reader.snapshot.Phone, "en", true); err != nil {
+		t.Fatal(err)
+	}
 	ingestAndDeliver(t, s, "create")
 	if !reflect.DeepEqual(sender.channels, []Channel{WhatsApp}) {
 		t.Fatalf("manual confirmation with external ID did not reach WhatsApp: %v", sender.channels)
@@ -77,6 +80,9 @@ func TestUnsentManualExternalIDRecoversWithoutReplayingAcceptedSends(t *testing.
 		t.Fatal("fixture sent before manual notices were enabled")
 	}
 	s.ManualPermissionSince = s.now().Add(-time.Minute)
+	if err := s.LinkWhatsApp(t.Context(), reader.snapshot.Phone, "en", true); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -116,6 +122,9 @@ func TestManualExternalIDFallsBackOnlyAfterDefiniteRejection(t *testing.T) {
 			s.ManualPermissionSince = s.now().Add(-time.Minute)
 			s.TelegramAccount, s.SMSReady = true, true
 			reader.snapshot.APIID = "a1b85ccc-11e3-4f08-92e5-9a0c552a1b84"
+			if err := s.LinkWhatsApp(t.Context(), reader.snapshot.Phone, "en", true); err != nil {
+				t.Fatal(err)
+			}
 			sender.reject = true
 			sender.rejectWhatsApp = !uncertain
 			if uncertain {

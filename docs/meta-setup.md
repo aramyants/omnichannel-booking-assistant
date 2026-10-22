@@ -24,6 +24,32 @@ are verified with the app secret; accounts are restricted to the configured IDs.
 
 ## 1. WhatsApp
 
+### Phone-app restriction and operator review hold
+
+A ban shown in the WhatsApp Business phone app may not be reflected in Cloud API
+health: the production API still reported GREEN/LIMITED while the phone app
+displayed an account ban on 22 October 2026. SIP calling errors and an unapproved
+display name alone do not prove a messaging ban.
+
+The private WhatsApp health entry supports `operator_paused` and
+`operator_pause_reason`. An operator review hold blocks automated replies,
+templates and read/typing acknowledgements; periodic or already-running green
+health probes cannot release it. It has no automatic expiry. Keep the number,
+credentials, app subscriptions and current appeal intact. Release the hold only
+after the owner confirms restored phone access and the actual restriction is
+resolved; then refresh provider health before sending. No test send is needed
+while a review is pending.
+
+For proactive native booking notices, a phone number, generic booking consent or
+a manual administrator entry is not a stored WhatsApp opt-in. Only a current,
+exact-phone WhatsApp notification preference enables that route. Clients can
+explicitly enable it in their signed inbound chat with `/notifications` and
+withdraw with `/notifications_off` or `STOP`. Booking notices without this
+preference use their eligible Telegram/SMS paths. An approved template alone
+does not grant recipient permission.
+
+Source: [WhatsApp Business Messaging Policy](https://business.whatsapp.com/policy).
+
 First choose the appropriate onboarding path. The studio's existing number is
 active in the WhatsApp Business app. To keep that app usable, use Embedded Signup
 with **WhatsApp Business App Onboarding** (`featureType:

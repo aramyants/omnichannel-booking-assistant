@@ -75,6 +75,8 @@ type Entry struct {
 	ManagementToken     string                  `firestore:"management_token,omitempty"`
 	ManagementPhone     string                  `firestore:"management_phone,omitempty"`
 	ConfirmationChannel Channel                 `firestore:"confirmation_channel,omitempty"`
+	OperatorPaused      bool                    `firestore:"operator_paused,omitempty"`
+	OperatorPauseReason string                  `firestore:"operator_pause_reason,omitempty"`
 }
 type Repository interface {
 	TransactNotifications(context.Context, []string, func(map[string]*Entry) error) error
@@ -397,13 +399,9 @@ func (s *Service) Deliver(ctx context.Context, id string) error {
 		recipient.TelegramChat = tg.Contact.Chat
 		recipient.TelegramPhone = tg.Contact.Phone
 	}
-	if wa.Contact.ExpiresAt.After(now) {
+	if !wa.Contact.Blocked && wa.Contact.Phone == phone && wa.Contact.ExpiresAt.After(now) {
 		recipient.WhatsAppOptedIn = true
 		recipient.WhatsAppOptInPhone = wa.Contact.Phone
-	}
-	if requested && !wa.Contact.Blocked {
-		recipient.WhatsAppOptedIn = true
-		recipient.WhatsAppOptInPhone = phone
 	}
 	order := []Channel{Telegram, WhatsApp}
 	if policyRow.Order == "whatsapp" {
@@ -534,11 +532,10 @@ func (s *Service) AllowPhone(ctx context.Context, rawPhone, lang string) error {
 	if lang != "en" && lang != "ru" && lang != "hy" {
 		return errors.New("unsupported notification language")
 	}
-	keys := []string{Key("booking_phone", phone), Key("telegram_phone", phone), Key("whatsapp_phone", phone)}
+	keys := []string{Key("booking_phone", phone), Key("telegram_phone", phone)}
 	return s.Repo.TransactNotifications(ctx, keys, func(rows map[string]*Entry) error {
 		*rows[keys[0]] = Entry{Kind: "staff_permission", Contact: Contact{Phone: phone, Language: lang, RequestedAt: s.now(), ExpiresAt: s.now().Add(180 * 24 * time.Hour)}}
 		rows[keys[1]].Contact.Blocked = false
-		rows[keys[2]].Contact.Blocked = false
 		return nil
 	})
 }

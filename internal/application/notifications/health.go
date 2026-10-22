@@ -44,7 +44,7 @@ func (g *HealthGuard) Refresh(ctx context.Context) error {
 	if err := g.Repo.TransactNotifications(ctx, []string{key}, func(rows map[string]*Entry) error {
 		claimed = false
 		row := rows[key]
-		if row.LeaseUntil.After(now) || row.NextLookupAt.After(now) {
+		if row.OperatorPaused || row.LeaseUntil.After(now) || row.NextLookupAt.After(now) {
 			return nil
 		}
 		row.Kind, row.LeaseOwner, row.LeaseUntil = "channel_health", owner, now.Add(time.Minute)
@@ -68,6 +68,11 @@ func (g *HealthGuard) Refresh(ctx context.Context) error {
 			return nil
 		}
 		row.LeaseOwner, row.LeaseUntil = "", time.Time{}
+		// A phone-app ban may be absent from Graph's Cloud API health. An
+		// operator review hold cannot be undone by an in-flight green probe.
+		if row.OperatorPaused {
+			return nil
+		}
 		row.NextLookupAt = now.Add(5 * time.Minute)
 		if probeErr != nil || !health.Known {
 			return nil
@@ -104,6 +109,9 @@ func (g *HealthGuard) Allows(ctx context.Context, template, language string) (bo
 	if err != nil {
 		return false, err
 	}
+	if row.OperatorPaused {
+		return false, nil
+	}
 	if !row.NextLookupAt.After(g.now()) {
 		_ = g.Refresh(ctx)
 		row, err = g.Repo.GetNotification(ctx, g.key())
@@ -111,7 +119,7 @@ func (g *HealthGuard) Allows(ctx context.Context, template, language string) (bo
 			return false, err
 		}
 	}
-	return row.Health.Allows(template, language), nil
+	return !row.OperatorPaused && row.Health.Allows(template, language), nil
 }
 
 // Block records a definite authentication rejection immediately, even between
